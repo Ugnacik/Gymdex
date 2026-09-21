@@ -1,0 +1,9 @@
+{
+  "name": "Gymdex",
+  "short_name": "Gymdex",
+  "description": "A fast, private workout tracker.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#090f0c",
+  "theme_color": "#090f0c"
+}

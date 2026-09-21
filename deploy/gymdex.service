@@ -1,0 +1,14 @@
+[Unit]
+Description=Gymdex workout tracker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/apps/gymdex
+ExecStart=/usr/bin/python3 -m gymdex.server --host 127.0.0.1 --port 8080
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
