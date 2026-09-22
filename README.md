@@ -18,7 +18,7 @@ The first working slice supports:
 Each newly added exercise starts with one empty set. Enter kilograms and reps,
 or seconds for duration exercises. Weight is optional. Enter a positive amount
 and check Assistance for assisted weight; Gymdex stores it as a negative value.
-Checking Done saves the set as completed; Save set also saves an unfinished set.
+Checking Set completed saves the set as completed; Save changes also saves an unfinished set.
 Valid edits save automatically after a short typing pause. Add set creates
 another row, and Remove deletes a row after confirmation. Sets can be edited
 while the workout is active.
@@ -31,7 +31,7 @@ shows whether changes are saved to the server or waiting on the phone.
 If the server cannot be reached, keep editing existing sets. Pending saves retry
 when the connection returns, when you return to the page, and every 15 seconds
 while the page is visible. Invalid values require correction; server-rejected
-sets stay on the phone and require review and a manual Save set retry.
+sets stay on the phone and require review and a manual Save changes retry.
 
 After one online visit over HTTPS, the app caches its files and last loaded
 workout so it can reopen offline. Localhost also supports this for development;
@@ -43,6 +43,13 @@ data is cleared. Use one device at a time when editing a workout.
 
 If browser storage is unavailable, the page warns you to keep it open until
 changes reach the server. Local drafts are a recovery aid, not a database backup.
+
+Exercise names include the variation throughout the catalog, recent choices,
+and workout, for example Bench Press and Incline Bench Press.
+Finish workout is available above and below the exercise list. Cancel workout
+asks for confirmation, then discards the active workout and all its exercises
+and sets, including unsaved edits. Saved gym equipment configurations and
+completed workouts are kept.
 
 Last workout values come from the most recent completed workout with the same
 gym, exercise variation, equipment, manufacturer, and machine label. If that

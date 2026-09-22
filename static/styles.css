@@ -134,10 +134,12 @@ input::placeholder { color: var(--muted); opacity: 1; }
 }
 .bottom-action .primary { width: 100%; min-height: 58px; }
 
-.workout-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 24px; }
+.workout-heading { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 24px; }
 .workout-heading > div { min-width: 0; }
 .workout-heading h1 { font-size: clamp(1.75rem, 6vw, 2.25rem); }
 .workout-heading p { margin: 0; }
+.workout-actions { display: grid; gap: 8px; margin-top: 24px; }
+.cancel-workout { color: var(--danger); }
 
 .exercise-entry { padding: 20px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--surface); overflow-wrap: anywhere; }
 .exercise-entry .meta { margin: 6px 0 0; color: var(--muted); font-size: 0.9rem; }
@@ -225,14 +227,14 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .set-form fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
 .set-form legend { padding: 0; font-weight: 650; }
 .previous-set { margin: 6px 0 12px; font-size: 0.8rem; }
-.set-inputs { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 44px; gap: 8px; }
+.set-inputs { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
 .set-inputs label { display: grid; gap: 6px; color: var(--muted); font-size: 0.8rem; }
 .set-inputs input { min-width: 0; min-height: 48px; padding: 0 8px; border-radius: 10px; }
-.set-complete { text-align: center; }
-.set-complete span { display: grid; place-items: center; min-height: 48px; cursor: pointer; }
+.set-complete { display: flex; align-items: center; gap: 10px; min-height: 48px; margin-top: 8px; font-size: 0.9rem; cursor: pointer; }
 .set-complete input { width: 24px; height: 24px; min-height: 24px; padding: 0; accent-color: var(--accent); cursor: pointer; }
 .assistance-option { display: flex; align-items: center; gap: 10px; min-height: 44px; margin-top: 8px; font-size: 0.9rem; }
 .assistance-option input { width: 24px; height: 24px; min-height: 24px; padding: 0; accent-color: var(--accent); }
+.completion-hint { margin: 0; font-size: 0.75rem; }
 .set-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; margin-top: 8px; }
 .set-actions .text-button { padding: 0 6px; min-height: 44px; font-size: 0.85rem; }
 .set-actions .remove-set { color: var(--muted); }

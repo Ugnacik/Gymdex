@@ -103,6 +103,8 @@ class GymdexHandler(BaseHTTPRequestHandler):
 
     def do_DELETE(self) -> None:
         parts = urlparse(self.path).path.strip("/").split("/")
+        if len(parts) == 3 and parts[:2] == ["api", "workouts"]:
+            return self._with_db(lambda connection: db.cancel_workout(connection, int(parts[2])))
         if len(parts) != 3 or parts[:2] != ["api", "sets"]:
             return self._json_error("Route not found.", HTTPStatus.NOT_FOUND)
         self._with_db(lambda connection: db.delete_set(connection, int(parts[2])))

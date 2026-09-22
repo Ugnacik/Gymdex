@@ -384,6 +384,17 @@ def complete_workout(connection: sqlite3.Connection, workout_id: int) -> None:
     connection.commit()
 
 
+def cancel_workout(connection: sqlite3.Connection, workout_id: int) -> dict[str, bool]:
+    with connection:
+        cursor = connection.execute(
+            "DELETE FROM workouts WHERE id = ? AND completed_at IS NULL",
+            (workout_id,),
+        )
+        if not cursor.rowcount:
+            raise LookupError("Active workout not found.")
+    return {"ok": True}
+
+
 def sets_for_exercise(connection: sqlite3.Connection, exercise_id: int) -> list[dict[str, Any]]:
     return rows(connection.execute(
         "SELECT id, position, weight, result, completed FROM workout_sets WHERE workout_exercise_id = ? ORDER BY position",
