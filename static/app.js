@@ -1,3 +1,6 @@
+import { DraftStore, setPayload } from "./drafts.mjs";
+
+const drafts = new DraftStore(() => window.localStorage);
 const app = document.querySelector("#app");
 const toast = document.querySelector("#toast");
 
@@ -8,16 +11,53 @@ const state = {
   selectedExercise: null,
   selectedEquipment: null,
   setSaves: new Set(),
+  unavailable: !navigator.onLine,
+  offlineReady: false,
 };
 
 async function api(path, options = {}) {
-  const response = await fetch(path, {
-    headers: { "Content-Type": "application/json" },
-    ...options,
-  });
-  const body = await response.json();
-  if (!response.ok) throw new Error(body.error || "Something went wrong.");
-  return body;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  try {
+    const response = await fetch(path, {
+      headers: { "Content-Type": "application/json" },
+      ...options,
+      signal: controller.signal,
+    });
+    const body = await response.json();
+    state.unavailable = false;
+    if (!response.ok) {
+      const error = new Error(body.error || "Something went wrong.");
+      error.status = response.status;
+      throw error;
+    }
+    return body;
+  } catch (error) {
+    if (!error.status) {
+      state.unavailable = true;
+      throw new Error("Cannot reach the server.");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+    updateSyncStatus();
+  }
+}
+
+function updateSyncStatus() {
+  const status = document.querySelector("#sync-status");
+  if (!status) return;
+  const count = document.querySelectorAll('.set-form[data-dirty="true"]').length;
+  const unavailable = state.unavailable || !navigator.onLine;
+  status.textContent = drafts.error
+    ? "Phone storage is unavailable. Keep this page open until your sets are saved to the server."
+    : unavailable
+      ? "Server unavailable. Set edits are kept on this phone and will retry automatically. Adding items and finishing require a connection."
+      : count
+        ? `${count} set${count === 1 ? "" : "s"} waiting to save. Drafts are kept on this phone.`
+        : "All set changes saved to server.";
+  if (!state.offlineReady && unavailable) status.textContent += " Offline reopening is not available yet; keep this page open.";
+  status.classList.toggle("error", drafts.error);
 }
 
 function escapeHtml(value) {
@@ -43,11 +83,18 @@ function showToast(message) {
 async function load() {
   try {
     state.data = await api("/api/bootstrap");
+    drafts.snapshot(state.data);
     if (!state.selectedGymId && state.data.gyms.length === 1) {
       state.selectedGymId = state.data.gyms[0].id;
     }
     render();
+    retryPendingSets();
   } catch (error) {
+    state.data = state.data || drafts.cachedWorkout();
+    if (state.data) {
+      render();
+      return;
+    }
     app.innerHTML = `<main class="shell"><h1>Gymdex is unavailable.</h1><p class="error">${escapeHtml(error.message)}</p><button class="primary" id="retry">Try again</button></main>`;
     document.querySelector("#retry").addEventListener("click", load);
   }
@@ -56,10 +103,11 @@ async function load() {
 function render() {
   if (state.data.active_workout) renderWorkout();
   else renderStart();
+  updateSyncStatus();
 }
 
 function renderHeader(status = "Ready") {
-  return `<header class="app-header"><div class="brand">Gymdex</div><div class="status${state.data.active_workout ? " status-active" : ""}">${escapeHtml(status)}</div></header>`;
+  return `<header class="app-header"><div class="brand">Gymdex</div><div class="status${state.data.active_workout ? " status-active" : ""}">${escapeHtml(status)}</div></header><p id="sync-status" class="sync-status" role="status"></p>`;
 }
 
 function renderStart() {
@@ -87,6 +135,7 @@ function renderStart() {
     button.addEventListener("click", () => {
       state.selectedGymId = Number(button.dataset.gymId);
       renderStart();
+      updateSyncStatus();
     });
   });
   document.querySelector("#add-gym-form").addEventListener("submit", createGym);
@@ -126,7 +175,7 @@ function renderWorkout() {
           <article class="exercise-entry" data-entry-id="${entry.id}">
             <h3>${escapeHtml(entry.exercise_name)}${entry.variation_name === "Standard" ? "" : ` · ${escapeHtml(entry.variation_name)}`}</h3>
             <p class="meta">${escapeHtml(configurationLabel(entry))}</p>
-            <p class="set-hint">${entry.tracking_type === "duration" ? "Duration in seconds" : "Repetitions"}. Weight is optional; use a negative value for assistance.</p>
+            <p class="set-hint">${entry.tracking_type === "duration" ? "Duration in seconds" : "Repetitions"}. Weight is optional. Select Assistance for assisted weight.</p>
             <div class="sets-list">${entry.sets.map((set, index) => renderSet(entry, set, index)).join("")}</div>
             <button class="secondary add-set" data-add-set="${entry.id}">Add set</button>
           </article>`).join("") : `<div class="empty"><h3>No exercises yet</h3><p>Add a recent choice in one tap, or search the catalog.</p></div>`}
@@ -167,9 +216,6 @@ async function openPicker() {
 
 function renderPicker(query = "") {
   document.querySelector("#picker")?.remove();
-  const filtered = state.picker.catalog.filter((item) =>
-    `${item.exercise_name} ${item.variation_name}`.toLowerCase().includes(query.toLowerCase())
-  );
   const wrapper = document.createElement("div");
   wrapper.id = "picker";
   wrapper.className = "sheet-backdrop";
@@ -178,18 +224,27 @@ function renderPicker(query = "") {
       <div class="sheet-handle" aria-hidden="true"></div>
       <div class="sheet-header"><h2 id="picker-title">Add exercise</h2><button class="text-button" id="close-picker">Close</button></div>
       <input class="search" id="exercise-search" type="search" inputmode="search" autocomplete="off" placeholder="Search exercises" aria-label="Search exercises" value="${escapeHtml(query)}" />
-      ${!query && state.picker.recent.length ? `<div class="section-title"><h3>Recent at ${escapeHtml(state.data.active_workout.gym_name)}</h3></div><div class="recent-list">${state.picker.recent.map((item) => `<button class="recent-card" data-profile-id="${item.profile_id}"><strong>${escapeHtml(item.exercise_name)}</strong><span>${escapeHtml(configurationLabel(item))}</span></button>`).join("")}</div>` : ""}
-      <div class="section-title"><h3>${query ? "Results" : "Exercise catalog"}</h3><span>${filtered.length}</span></div>
-      <div class="exercise-list">${filtered.map((item) => `<button class="exercise-card" data-variation-id="${item.id}"><strong>${escapeHtml(item.exercise_name)}</strong><span>${item.variation_name === "Standard" ? escapeHtml(item.equipment.join(" · ")) : `${escapeHtml(item.variation_name)} · ${escapeHtml(item.equipment.join(" · "))}`}</span></button>`).join("") || `<div class="empty"><h3>No matches</h3><p>Try a shorter exercise name.</p></div>`}</div>
+      <div id="picker-results"></div>
     </section>`;
   document.querySelector("main")?.setAttribute("inert", "");
   document.body.append(wrapper);
   const search = document.querySelector("#exercise-search");
   search.focus();
   search.setSelectionRange(search.value.length, search.value.length);
-  search.addEventListener("input", (event) => renderPicker(event.target.value));
+  search.addEventListener("input", (event) => renderPickerResults(event.target.value));
+  renderPickerResults(query);
   document.querySelector("#close-picker").addEventListener("click", closePicker);
   wrapper.addEventListener("click", (event) => { if (event.target === wrapper) closePicker(); });
+}
+
+function renderPickerResults(query) {
+  const filtered = state.picker.catalog.filter((item) =>
+    `${item.exercise_name} ${item.variation_name}`.toLowerCase().includes(query.toLowerCase())
+  );
+  document.querySelector("#picker-results").innerHTML = `
+      ${!query && state.picker.recent.length ? `<div class="section-title"><h3>Recent at ${escapeHtml(state.data.active_workout.gym_name)}</h3></div><div class="recent-list">${state.picker.recent.map((item) => `<button class="recent-card" data-profile-id="${item.profile_id}"><strong>${escapeHtml(item.exercise_name)}</strong><span>${escapeHtml(configurationLabel(item))}</span></button>`).join("")}</div>` : ""}
+      <div class="section-title"><h3>${query ? "Results" : "Exercise catalog"}</h3><span>${filtered.length}</span></div>
+      <div class="exercise-list">${filtered.map((item) => `<button class="exercise-card" data-variation-id="${item.id}"><strong>${escapeHtml(item.exercise_name)}</strong><span>${item.variation_name === "Standard" ? escapeHtml(item.equipment.join(" · ")) : `${escapeHtml(item.variation_name)} · ${escapeHtml(item.equipment.join(" · "))}`}</span></button>`).join("") || `<div class="empty"><h3>No matches</h3><p>Try a shorter exercise name.</p></div>`}</div>`;
   document.querySelectorAll("[data-profile-id]").forEach((button) => button.addEventListener("click", () => addRecent(Number(button.dataset.profileId))));
   document.querySelectorAll("[data-variation-id]").forEach((button) => button.addEventListener("click", () => chooseExercise(Number(button.dataset.variationId))));
 }
@@ -221,7 +276,7 @@ function renderConfiguration() {
   sheet.innerHTML = `
     <div class="sheet-handle" aria-hidden="true"></div>
     <div class="sheet-header"><button class="text-button" id="back-to-picker">Back</button><button class="text-button" id="close-picker">Close</button></div>
-    <h2>${escapeHtml(item.exercise_name)}</h2>
+    <h2 id="picker-title">${escapeHtml(item.exercise_name)}</h2>
     <p>${item.variation_name === "Standard" ? "Choose the equipment used at this gym." : `${escapeHtml(item.variation_name)}. Choose the equipment used at this gym.`}</p>
     <div class="equipment-grid">${item.equipment.map((equipment) => `<button class="equipment-option" data-equipment="${escapeHtml(equipment)}" aria-pressed="${state.selectedEquipment === equipment}">${escapeHtml(equipment)}</button>`).join("")}</div>
     <form id="configuration-form">
@@ -231,7 +286,10 @@ function renderConfiguration() {
     </form>`;
   document.querySelector("#back-to-picker").addEventListener("click", () => renderPicker());
   document.querySelector("#close-picker").addEventListener("click", closePicker);
-  document.querySelectorAll("[data-equipment]").forEach((button) => button.addEventListener("click", () => { state.selectedEquipment = button.dataset.equipment; renderConfiguration(); }));
+  document.querySelectorAll("[data-equipment]").forEach((button) => button.addEventListener("click", () => {
+    state.selectedEquipment = button.dataset.equipment;
+    document.querySelectorAll("[data-equipment]").forEach((option) => option.setAttribute("aria-pressed", String(option === button)));
+  }));
   document.querySelector("#configuration-form").addEventListener("submit", addConfiguredExercise);
 }
 
@@ -266,10 +324,11 @@ function renderSet(entry, set, index) {
       <legend>Set ${set.position}</legend>
       <p class="previous-set">Last workout: ${escapeHtml(previousText)}</p>
       <div class="set-inputs">
-        <label>kg <input name="weight" type="number" inputmode="decimal" step="any" min="-100000" max="100000" aria-label="${escapeHtml(name)} weight in kilograms" value="${set.weight ?? ""}" /></label>
+        <label>kg <input name="weight" type="number" inputmode="decimal" step="any" min="0" max="100000" aria-label="${escapeHtml(name)} weight in kilograms" value="${set.weight === null ? "" : Math.abs(set.weight)}" /></label>
         <label>${unit === "sec" ? "Seconds" : "Reps"} <input name="result" type="number" inputmode="numeric" min="1" max="1000000" step="1" aria-label="${escapeHtml(name)} ${unit}" value="${set.result ?? ""}" ${set.completed ? "required" : ""} /></label>
         <label class="set-complete">Done <span><input name="completed" type="checkbox" aria-label="Complete ${escapeHtml(name)}" ${set.completed ? "checked" : ""} /></span></label>
       </div>
+      <label class="assistance-option"><input name="assistance" type="checkbox" ${set.weight < 0 ? "checked" : ""} /> Assistance</label>
       <div class="set-actions">
         <button type="submit" class="text-button">Save set</button>
         <button type="button" class="text-button remove-set" aria-label="Remove ${escapeHtml(name)}">Remove</button>
@@ -279,18 +338,62 @@ function renderSet(entry, set, index) {
   </form>`;
 }
 
+function setValues(form) {
+  return {
+    weight: form.elements.weight.value,
+    result: form.elements.result.value,
+    completed: form.elements.completed.checked,
+    assistance: form.elements.assistance.checked,
+  };
+}
+
+function rememberSet(form) {
+  form.dataset.dirty = "true";
+  form.elements.result.required = form.elements.completed.checked;
+  const draft = drafts.put(state.data.active_workout.id, form.dataset.setId, setValues(form));
+  form.draftRevision = draft.revision;
+  setStatus(form, drafts.error ? "Not saved on phone. Keep this page open." : "Saved on phone; waiting to sync.", drafts.error);
+  updateSyncStatus();
+  return draft;
+}
+
 function bindSet(form) {
-  form.addEventListener("input", () => {
+  const draft = drafts.get(state.data.active_workout.id, form.dataset.setId);
+  if (draft) {
+    form.elements.weight.value = draft.weight;
+    form.elements.result.value = draft.result;
+    form.elements.completed.checked = draft.completed;
+    form.elements.assistance.checked = draft.assistance;
+    form.elements.result.required = draft.completed;
     form.dataset.dirty = "true";
-    form.elements.result.required = form.elements.completed.checked;
-    setStatus(form, "Unsaved");
+    setStatus(form, "Restored from this phone; waiting to sync.");
+  }
+  form.addEventListener("input", () => {
+    delete form.dataset.blocked;
+    rememberSet(form);
+    clearTimeout(form.saveTimer);
+    form.saveTimer = setTimeout(() => saveSet(form, { automatic: true }), 800);
   });
   form.addEventListener("submit", (event) => {
     event.preventDefault();
+    delete form.dataset.blocked;
     saveSet(form);
   });
   form.elements.completed.addEventListener("change", () => form.requestSubmit());
   form.querySelector(".remove-set").addEventListener("click", () => removeSet(form));
+}
+
+async function retryPendingSets() {
+  if (!navigator.onLine || document.visibilityState === "hidden") return;
+  if (state.unavailable) {
+    try { await api("/api/bootstrap"); }
+    catch { return; }
+  }
+  for (const form of document.querySelectorAll('.set-form[data-dirty="true"]')) {
+    if (!form.dataset.blocked && !form.dataset.removing) await saveSet(form, { automatic: true });
+    if (state.unavailable) break;
+  }
+  updateSyncStatus();
 }
 
 function setStatus(form, message, error = false) {
@@ -299,37 +402,61 @@ function setStatus(form, message, error = false) {
   status.classList.toggle("error", error);
 }
 
-async function saveSet(form) {
+async function saveSet(form, { automatic = false } = {}) {
+  clearTimeout(form.saveTimer);
   if (form.savePromise) return form.savePromise;
-  if (!form.reportValidity()) return false;
-  const payload = {
-    weight: form.elements.weight.value === "" ? null : Number(form.elements.weight.value),
-    result: form.elements.result.value === "" ? null : Number(form.elements.result.value),
-    completed: form.elements.completed.checked,
-  };
-  form.querySelector("fieldset").disabled = true;
-  setStatus(form, "Saving…");
+  if (form.dataset.removing || !form.isConnected) return false;
+  if (automatic ? !form.checkValidity() : !form.reportValidity()) {
+    setStatus(form, "Check the values before saving to the server.", true);
+    return false;
+  }
+  const workoutId = state.data.active_workout.id;
+  const draft = rememberSet(form);
+  if (!navigator.onLine) {
+    state.unavailable = true;
+    updateSyncStatus();
+    return false;
+  }
+  const payload = setPayload(draft);
+  setStatus(form, "Saving to server…");
+  let newerEdits = false;
   const pending = (async () => {
     try {
       const saved = await api(`/api/sets/${form.dataset.setId}`, { method: "PUT", body: JSON.stringify(payload) });
       const entry = state.data.workout_exercises.find((item) => item.id === Number(form.dataset.entryId));
       entry.sets = entry.sets.map((item) => item.id === saved.id ? saved : item);
-      delete form.dataset.dirty;
-      form.classList.toggle("is-complete", Boolean(saved.completed));
-      setStatus(form, saved.completed ? "Completed" : "Saved");
-      return true;
+      drafts.snapshot(state.data);
+      drafts.remove(workoutId, form.dataset.setId, draft.revision);
+      newerEdits = form.draftRevision !== draft.revision;
+      if (newerEdits) {
+        setStatus(form, "Newer edits kept on this phone; waiting to sync.");
+      } else {
+        delete form.dataset.dirty;
+        delete form.dataset.blocked;
+        form.classList.toggle("is-complete", Boolean(saved.completed));
+        setStatus(form, saved.completed ? "Completed · synced" : "Saved to server");
+      }
+      return !newerEdits;
     } catch (error) {
       form.dataset.dirty = "true";
-      setStatus(form, `Not saved. ${error.message} Try Save set again.`, true);
+      if (error.status && error.status < 500) form.dataset.blocked = "true";
+      setStatus(form, `${drafts.error ? "Not saved on phone." : "Kept on this phone."} ${error.message} ${form.dataset.blocked ? "Review the set, then try Save set." : "Will retry automatically."}`, true);
       return false;
     } finally {
-      form.querySelector("fieldset").disabled = false;
+      updateSyncStatus();
     }
   })();
   form.savePromise = pending;
   state.setSaves.add(pending);
   try { return await pending; }
-  finally { state.setSaves.delete(pending); form.savePromise = null; }
+  finally {
+    state.setSaves.delete(pending);
+    form.savePromise = null;
+    if (newerEdits) {
+      clearTimeout(form.saveTimer);
+      form.saveTimer = setTimeout(() => saveSet(form, { automatic: true }), 800);
+    }
+  }
 }
 
 async function saveAllSets() {
@@ -349,6 +476,7 @@ async function addSet(button) {
     const entry = state.data.workout_exercises.find((item) => item.id === Number(button.dataset.addSet));
     const set = await api(`/api/workout-exercises/${entry.id}/sets`, { method: "POST", body: "{}" });
     entry.sets.push(set);
+    drafts.snapshot(state.data);
     const list = button.closest(".exercise-entry").querySelector(".sets-list");
     list.insertAdjacentHTML("beforeend", renderSet(entry, set, entry.sets.length - 1));
     bindSet(list.lastElementChild);
@@ -359,25 +487,47 @@ async function addSet(button) {
 
 async function removeSet(form) {
   if (!window.confirm(`Remove set ${form.querySelector("legend").textContent.replace("Set ", "")}?`)) return;
+  form.dataset.removing = "true";
+  clearTimeout(form.saveTimer);
+  await form.savePromise;
   form.querySelector("fieldset").disabled = true;
   try {
     await api(`/api/sets/${form.dataset.setId}`, { method: "DELETE" });
     const entry = state.data.workout_exercises.find((item) => item.id === Number(form.dataset.entryId));
     entry.sets = entry.sets.filter((item) => item.id !== Number(form.dataset.setId));
+    drafts.remove(state.data.active_workout.id, form.dataset.setId);
+    drafts.snapshot(state.data);
     const addButton = form.closest(".exercise-entry").querySelector(".add-set");
     form.remove();
     addButton.focus();
+    updateSyncStatus();
   } catch (error) {
     setStatus(form, error.message, true);
     form.querySelector("fieldset").disabled = false;
+  } finally {
+    delete form.dataset.removing;
   }
 }
 
 window.addEventListener("beforeunload", (event) => {
-  if (state.setSaves.size || document.querySelector('.set-form[data-dirty="true"]')) {
+  if (drafts.error && (state.setSaves.size || document.querySelector('.set-form[data-dirty="true"]'))) {
     event.preventDefault();
     event.returnValue = "";
   }
 });
+
+window.addEventListener("online", () => { retryPendingSets(); updateSyncStatus(); });
+window.addEventListener("offline", () => { state.unavailable = true; updateSyncStatus(); });
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") retryPendingSets();
+});
+setInterval(retryPendingSets, 15000);
+
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/sw.js").then(() => navigator.serviceWorker.ready).then(() => {
+    state.offlineReady = true;
+    updateSyncStatus();
+  }).catch(() => { state.offlineReady = false; updateSyncStatus(); });
+}
 
 load();

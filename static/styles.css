@@ -57,6 +57,7 @@ button:focus-visible, input:focus-visible {
 .brand { font-size: 1.5rem; font-weight: 750; letter-spacing: -0.035em; }
 .status { color: var(--muted); font-size: 0.8rem; font-weight: 550; }
 .status-active { padding: 8px 12px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); }
+.sync-status { font-size: 0.85rem; margin: -12px 0 24px; overflow-wrap: anywhere; }
 
 h1, h2, h3, p { margin-top: 0; }
 h1 { margin-bottom: 12px; font-size: clamp(1.75rem, 6vw, 2.25rem); line-height: 1.2; letter-spacing: -0.035em; overflow-wrap: anywhere; }
@@ -230,6 +231,8 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .set-complete { text-align: center; }
 .set-complete span { display: grid; place-items: center; min-height: 48px; cursor: pointer; }
 .set-complete input { width: 24px; height: 24px; min-height: 24px; padding: 0; accent-color: var(--accent); cursor: pointer; }
+.assistance-option { display: flex; align-items: center; gap: 10px; min-height: 44px; margin-top: 8px; font-size: 0.9rem; }
+.assistance-option input { width: 24px; height: 24px; min-height: 24px; padding: 0; accent-color: var(--accent); }
 .set-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; margin-top: 8px; }
 .set-actions .text-button { padding: 0 6px; min-height: 44px; font-size: 0.85rem; }
 .set-actions .remove-set { color: var(--muted); }

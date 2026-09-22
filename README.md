@@ -16,15 +16,33 @@ The first working slice supports:
 ## Log sets
 
 Each newly added exercise starts with one empty set. Enter kilograms and reps,
-or seconds for duration exercises. Weight is optional and can be negative for
-assistance. Checking Done saves the set as completed; Save set also saves an
-unfinished set. Add set creates another row, and Remove deletes a row after
-confirmation. Sets can be edited while the workout is active.
+or seconds for duration exercises. Weight is optional. Enter a positive amount
+and check Assistance for assisted weight; Gymdex stores it as a negative value.
+Checking Done saves the set as completed; Save set also saves an unfinished set.
+Valid edits save automatically after a short typing pause. Add set creates
+another row, and Remove deletes a row after confirmation. Sets can be edited
+while the workout is active.
 
-Outstanding set edits are saved before adding another exercise or finishing the
-workout. Failed saves keep the inputs visible with a retry message. Reloading
-restores saved values; unsaved edits trigger the browser's leave-page warning.
-This requires a connection to the server and does not provide offline storage.
+Outstanding set edits must reach the server before adding another exercise or
+finishing the workout. Every input change also saves a draft on the current
+device. Reloading restores those drafts, including unfinished entries. The page
+shows whether changes are saved to the server or waiting on the phone.
+
+If the server cannot be reached, keep editing existing sets. Pending saves retry
+when the connection returns, when you return to the page, and every 15 seconds
+while the page is visible. Invalid values require correction; server-rejected
+sets stay on the phone and require review and a manual Save set retry.
+
+After one online visit over HTTPS, the app caches its files and last loaded
+workout so it can reopen offline. Localhost also supports this for development;
+a plain HTTP LAN address does not support offline reopening. Creating gyms,
+starting or finishing workouts, adding exercises or sets, and removing sets
+still require the server. Drafts belong to this browser and site address, do not
+sync in the background while the app is closed, and disappear if browser site
+data is cleared. Use one device at a time when editing a workout.
+
+If browser storage is unavailable, the page warns you to keep it open until
+changes reach the server. Local drafts are a recovery aid, not a database backup.
 
 Last workout values come from the most recent completed workout with the same
 gym, exercise variation, equipment, manufacturer, and machine label. If that
@@ -52,6 +70,21 @@ Run the tests with:
 ```bash
 python3 -m unittest discover -s tests -v
 ```
+
+The mobile saving and cache regression tests use Node.js 18 or newer, with no
+additional packages. Node.js is only needed for these tests:
+
+```bash
+node tests/mobile.test.mjs
+```
+
+For a phone smoke test, open Gymdex online, add an exercise and a few sets, then
+disconnect the phone. Edit an existing set and reload. Confirm the values are
+restored, reconnect, and wait for the saved-to-server status. Check Assistance,
+editing the middle of an exercise search, and scrolling with the keyboard open.
+When changing cached app assets, also bump the cache version in `static/sw.js`
+so a newly installed worker refreshes the offline copy. Close existing app tabs
+and reopen to activate a waiting worker update.
 
 ## Raspberry Pi and Tailscale
 
