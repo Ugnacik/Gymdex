@@ -115,7 +115,7 @@ function render() {
 }
 
 function renderHeader(status = "Ready") {
-  return `<header class="app-header"><div class="brand">Gymdex</div><div class="status${state.data.active_workout ? " status-active" : ""}">${escapeHtml(status)}</div></header><p id="sync-status" class="sync-status" role="status"></p>`;
+  return `<header class="app-header"><div class="brand">Gymdex</div><button class="text-button" id="open-history">History</button><div class="status${state.data.active_workout ? " status-active" : ""}">${escapeHtml(status)}</div></header><p id="sync-status" class="sync-status" role="status"></p>`;
 }
 
 function renderStart() {
@@ -148,6 +148,7 @@ function renderStart() {
   });
   document.querySelector("#add-gym-form").addEventListener("submit", createGym);
   document.querySelector("#start-workout").addEventListener("click", startWorkout);
+  document.querySelector("#open-history").addEventListener("click", openHistory);
 }
 
 async function createGym(event) {
@@ -195,6 +196,7 @@ function renderWorkout() {
       <div class="bottom-action"><button class="primary accent" id="open-picker">Add exercise</button></div>
     </main>`;
   document.querySelector("#open-picker").addEventListener("click", openPicker);
+  document.querySelector("#open-history").addEventListener("click", openHistory);
   document.querySelectorAll("[data-finish-workout]").forEach((button) => button.addEventListener("click", finishWorkout));
   document.querySelector("#cancel-workout").addEventListener("click", cancelWorkout);
   document.querySelectorAll(".set-form").forEach(bindSet);
@@ -204,6 +206,122 @@ function renderWorkout() {
 function formatTime(value) {
   const normalized = value.includes("T") ? value : `${value.replace(" ", "T")}Z`;
   return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(normalized));
+}
+
+function historyDate(value) {
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium", timeStyle: "short", timeZone: "UTC",
+  }).format(new Date(`${value.replace(" ", "T")}Z`));
+}
+
+function renderHistoryDetail(data) {
+  const { workout, workout_exercises: entries } = data;
+  return `<h3>${escapeHtml(workout.gym_name)}</h3>
+    <p>Started ${escapeHtml(historyDate(workout.started_at))}<br>Finished ${escapeHtml(historyDate(workout.completed_at))}<br>Times shown in UTC.</p>
+    <div class="exercise-list">${entries.length ? entries.map((entry) => `
+      <article class="exercise-entry">
+        <h3>${escapeHtml(exerciseDisplayName(entry))}</h3>
+        <p class="meta">${escapeHtml(configurationLabel(entry))}</p>
+        ${entry.sets.length ? `<ol class="history-sets">${entry.sets.map((set, index) => {
+          const weight = set.weight === null ? "No weight recorded" : `${Math.abs(set.weight)} kg${set.weight < 0 ? " assistance" : ""}`;
+          const result = set.result === null ? "No result recorded" : `${set.result} ${entry.tracking_type === "duration" ? "seconds" : "reps"}`;
+          return `<li><span>Set ${index + 1}: ${escapeHtml(result)} · ${escapeHtml(weight)}</span><span class="meta">${set.completed ? "Completed" : "Not completed"}</span></li>`;
+        }).join("")}</ol>` : `<p>No sets recorded.</p>`}
+      </article>`).join("") : `<p>No exercises recorded.</p>`}</div>`;
+}
+
+function openHistory() {
+  if (state.workoutBusy || document.querySelector("#history")) return;
+  // Keep the active workout DOM and its local drafts intact beneath the dialog.
+  const dialog = document.createElement("dialog");
+  dialog.id = "history";
+  dialog.className = "history-dialog";
+  dialog.setAttribute("aria-labelledby", "history-title");
+  dialog.innerHTML = `
+    <div class="sheet-header"><h2 id="history-title">Workout history</h2><button class="text-button" id="close-history" autofocus>Close</button></div>
+    <div id="history-list-view">
+      <form id="history-filters" class="history-filters">
+        <label class="field">Gym<select name="gym_id"><option value="">All gyms</option>${state.data.gyms.map((gym) => `<option value="${gym.id}">${escapeHtml(gym.name)}</option>`).join("")}</select></label>
+        <div class="history-dates"><label class="field">From<input type="date" name="start"></label><label class="field">To<input type="date" name="end"></label></div>
+        <p>Filter by workout start date. Dates and times are shown in UTC.</p>
+        <button class="secondary" type="submit">Apply filters</button>
+      </form>
+      <p id="history-message" role="status"></p>
+      <div id="history-results" class="exercise-list"></div>
+      <div class="history-pages"><button class="secondary" id="history-previous">Newer</button><button class="secondary" id="history-next">Older</button></div>
+    </div>
+    <div id="history-detail-view" hidden><button class="text-button" id="history-back">Back to history</button><div id="history-detail" tabindex="-1"></div></div>`;
+  document.body.append(dialog);
+  const find = (selector) => dialog.querySelector(selector);
+  const listView = find("#history-list-view");
+  const detailView = find("#history-detail-view");
+  const message = find("#history-message");
+  const results = find("#history-results");
+  const previous = find("#history-previous");
+  const next = find("#history-next");
+  const filters = find("#history-filters");
+  let query = new URLSearchParams();
+  let offset = 0;
+  let nextOffset = null;
+  let request = 0;
+  let selectedButton;
+  dialog.addEventListener("close", () => { request++; dialog.remove(); });
+  find("#close-history").addEventListener("click", () => dialog.close());
+  find("#history-back").addEventListener("click", () => {
+    request++;
+    detailView.hidden = true;
+    listView.hidden = false;
+    selectedButton?.focus();
+  });
+  async function showDetail(button) {
+    const version = ++request;
+    selectedButton = button;
+    listView.hidden = true;
+    detailView.hidden = false;
+    const detail = find("#history-detail");
+    detail.textContent = "Loading workout…";
+    find("#history-back").focus();
+    try {
+      const data = await api(`/api/history/${button.dataset.historyId}`);
+      if (version !== request) return;
+      detail.innerHTML = renderHistoryDetail(data);
+      detail.focus();
+    } catch (error) {
+      if (version === request) detail.textContent = `${error.message} Return to history and select the workout to retry.`;
+    }
+  }
+  async function loadPage(pageOffset) {
+    const version = ++request;
+    previous.disabled = next.disabled = true;
+    results.innerHTML = "";
+    message.textContent = "Loading history…";
+    const params = new URLSearchParams(query);
+    params.set("offset", pageOffset);
+    try {
+      const data = await api(`/api/history?${params}`);
+      if (version !== request) return;
+      offset = pageOffset;
+      nextOffset = data.next_offset;
+      message.textContent = data.workouts.length ? "Completed workouts, newest first." : "No completed workouts match these filters.";
+      results.innerHTML = data.workouts.map((workout) => `<button class="recent-card" data-history-id="${workout.id}">
+        <strong>${escapeHtml(workout.gym_name)}</strong><span>${escapeHtml(historyDate(workout.started_at))}</span>
+        <span>${workout.exercise_count} exercise${workout.exercise_count === 1 ? "" : "s"} · ${workout.completed_set_count} completed set${workout.completed_set_count === 1 ? "" : "s"}</span></button>`).join("");
+      results.querySelectorAll("[data-history-id]").forEach((button) => button.addEventListener("click", () => showDetail(button)));
+      previous.disabled = offset === 0;
+      next.disabled = nextOffset === null;
+    } catch (error) {
+      if (version === request) message.textContent = `${error.message} History requires a connection. Use Apply filters to retry.`;
+    }
+  }
+  filters.addEventListener("submit", (event) => {
+    event.preventDefault();
+    query = new URLSearchParams(new FormData(filters));
+    loadPage(0);
+  });
+  previous.addEventListener("click", () => loadPage(Math.max(0, offset - 20)));
+  next.addEventListener("click", () => { if (nextOffset !== null) loadPage(nextOffset); });
+  dialog.showModal();
+  loadPage(0);
 }
 
 async function finishWorkout() {

@@ -35,6 +35,18 @@ class GymdexHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.path == "/api/bootstrap":
             return self._with_db(lambda connection: db.bootstrap(connection))
+        if parsed.path == "/api/history":
+            query = parse_qs(parsed.query)
+            return self._with_db(lambda connection: db.workout_history(
+                connection,
+                gym_id=query.get("gym_id", [""])[0],
+                start=query.get("start", [""])[0],
+                end=query.get("end", [""])[0],
+                offset=query.get("offset", ["0"])[0],
+            ))
+        parts = parsed.path.strip("/").split("/")
+        if len(parts) == 3 and parts[:2] == ["api", "history"]:
+            return self._with_db(lambda connection: db.completed_workout(connection, int(parts[2])))
         if parsed.path == "/api/catalog":
             query = parse_qs(parsed.query)
             try:

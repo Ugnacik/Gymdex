@@ -11,7 +11,20 @@ The first working slice supports:
 - searching a small starter exercise catalog;
 - remembering equipment and machine details separately for each gym;
 - logging sets with optional weight, repetitions or duration, and completion;
-- showing completed sets from the last matching workout.
+- showing completed sets from the last matching workout;
+- browsing completed workouts by gym and date.
+
+## Workout history
+
+Open History from the start screen or during a workout. Completed workouts appear
+newest first, with 20 per page. Filter by gym and workout start date. History dates
+and times use UTC, including both ends of the date filter.
+
+Select a workout to see its saved exercise names, equipment, machine details,
+and every recorded set. Unfinished sets are labeled Not completed and do not
+count toward the completed-set total. Empty completed workouts also appear.
+History is read-only and requires a connection. Opening it leaves your active
+workout and local drafts intact. Close it to return to your workout.
 
 ## Log sets
 

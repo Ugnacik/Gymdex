@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import sqlite3
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -234,6 +235,69 @@ def catalog_for_gym(connection: sqlite3.Connection, gym_id: int) -> dict[str, An
         )
     )
     return {"catalog": catalog, "recent": recent}
+
+
+def workout_history(connection: sqlite3.Connection, gym_id: str = "", start: str = "",
+                    end: str = "", offset: str = "0") -> dict[str, Any]:
+    """Page completed workouts, filtering by their UTC start date."""
+    clauses = ["w.completed_at IS NOT NULL"]
+    parameters: list[Any] = []
+    if gym_id:
+        gym = int(gym_id)
+        if not 1 <= gym <= 9223372036854775807:
+            raise ValueError("A valid gym_id is required.")
+        clauses.append("w.gym_id = ?")
+        parameters.append(gym)
+    for value in (start, end):
+        if value and (len(value) != 10 or date.fromisoformat(value).isoformat() != value):
+            raise ValueError("Dates must use YYYY-MM-DD.")
+    if start and end and start > end:
+        raise ValueError("From date must not be after To date.")
+    if start:
+        clauses.append("w.started_at >= ?")
+        parameters.append(start)
+    if end:
+        clauses.append("w.started_at < ?")
+        try:
+            parameters.append((date.fromisoformat(end) + timedelta(days=1)).isoformat())
+        except OverflowError:
+            raise ValueError("To date must be before 9999-12-31.") from None
+    page_offset = int(offset)
+    if not 0 <= page_offset <= 1000000:
+        raise ValueError("Invalid history offset.")
+    items = rows(connection.execute(
+        f"""SELECT w.id, w.started_at, w.completed_at, w.gym_id, g.name AS gym_name,
+                   (SELECT COUNT(*) FROM workout_exercises e WHERE e.workout_id = w.id) AS exercise_count,
+                   (SELECT COUNT(*) FROM workout_sets s JOIN workout_exercises e
+                    ON e.id = s.workout_exercise_id WHERE e.workout_id = w.id AND s.completed = 1) AS completed_set_count
+            FROM workouts w JOIN gyms g ON g.id = w.gym_id
+            WHERE {' AND '.join(clauses)}
+            ORDER BY w.started_at DESC, w.id DESC LIMIT 21 OFFSET ?""",
+        (*parameters, page_offset),
+    ))
+    return {"workouts": items[:20], "next_offset": page_offset + 20 if len(items) > 20 else None}
+
+
+def completed_workout(connection: sqlite3.Connection, workout_id: int) -> dict[str, Any]:
+    if not 1 <= workout_id <= 9223372036854775807:
+        raise LookupError("Completed workout not found.")
+    workout = connection.execute(
+        """SELECT w.id, w.started_at, w.completed_at, w.gym_id, g.name AS gym_name
+           FROM workouts w JOIN gyms g ON g.id = w.gym_id
+           WHERE w.id = ? AND w.completed_at IS NOT NULL""", (workout_id,),
+    ).fetchone()
+    if not workout:
+        raise LookupError("Completed workout not found.")
+    entries = rows(connection.execute(
+        """SELECT id, position, exercise_name_snapshot AS exercise_name,
+                  variation_name_snapshot AS variation_name, equipment_snapshot AS equipment,
+                  manufacturer_snapshot AS manufacturer, label_snapshot AS label,
+                  tracking_type_snapshot AS tracking_type
+           FROM workout_exercises WHERE workout_id = ? ORDER BY position""", (workout_id,),
+    ))
+    for entry in entries:
+        entry["sets"] = sets_for_exercise(connection, entry["id"])
+    return {"workout": dict(workout), "workout_exercises": entries}
 
 
 def create_gym(connection: sqlite3.Connection, name: str) -> dict[str, Any]:

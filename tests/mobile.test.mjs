@@ -134,6 +134,125 @@ function deferred() {
 
 const response = (body, status = 200) => ({ ok: status < 400, status, json: async () => body });
 
+test('history details escape saved text and distinguish duration, assistance and unfinished sets', () => {
+  const app = harness();
+  app.context.detail = {
+    workout: { gym_name: '<img src=x>', started_at: '2026-09-22 10:00:00', completed_at: '2026-09-22 11:00:00' },
+    workout_exercises: [{
+      exercise_name: 'Plank', variation_name: 'Front Plank', equipment: 'Bodyweight',
+      manufacturer: '<script>', label: 'A&B', tracking_type: 'duration',
+      sets: [{ result: 60, weight: -12.5, completed: 1 }, { result: null, weight: null, completed: 0 }],
+    }],
+  };
+  const html = app.run('renderHistoryDetail(detail)');
+  assert.match(html, /60 seconds/);
+  assert.match(html, /12.5 kg assistance/);
+  assert.match(html, /Not completed/);
+  assert.match(html, /No result recorded/);
+  assert.match(html, /No weight recorded/);
+  assert.match(html, /&lt;img src=x&gt;/);
+  assert.match(html, /&lt;script&gt;/);
+  assert.match(html, /A&amp;B/);
+  assert.doesNotMatch(html, /<img|<script|set-form/);
+  app.context.detail.workout_exercises[0].tracking_type = 'repetitions';
+  assert.match(app.run('renderHistoryDetail(detail)'), /60 reps/);
+  app.context.detail.workout_exercises[0].sets = [];
+  assert.match(app.run('renderHistoryDetail(detail)'), /No sets recorded/);
+  app.context.detail.workout_exercises = [];
+  assert.match(app.run('renderHistoryDetail(detail)'), /No exercises recorded/);
+});
+
+function historyDOM(app) {
+  const nodes = {};
+  function node() {
+    return {
+      innerHTML: '', textContent: '', hidden: false, disabled: false, events: {},
+      addEventListener(event, callback) { this.events[event] = callback; },
+      focus() { this.focused = true; },
+      querySelectorAll() {
+        return [...this.innerHTML.matchAll(/data-history-id="(\d+)"/g)].map((match) => {
+          const button = node();
+          button.dataset = { historyId: match[1] };
+          return button;
+        });
+      },
+    };
+  }
+  const dialog = node();
+  dialog.querySelector = (selector) => nodes[selector] ??= node();
+  dialog.setAttribute = () => {};
+  dialog.showModal = () => { dialog.open = true; };
+  dialog.remove = () => { dialog.removed = true; delete app.nodes['#history']; };
+  dialog.close = () => { dialog.open = false; dialog.events.close(); };
+  app.context.document.createElement = () => dialog;
+  app.context.document.body = { append: () => { app.nodes['#history'] = dialog; } };
+  app.context.URLSearchParams = URLSearchParams;
+  app.context.FormData = class { constructor(form) { return form.values || []; } };
+  return { dialog, nodes };
+}
+
+const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+test('history paginates and filters without replacing the active form or its draft', async () => {
+  const disk = storage();
+  const app = harness(disk);
+  const form = app.form();
+  form.elements.result.value = '9';
+  app.listeners.input();
+  const { dialog, nodes } = historyDOM(app);
+  const urls = [];
+  app.context.fetch = async (url) => {
+    urls.push(url);
+    return response({ workouts: [], next_offset: urls.length === 1 ? 20 : null });
+  };
+  app.run('openHistory()');
+  await settle();
+  assert.equal(dialog.open, true);
+  assert.equal(nodes['#history-next'].disabled, false);
+  nodes['#history-next'].events.click();
+  await settle();
+  assert.equal(urls[1], '/api/history?offset=20');
+  assert.equal(nodes['#history-previous'].disabled, false);
+  nodes['#history-filters'].values = [['gym_id', '2'], ['start', '2026-09-21'], ['end', '2026-09-22']];
+  nodes['#history-filters'].events.submit({ preventDefault() {} });
+  await settle();
+  assert.equal(urls[2], '/api/history?gym_id=2&start=2026-09-21&end=2026-09-22&offset=0');
+  assert.match(nodes['#history-message'].textContent, /No completed workouts/);
+  assert.equal(nodes['#history-previous'].disabled, true);
+  nodes['#close-history'].events.click();
+  assert.equal(dialog.removed, true);
+  assert.equal(form.isConnected, true);
+  assert.equal(form.elements.result.value, '9');
+  assert.equal(new DraftStore(() => disk).get(1, 2).result, '9');
+  assert.equal(app.nodes['#app'].innerHTML, undefined);
+  assert.ok(urls.every((url) => url.startsWith('/api/history?')));
+});
+
+test('history shows connection errors and ignores responses after closing or changing filters', async () => {
+  const app = harness();
+  const { dialog, nodes } = historyDOM(app);
+  app.run('openHistory()');
+  await settle();
+  assert.match(nodes['#history-message'].textContent, /History requires a connection/);
+  const old = deferred();
+  app.context.fetch = () => old.promise;
+  nodes['#history-filters'].events.submit({ preventDefault() {} });
+  app.context.fetch = async () => response({ workouts: [], next_offset: null });
+  nodes['#history-filters'].events.submit({ preventDefault() {} });
+  await settle();
+  old.resolve(response({ workouts: [{ id: 99 }], next_offset: 20 }));
+  await settle();
+  assert.match(nodes['#history-message'].textContent, /No completed workouts/);
+  assert.equal(nodes['#history-next'].disabled, true);
+  const closing = deferred();
+  app.context.fetch = () => closing.promise;
+  nodes['#history-filters'].events.submit({ preventDefault() {} });
+  dialog.close();
+  closing.resolve(response({ workouts: [{ id: 99 }], next_offset: 20 }));
+  await settle();
+  assert.equal(nodes['#history-results'].innerHTML, '');
+});
+
 test('finish freezes entry through saving and completion, including a newer in-flight draft', async () => {
   const disk = storage();
   const app = harness(disk);
