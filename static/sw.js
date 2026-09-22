@@ -1,4 +1,4 @@
-const CACHE = "gymdex-shell-v1";
+const CACHE = "gymdex-shell-v2";
 const SHELL = ["/", "/index.html", "/styles.css", "/app.js", "/drafts.mjs", "/manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {

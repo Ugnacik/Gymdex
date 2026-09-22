@@ -7,6 +7,8 @@ import { DraftStore, setPayload } from '../static/drafts.mjs';
 function storage() {
   const data = new Map();
   return {
+    get length() { return data.size; },
+    key: (index) => [...data.keys()][index] ?? null,
     getItem: (key) => data.get(key) ?? null,
     setItem: (key, value) => data.set(key, value),
     removeItem: (key) => data.delete(key),
@@ -67,7 +69,7 @@ function harness(disk = storage()) {
   const timers = new Map();
   let timerId = 0;
   const status = { textContent: '', classList: { toggle() {} } };
-  const nodes = { '#app': {}, '#toast': {}, '#sync-status': status, '#picker-results': {} };
+  const nodes = { '#app': {}, '#toast': {}, '#sync-status': status, '#picker-results': {}, main: { inert: false } };
   const context = vm.createContext({
     DraftStore, setPayload, AbortController,
     navigator: { onLine: true },
@@ -76,7 +78,8 @@ function harness(disk = storage()) {
       visibilityState: 'visible', addEventListener() {},
       querySelector: (selector) => nodes[selector] ?? null,
       querySelectorAll: (selector) => selector === '.set-form[data-dirty="true"]'
-        ? forms.filter((form) => form.dataset.dirty === 'true') : [],
+        ? forms.filter((form) => form.isConnected && form.dataset.dirty === 'true')
+        : selector === '.set-form' ? forms.filter((form) => form.isConnected) : [],
     },
     setTimeout: (callback, delay) => { timers.set(++timerId, { callback, delay }); return timerId; },
     clearTimeout: (id) => timers.delete(id), setInterval() {},
@@ -121,6 +124,186 @@ test('typing saves locally immediately, and a page reload restores unsynced inpu
   assert.equal(restored.elements.weight.value, '12.5');
   assert.equal(restored.elements.assistance.checked, true);
   assert.equal(restored.dataset.dirty, 'true');
+});
+
+function deferred() {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+const response = (body, status = 200) => ({ ok: status < 400, status, json: async () => body });
+
+test('finish freezes entry through saving and completion, including a newer in-flight draft', async () => {
+  const disk = storage();
+  const app = harness(disk);
+  const form = app.form();
+  const saving = deferred();
+  const completing = deferred();
+  const completeStarted = deferred();
+  const requests = [];
+  app.context.fetch = async (path, options) => {
+    requests.push({ path, body: JSON.parse(options.body) });
+    if (requests.length === 1) return saving.promise;
+    if (path.endsWith('/complete')) {
+      completeStarted.resolve();
+      return completing.promise;
+    }
+    return response({ id: 2, ...JSON.parse(options.body) });
+  };
+  app.run('load = async () => { form.isConnected = false; }');
+  form.elements.result.value = '8';
+  app.listeners.input();
+  const save = app.run('saveSet(form)');
+  form.elements.result.value = '12';
+  app.listeners.input();
+  const finish = app.run('finishWorkout()');
+  assert.equal(app.nodes.main.inert, true);
+  assert.equal(app.timers.has(form.saveTimer), false);
+  saving.resolve(response({ id: 2, result: 8, completed: false }));
+  await save;
+  await completeStarted.promise;
+  assert.equal(app.nodes.main.inert, true);
+  assert.deepEqual(requests.map(({path}) => path), ['/api/sets/2', '/api/sets/2', '/api/workouts/1/complete']);
+  assert.equal(requests[1].body.result, 12);
+  assert.equal(new DraftStore(() => disk).get(1, 2), null);
+  completing.resolve(response({ ok: true }));
+  await finish;
+  assert.equal(app.nodes.main.inert, false);
+});
+
+test('invalid input, declined finish, and completion failure unlock the workout', async () => {
+  for (const mode of ['invalid', 'declined', 'failed']) {
+    const app = harness();
+    const form = app.form();
+    form.elements.completed.checked = true;
+    form.elements.result.value = mode === 'invalid' ? '' : '8';
+    app.listeners.input();
+    const methods = [];
+    app.context.window.confirm = () => mode !== 'declined';
+    app.context.fetch = async (_, options) => {
+      methods.push(options.method);
+      if (options.method === 'POST') throw new Error('offline');
+      return response({ id: 2, ...JSON.parse(options.body) });
+    };
+    await app.run('finishWorkout()');
+    assert.equal(app.nodes.main.inert, false);
+    assert.equal(app.run('state.workoutBusy'), false);
+    assert.equal(app.run('state.data.active_workout.id'), 1);
+    assert.deepEqual(methods, mode === 'invalid' ? [] : mode === 'declined' ? ['PUT'] : ['PUT', 'POST']);
+  }
+});
+
+test('cancel stops timers and retries, clears only its drafts, and survives a failed refresh', async () => {
+  const disk = storage();
+  const store = new DraftStore(() => disk);
+  store.put(1, 99, values); // A draft from an earlier page, absent from the current form list.
+  store.put(10, 2, values);
+  const app = harness(disk);
+  const form = app.form();
+  app.listeners.input();
+  const timer = app.timers.get(form.saveTimer);
+  const deleting = deferred();
+  const deleteStarted = deferred();
+  const methods = [];
+  app.context.fetch = async (_, options) => {
+    methods.push(options.method ?? 'GET');
+    if (options.method === 'DELETE') {
+      deleteStarted.resolve();
+      return deleting.promise;
+    }
+    throw new Error('refresh unavailable');
+  };
+  // Keep the real load/cached fallback path; only replace DOM rendering.
+  app.run('render = () => { form.isConnected = Boolean(state.data.active_workout); }');
+  const cancel = app.run('cancelWorkout()');
+  await deleteStarted.promise;
+  assert.equal(app.nodes.main.inert, true);
+  assert.equal(app.timers.has(form.saveTimer), false);
+  await timer.callback(); // Even a callback already queued must be harmless.
+  await app.run('retryPendingSets()');
+  assert.deepEqual(methods, ['DELETE']);
+  deleting.resolve(response({ ok: true }));
+  await cancel;
+  const reloaded = new DraftStore(() => disk);
+  assert.equal(reloaded.get(1, 2), null);
+  assert.equal(reloaded.get(1, 99), null);
+  assert.equal(reloaded.get(10, 2).result, values.result);
+  assert.equal(reloaded.cachedWorkout().active_workout, null);
+  assert.equal(app.run('state.data.active_workout'), null);
+  assert.equal(app.nodes.main.inert, false);
+});
+
+test('cancel waits for in-flight saving and preserves drafts when deletion fails', async () => {
+  const disk = storage();
+  const app = harness(disk);
+  const form = app.form();
+  form.elements.result.value = '8';
+  app.listeners.input();
+  const saving = deferred();
+  const methods = [];
+  app.context.fetch = async (_, options) => {
+    methods.push(options.method);
+    if (options.method === 'PUT') return saving.promise;
+    throw new Error('connection lost during DELETE');
+  };
+  const save = app.run('saveSet(form)');
+  form.elements.result.value = '12';
+  app.listeners.input();
+  const cancel = app.run('cancelWorkout()');
+  assert.deepEqual(methods, ['PUT']);
+  saving.resolve(response({ id: 2, result: 8, completed: false }));
+  await save;
+  await cancel;
+  assert.deepEqual(methods, ['PUT', 'DELETE']);
+  assert.equal(app.timers.has(form.saveTimer), false);
+  assert.equal(new DraftStore(() => disk).get(1, 2).result, '12');
+  assert.equal(app.run('state.data.active_workout.id'), 1);
+  assert.equal(app.nodes.main.inert, false);
+  app.context.fetch = async (_, options) => response({ id: 2, ...JSON.parse(options.body ?? '{}') });
+  await app.run('retryPendingSets()');
+  assert.equal(new DraftStore(() => disk).get(1, 2), null);
+});
+
+test('worker upgrade installs the current shell and removes the previous offline version', async () => {
+  const handlers = {};
+  const cachesByName = new Map([
+    ['gymdex-shell-v1', new Map([['/app.js', 'old app']])],
+    ['unrelated-cache', new Map()],
+  ]);
+  const assets = new Map(await Promise.all(['/', '/index.html', '/styles.css', '/app.js', '/drafts.mjs', '/manifest.webmanifest'].map(async (path) =>
+    [path, await readFile(new URL('../static/' + (path === '/' ? 'index.html' : path.slice(1)), import.meta.url), 'utf8')])));
+  let claimed = false;
+  const context = vm.createContext({
+    URL, Response, AbortController, setTimeout, clearTimeout,
+    self: {
+      location: { origin: 'https://gym.test' },
+      addEventListener: (name, handler) => { handlers[name] = handler; },
+      clients: { claim: async () => { claimed = true; } },
+    },
+    fetch: async () => { throw new Error('offline'); },
+    caches: {
+      open: async (name) => {
+        if (!cachesByName.has(name)) cachesByName.set(name, new Map());
+        return { addAll: async (paths) => { for (const path of paths) cachesByName.get(name).set(path, assets.get(path)); } };
+      },
+      keys: async () => [...cachesByName.keys()],
+      delete: async (name) => cachesByName.delete(name),
+      match: async (path) => [...cachesByName.values()].map(cache => cache.get(path)).find(Boolean),
+    },
+  });
+  vm.runInContext(await readFile(new URL('../static/sw.js', import.meta.url), 'utf8'), context);
+  let pending;
+  handlers.install({ waitUntil: (promise) => { pending = promise; } });
+  await pending;
+  assert.ok([...cachesByName.keys()].some(name => name.startsWith('gymdex-shell-') && name !== 'gymdex-shell-v1'));
+  handlers.activate({ waitUntil: (promise) => { pending = promise; } });
+  await pending;
+  assert.equal(cachesByName.has('gymdex-shell-v1'), false);
+  assert.equal(cachesByName.has('unrelated-cache'), true);
+  assert.equal(claimed, true);
+  handlers.fetch({ request: { url: 'https://gym.test/app.js', method: 'GET' }, respondWith: (promise) => { pending = promise; } });
+  assert.equal(await pending, assets.get('/app.js'));
 });
 
 test('lost connection keeps the draft, reconnect retries a PUT and clears only after acknowledgement', async () => {

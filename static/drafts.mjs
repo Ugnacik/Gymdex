@@ -57,6 +57,25 @@ export class DraftStore {
     }
   }
 
+  removeWorkout(workoutId) {
+    const prefix = `gymdex:draft:v1:${workoutId}:`;
+    const keys = new Set([...this.memory.keys()].filter((key) => key.startsWith(prefix)));
+    try {
+      const storage = this.storage();
+      for (let i = 0; i < storage.length; i++) {
+        const key = storage.key(i);
+        if (key?.startsWith(prefix)) keys.add(key);
+      }
+    } catch {
+      this.error = true;
+    }
+    for (const key of keys) {
+      this.memory.delete(key);
+      try { this.storage().removeItem(key); }
+      catch { this.error = true; }
+    }
+  }
+
   snapshot(data) {
     this.write("gymdex:workout:v1", data);
   }

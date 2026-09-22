@@ -210,7 +210,7 @@ async function finishWorkout() {
   if (state.workoutBusy) return;
   setWorkoutBusy(true);
   try {
-    if (!await saveAllSets()) return;
+    if (!await saveAllSets({ allowWhileBusy: true })) return;
     if (!window.confirm("Finish this workout?")) return;
     await api(`/api/workouts/${state.data.active_workout.id}/complete`, { method: "POST", body: "{}" });
     state.selectedGymId = state.data.active_workout.gym_id;
@@ -223,7 +223,11 @@ async function finishWorkout() {
 function setWorkoutBusy(busy) {
   state.workoutBusy = busy;
   document.querySelectorAll("[data-finish-workout], #cancel-workout").forEach((button) => { button.disabled = busy; });
-  if (!busy) document.querySelector("main").inert = false;
+  const main = document.querySelector("main");
+  if (main) main.inert = busy;
+  if (busy) {
+    document.querySelectorAll(".set-form").forEach((form) => clearTimeout(form.saveTimer));
+  }
 }
 
 async function cancelWorkout() {
@@ -231,12 +235,16 @@ async function cancelWorkout() {
   if (!window.confirm("Cancel this workout and discard all its exercises and sets? This cannot be undone.")) return;
   setWorkoutBusy(true);
   try {
-    document.querySelector("main").inert = true;
     // Let saves already in progress settle, but discard unsaved inputs without validation.
     await Promise.all([...state.setSaves]);
     const workout = state.data.active_workout;
     await api(`/api/workouts/${workout.id}`, { method: "DELETE" });
     state.selectedGymId = workout.gym_id;
+    // A failed refresh must not reopen the workout we just discarded.
+    state.data.active_workout = null;
+    state.data.workout_exercises = [];
+    drafts.snapshot(state.data);
+    drafts.removeWorkout(workout.id);
     await load();
     showToast("Workout canceled.");
   } catch (error) { showToast(error.message); }
@@ -409,6 +417,7 @@ function bindSet(form) {
     setStatus(form, "Restored from this phone; waiting to sync.");
   }
   form.addEventListener("input", () => {
+    if (state.workoutBusy) return;
     delete form.dataset.blocked;
     rememberSet(form);
     clearTimeout(form.saveTimer);
@@ -416,6 +425,7 @@ function bindSet(form) {
   });
   form.addEventListener("submit", (event) => {
     event.preventDefault();
+    if (state.workoutBusy) return;
     delete form.dataset.blocked;
     saveSet(form);
   });
@@ -424,7 +434,7 @@ function bindSet(form) {
 }
 
 async function retryPendingSets() {
-  if (!navigator.onLine || document.visibilityState === "hidden") return;
+  if (state.workoutBusy || !navigator.onLine || document.visibilityState === "hidden") return;
   if (state.unavailable) {
     try { await api("/api/bootstrap"); }
     catch { return; }
@@ -442,8 +452,9 @@ function setStatus(form, message, error = false) {
   status.classList.toggle("error", error);
 }
 
-async function saveSet(form, { automatic = false } = {}) {
+async function saveSet(form, { automatic = false, allowWhileBusy = false } = {}) {
   clearTimeout(form.saveTimer);
+  if (state.workoutBusy && !allowWhileBusy) return false;
   if (form.savePromise) return form.savePromise;
   if (form.dataset.removing || !form.isConnected) return false;
   if (automatic ? !form.checkValidity() : !form.reportValidity()) {
@@ -492,17 +503,17 @@ async function saveSet(form, { automatic = false } = {}) {
   finally {
     state.setSaves.delete(pending);
     form.savePromise = null;
-    if (newerEdits) {
+    if (newerEdits && !state.workoutBusy) {
       clearTimeout(form.saveTimer);
       form.saveTimer = setTimeout(() => saveSet(form, { automatic: true }), 800);
     }
   }
 }
 
-async function saveAllSets() {
+async function saveAllSets({ allowWhileBusy = false } = {}) {
   await Promise.all([...state.setSaves]);
   for (const form of document.querySelectorAll('.set-form[data-dirty="true"]')) {
-    if (!await saveSet(form)) {
+    if (!await saveSet(form, { allowWhileBusy })) {
       form.scrollIntoView({ block: "center" });
       return false;
     }
