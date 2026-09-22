@@ -8,6 +8,7 @@ const state = {
   selectedExercise: null,
   selectedEquipment: null,
   setSaves: new Set(),
+  workoutBusy: false,
 };
 
 async function api(path, options = {}) {
@@ -31,6 +32,13 @@ function escapeHtml(value) {
 
 function configurationLabel(item) {
   return [item.equipment, item.manufacturer, item.label].filter(Boolean).join(" · ");
+}
+
+function exerciseDisplayName(item) {
+  const { exercise_name: exercise, variation_name: variation } = item;
+  if (!variation || variation === "Standard") return exercise;
+  if (variation.toLowerCase().includes(exercise.toLowerCase())) return variation;
+  return `${variation} ${exercise}`;
 }
 
 function showToast(message) {
@@ -118,23 +126,28 @@ function renderWorkout() {
       ${renderHeader("Workout active")}
       <section class="workout-heading">
         <div><h1>${escapeHtml(workout.gym_name)}</h1><p>Started ${escapeHtml(formatTime(workout.started_at))}</p></div>
-        <button class="text-button" id="finish-workout">Finish</button>
+        <button class="text-button" data-finish-workout>Finish workout</button>
       </section>
       <div class="section-title"><h2>Exercises</h2><span>${entries.length}</span></div>
       <section class="exercise-list">
         ${entries.length ? entries.map((entry) => `
           <article class="exercise-entry" data-entry-id="${entry.id}">
-            <h3>${escapeHtml(entry.exercise_name)}${entry.variation_name === "Standard" ? "" : ` · ${escapeHtml(entry.variation_name)}`}</h3>
+            <h3>${escapeHtml(exerciseDisplayName(entry))}</h3>
             <p class="meta">${escapeHtml(configurationLabel(entry))}</p>
             <p class="set-hint">${entry.tracking_type === "duration" ? "Duration in seconds" : "Repetitions"}. Weight is optional; use a negative value for assistance.</p>
             <div class="sets-list">${entry.sets.map((set, index) => renderSet(entry, set, index)).join("")}</div>
             <button class="secondary add-set" data-add-set="${entry.id}">Add set</button>
           </article>`).join("") : `<div class="empty"><h3>No exercises yet</h3><p>Add a recent choice in one tap, or search the catalog.</p></div>`}
       </section>
+      <div class="workout-actions">
+        <button class="secondary" data-finish-workout>Finish workout</button>
+        <button class="text-button cancel-workout" id="cancel-workout">Cancel workout</button>
+      </div>
       <div class="bottom-action"><button class="primary accent" id="open-picker">Add exercise</button></div>
     </main>`;
   document.querySelector("#open-picker").addEventListener("click", openPicker);
-  document.querySelector("#finish-workout").addEventListener("click", finishWorkout);
+  document.querySelectorAll("[data-finish-workout]").forEach((button) => button.addEventListener("click", finishWorkout));
+  document.querySelector("#cancel-workout").addEventListener("click", cancelWorkout);
   document.querySelectorAll(".set-form").forEach(bindSet);
   document.querySelectorAll("[data-add-set]").forEach((button) => button.addEventListener("click", () => addSet(button)));
 }
@@ -145,14 +158,40 @@ function formatTime(value) {
 }
 
 async function finishWorkout() {
-  if (!await saveAllSets()) return;
-  if (!window.confirm("Finish this workout?")) return;
+  if (state.workoutBusy) return;
+  setWorkoutBusy(true);
   try {
+    if (!await saveAllSets()) return;
+    if (!window.confirm("Finish this workout?")) return;
     await api(`/api/workouts/${state.data.active_workout.id}/complete`, { method: "POST", body: "{}" });
     state.selectedGymId = state.data.active_workout.gym_id;
     await load();
     showToast("Workout finished.");
   } catch (error) { showToast(error.message); }
+  finally { setWorkoutBusy(false); }
+}
+
+function setWorkoutBusy(busy) {
+  state.workoutBusy = busy;
+  document.querySelectorAll("[data-finish-workout], #cancel-workout").forEach((button) => { button.disabled = busy; });
+  if (!busy) document.querySelector("main").inert = false;
+}
+
+async function cancelWorkout() {
+  if (state.workoutBusy) return;
+  if (!window.confirm("Cancel this workout and discard all its exercises and sets? This cannot be undone.")) return;
+  setWorkoutBusy(true);
+  try {
+    document.querySelector("main").inert = true;
+    // Let saves already in progress settle, but discard unsaved inputs without validation.
+    await Promise.all([...state.setSaves]);
+    const workout = state.data.active_workout;
+    await api(`/api/workouts/${workout.id}`, { method: "DELETE" });
+    state.selectedGymId = workout.gym_id;
+    await load();
+    showToast("Workout canceled.");
+  } catch (error) { showToast(error.message); }
+  finally { setWorkoutBusy(false); }
 }
 
 async function openPicker() {
@@ -168,7 +207,7 @@ async function openPicker() {
 function renderPicker(query = "") {
   document.querySelector("#picker")?.remove();
   const filtered = state.picker.catalog.filter((item) =>
-    `${item.exercise_name} ${item.variation_name}`.toLowerCase().includes(query.toLowerCase())
+    `${exerciseDisplayName(item)} ${item.exercise_name} ${item.variation_name}`.toLowerCase().includes(query.toLowerCase())
   );
   const wrapper = document.createElement("div");
   wrapper.id = "picker";
@@ -178,9 +217,9 @@ function renderPicker(query = "") {
       <div class="sheet-handle" aria-hidden="true"></div>
       <div class="sheet-header"><h2 id="picker-title">Add exercise</h2><button class="text-button" id="close-picker">Close</button></div>
       <input class="search" id="exercise-search" type="search" inputmode="search" autocomplete="off" placeholder="Search exercises" aria-label="Search exercises" value="${escapeHtml(query)}" />
-      ${!query && state.picker.recent.length ? `<div class="section-title"><h3>Recent at ${escapeHtml(state.data.active_workout.gym_name)}</h3></div><div class="recent-list">${state.picker.recent.map((item) => `<button class="recent-card" data-profile-id="${item.profile_id}"><strong>${escapeHtml(item.exercise_name)}</strong><span>${escapeHtml(configurationLabel(item))}</span></button>`).join("")}</div>` : ""}
+      ${!query && state.picker.recent.length ? `<div class="section-title"><h3>Recent at ${escapeHtml(state.data.active_workout.gym_name)}</h3></div><div class="recent-list">${state.picker.recent.map((item) => `<button class="recent-card" data-profile-id="${item.profile_id}"><strong>${escapeHtml(exerciseDisplayName(item))}</strong><span>${escapeHtml(configurationLabel(item))}</span></button>`).join("")}</div>` : ""}
       <div class="section-title"><h3>${query ? "Results" : "Exercise catalog"}</h3><span>${filtered.length}</span></div>
-      <div class="exercise-list">${filtered.map((item) => `<button class="exercise-card" data-variation-id="${item.id}"><strong>${escapeHtml(item.exercise_name)}</strong><span>${item.variation_name === "Standard" ? escapeHtml(item.equipment.join(" · ")) : `${escapeHtml(item.variation_name)} · ${escapeHtml(item.equipment.join(" · "))}`}</span></button>`).join("") || `<div class="empty"><h3>No matches</h3><p>Try a shorter exercise name.</p></div>`}</div>
+      <div class="exercise-list">${filtered.map((item) => `<button class="exercise-card" data-variation-id="${item.id}"><strong>${escapeHtml(exerciseDisplayName(item))}</strong><span>${escapeHtml(item.equipment.join(" · "))}</span></button>`).join("") || `<div class="empty"><h3>No matches</h3><p>Try a shorter exercise name.</p></div>`}</div>
     </section>`;
   document.querySelector("main")?.setAttribute("inert", "");
   document.body.append(wrapper);
@@ -221,8 +260,8 @@ function renderConfiguration() {
   sheet.innerHTML = `
     <div class="sheet-handle" aria-hidden="true"></div>
     <div class="sheet-header"><button class="text-button" id="back-to-picker">Back</button><button class="text-button" id="close-picker">Close</button></div>
-    <h2>${escapeHtml(item.exercise_name)}</h2>
-    <p>${item.variation_name === "Standard" ? "Choose the equipment used at this gym." : `${escapeHtml(item.variation_name)}. Choose the equipment used at this gym.`}</p>
+    <h2 id="picker-title">${escapeHtml(exerciseDisplayName(item))}</h2>
+    <p>Choose the equipment used at this gym.</p>
     <div class="equipment-grid">${item.equipment.map((equipment) => `<button class="equipment-option" data-equipment="${escapeHtml(equipment)}" aria-pressed="${state.selectedEquipment === equipment}">${escapeHtml(equipment)}</button>`).join("")}</div>
     <form id="configuration-form">
       <div class="field"><label for="manufacturer">Manufacturer <small>(optional)</small></label><input id="manufacturer" name="manufacturer" maxlength="80" autocomplete="off" placeholder="e.g. Technogym" /></div>
@@ -257,7 +296,7 @@ async function addConfiguredExercise(event) {
 function renderSet(entry, set, index) {
   const previous = entry.previous_sets[index];
   const unit = entry.tracking_type === "duration" ? "sec" : "reps";
-  const name = `${entry.exercise_name}, set ${set.position}`;
+  const name = `${exerciseDisplayName(entry)}, set ${set.position}`;
   const previousText = previous
     ? `${previous.weight === null ? "" : `${previous.weight} kg × `}${previous.result} ${unit}`
     : "No completed set";
@@ -268,10 +307,11 @@ function renderSet(entry, set, index) {
       <div class="set-inputs">
         <label>kg <input name="weight" type="number" inputmode="decimal" step="any" min="-100000" max="100000" aria-label="${escapeHtml(name)} weight in kilograms" value="${set.weight ?? ""}" /></label>
         <label>${unit === "sec" ? "Seconds" : "Reps"} <input name="result" type="number" inputmode="numeric" min="1" max="1000000" step="1" aria-label="${escapeHtml(name)} ${unit}" value="${set.result ?? ""}" ${set.completed ? "required" : ""} /></label>
-        <label class="set-complete">Done <span><input name="completed" type="checkbox" aria-label="Complete ${escapeHtml(name)}" ${set.completed ? "checked" : ""} /></span></label>
       </div>
+      <label class="set-complete"><input name="completed" type="checkbox" aria-label="Mark ${escapeHtml(name)} completed and save" aria-describedby="completion-hint-${set.id}" ${set.completed ? "checked" : ""} /> Set completed</label>
+      <p class="completion-hint" id="completion-hint-${set.id}">Checking saves and completes this set. Save changes also keeps unfinished sets.</p>
       <div class="set-actions">
-        <button type="submit" class="text-button">Save set</button>
+        <button type="submit" class="text-button">Save changes</button>
         <button type="button" class="text-button remove-set" aria-label="Remove ${escapeHtml(name)}">Remove</button>
         <span class="set-status" role="status">${set.completed ? "Completed" : "Saved"}</span>
       </div>
@@ -320,7 +360,7 @@ async function saveSet(form) {
       return true;
     } catch (error) {
       form.dataset.dirty = "true";
-      setStatus(form, `Not saved. ${error.message} Try Save set again.`, true);
+      setStatus(form, `Not saved. ${error.message} Try Save changes again.`, true);
       return false;
     } finally {
       form.querySelector("fieldset").disabled = false;

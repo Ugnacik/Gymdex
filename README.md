@@ -17,7 +17,7 @@ The first working slice supports:
 
 Each newly added exercise starts with one empty set. Enter kilograms and reps,
 or seconds for duration exercises. Weight is optional and can be negative for
-assistance. Checking Done saves the set as completed; Save set also saves an
+assistance. Checking Set completed saves the set as completed; Save changes also saves an
 unfinished set. Add set creates another row, and Remove deletes a row after
 confirmation. Sets can be edited while the workout is active.
 
@@ -25,6 +25,13 @@ Outstanding set edits are saved before adding another exercise or finishing the
 workout. Failed saves keep the inputs visible with a retry message. Reloading
 restores saved values; unsaved edits trigger the browser's leave-page warning.
 This requires a connection to the server and does not provide offline storage.
+
+Exercise names include the variation throughout the catalog, recent choices,
+and workout, for example Bench Press and Incline Bench Press.
+Finish workout is available above and below the exercise list. Cancel workout
+asks for confirmation, then discards the active workout and all its exercises
+and sets, including unsaved edits. Saved gym equipment configurations and
+completed workouts are kept.
 
 Last workout values come from the most recent completed workout with the same
 gym, exercise variation, equipment, manufacturer, and machine label. If that

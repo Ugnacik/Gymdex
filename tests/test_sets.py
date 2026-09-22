@@ -152,6 +152,50 @@ class SetTests(unittest.TestCase):
         self.assertEqual(self.request('DELETE', f'/api/sets/{item["id"]}')[0], 200)
         self.assertEqual(self.request('DELETE', f'/api/sets/{item["id"]}')[0], 404)
 
+    def test_cancel_discards_active_workout_and_preserves_history_and_profiles(self):
+        self.save(self.first_set())
+        completed_id = self.workout['id']
+        completed_entry_id = self.entry['id']
+        db.complete_workout(self.connection, completed_id)
+        self.workout = db.start_workout(self.connection, self.gym['id'])
+        active_entry = self.add_exercise(self.press, 'Barbell')
+        active_set = self.first_set(active_entry)
+        self.save(active_set)
+        self.add_exercise(self.plank, 'Bodyweight')
+        profiles = db.rows(self.connection.execute('SELECT * FROM gym_exercise_profiles'))
+
+        status, body = self.request('DELETE', f'/api/workouts/{self.workout["id"]}')
+        self.assertEqual((status, body), (200, {'ok': True}))
+        self.assertIsNone(db.bootstrap(self.connection)['active_workout'])
+        self.assertEqual(db.bootstrap(self.connection)['workout_exercises'], [])
+        self.assertEqual(db.sets_for_exercise(self.connection, active_entry['id']), [])
+        self.assertEqual(self.connection.execute('SELECT COUNT(*) FROM workout_exercises').fetchone()[0], 1)
+        self.assertEqual(self.connection.execute('SELECT COUNT(*) FROM workout_sets').fetchone()[0], 1)
+        self.assertEqual(db.sets_for_exercise(self.connection, completed_entry_id)[0]['result'], 8)
+        self.assertEqual(db.rows(self.connection.execute('SELECT * FROM gym_exercise_profiles')), profiles)
+        self.assertEqual(self.request('DELETE', f'/api/workouts/{self.workout["id"]}')[0], 404)
+        self.assertEqual(self.request('PUT', f'/api/sets/{active_set["id"]}', dict(result=8, weight=None, completed=True))[0], 404)
+
+        self.workout = db.start_workout(self.connection, self.gym['id'])
+        self.add_exercise(self.press, 'Barbell')
+        self.assertEqual(db.bootstrap(self.connection)['workout_exercises'][0]['previous_sets'][0]['result'], 8)
+
+    def test_cancel_rejects_completed_missing_and_invalid_workouts(self):
+        self.save(self.first_set())
+        db.complete_workout(self.connection, self.workout['id'])
+        active = db.start_workout(self.connection, self.gym['id'])
+        for workout_id, expected in [(self.workout['id'], 404), (999, 404), ('invalid', 400)]:
+            with self.subTest(workout_id=workout_id):
+                self.assertEqual(self.request('DELETE', f'/api/workouts/{workout_id}')[0], expected)
+        self.assertEqual(db.bootstrap(self.connection)['active_workout']['id'], active['id'])
+        self.assertEqual(self.first_set()['completed'], 1)
+
+    def test_cancel_empty_workout(self):
+        db.complete_workout(self.connection, self.workout['id'])
+        empty = db.start_workout(self.connection, self.gym['id'])
+        self.assertEqual(self.request('DELETE', f'/api/workouts/{empty["id"]}')[0], 200)
+        self.assertIsNone(db.bootstrap(self.connection)['active_workout'])
+
 
 if __name__ == '__main__':
     unittest.main()
