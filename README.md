@@ -3,7 +3,7 @@
 Gymdex is a mobile-first workout tracker designed to run on a Raspberry Pi and
 stay private inside a Tailscale network.
 
-The first working slice supports:
+Gymdex supports:
 
 - creating gyms;
 - starting and finishing one active workout;
@@ -12,7 +12,13 @@ The first working slice supports:
 - remembering equipment and machine details separately for each gym;
 - logging sets with optional weight, repetitions or duration, and completion;
 - showing completed sets from the last matching workout;
-- browsing completed workouts by gym and date.
+- browsing completed workouts by gym and date;
+- creating exercise variations with custom tracking and equipment choices;
+- repeating a completed workout with fresh, empty set slots;
+- correcting sets in completed workouts;
+- viewing exercise progress across completed workouts;
+- using an optional rest timer;
+- exporting workout data as CSV and backing up the SQLite database.
 
 ## Workout history
 
@@ -23,8 +29,40 @@ and times use UTC, including both ends of the date filter.
 Select a workout to see its saved exercise names, equipment, machine details,
 and every recorded set. Unfinished sets are labeled Not completed and do not
 count toward the completed-set total. Empty completed workouts also appear.
-History is read-only and requires a connection. Opening it leaves your active
+History requires a connection. Opening it leaves your active
 workout and local drafts intact. Close it to return to your workout.
+Open a completed workout to correct an existing set's weight, reps or duration,
+and completion state. A corrected set immediately affects progress and future
+"Last workout" reference values. Existing sets can be corrected; completed
+workouts cannot gain or lose exercises or sets.
+
+With no active workout, **Repeat this workout** starts a new workout at the same
+gym. It copies the exercise configurations and number of set slots, but clears
+all results, weights, and completion marks. The source stays in history.
+
+Use **Progress** to choose an exercise and optional gym. The chart and table
+show the best completed result and best weight for each workout. From a workout
+exercise or history detail, **View progress** starts with its exact gym,
+equipment, manufacturer, and machine label, so different machines are not
+mixed. These two best values can come from different sets in the same workout.
+
+## Custom exercises
+
+During a workout, open Add exercise and choose **Create custom exercise**.
+Enter an exercise name, optional variation name, tracking type, and one or more
+comma-separated equipment choices. An empty variation name becomes Standard.
+Using an existing exercise name adds another variation. The resulting catalog
+entry is available at every gym; machine details are still recorded for the
+gym when you add it to a workout. Created variations cannot yet be renamed or
+deleted in the app.
+
+## Rest timer
+
+Turn on Rest timer during an active workout and choose a rest interval. Marking
+a valid set complete starts the countdown, including when the phone is offline.
+The timer can be started, paused, resumed, or reset manually. Its enabled state
+and interval are kept in this browser; a running countdown is not restored after
+the page closes. The timer does not send notifications when the app is closed.
 
 ## Log sets
 
@@ -98,6 +136,7 @@ The browser behavior, workout editing, and cache regression tests use Node.js
 node tests/app.test.mjs
 node tests/mobile.test.mjs
 node tests/workout-editor.test.mjs
+node tests/rest-timer.test.mjs
 ```
 
 For a phone smoke test, open Gymdex online, add an exercise and a few sets, then
@@ -124,6 +163,39 @@ connected to the same tailnet. Add it to the home screen for app-like access.
 For a persistent installation at `~/apps/gymdex`, copy
 [deploy/gymdex.service](deploy/gymdex.service) to
 `~/.config/systemd/user/gymdex.service`, then enable it as a systemd user service.
+
+## Export and database backup
+
+Use **Export CSV** in Workout history to download workout, exercise, and set rows.
+The CSV includes empty workouts and unfinished sets. It is for spreadsheets and
+analysis; it does not contain the full catalog or gym configurations. Timestamps
+in the export are UTC. Text fields that could be interpreted as spreadsheet
+formulas are prefixed with an apostrophe.
+
+For a complete, restorable copy, use SQLite's online backup API through the
+included command. It can safely snapshot a running Gymdex database:
+
+```bash
+python3 -m gymdex.backup backup ~/gymdex-backup.sqlite3
+```
+
+Copy the backup somewhere other than the Pi and verify you can restore it. To
+restore, stop the Gymdex service first and keep a copy of the current database.
+Then run:
+
+```bash
+systemctl --user stop gymdex
+python3 -m gymdex.backup backup ~/gymdex-before-restore.sqlite3
+python3 -m gymdex.backup restore ~/gymdex-backup.sqlite3 --replace
+systemctl --user start gymdex
+```
+
+The command uses `data/gymdex.sqlite3` by default, or `GYMDEX_DB_PATH` when set.
+Pass `--db PATH` to choose a different database. Backup refuses to replace an
+existing output unless you pass `--replace`. Restore checks that the source is a
+readable Gymdex database and requires `--replace` for the destination. A restore
+also refuses to write beside leftover SQLite journal files; stop the service
+and let SQLite close or checkpoint the database before retrying.
 
 ## Data model
 

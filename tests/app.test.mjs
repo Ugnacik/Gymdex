@@ -28,9 +28,10 @@ function node() {
   };
 }
 
-async function harness(disk = storage()) {
+async function harness(disk = storage(), initialData = {}) {
   const nodes = Object.fromEntries(['#app', '#toast', '#sync-status', '#picker-results', 'main',
-    '#open-picker', '#open-history', '#cancel-workout', '#finish', '#add-gym-form', '#start-workout']
+    '#open-picker', '#open-history', '#open-progress', '#cancel-workout', '#finish', '#add-gym-form', '#start-workout', '#create-exercise',
+    '#rest-enabled', '#rest-controls', '#rest-duration', '#rest-clock', '#rest-status', '#rest-start', '#rest-pause', '#rest-stop']
     .map((key) => [key, node()]));
   const timers = new Map();
   let timerId = 0;
@@ -43,10 +44,11 @@ async function harness(disk = storage()) {
     querySelector: (selector) => formNodes[selector],
     checkValidity: () => !form.elements.result.required || form.elements.result.value !== '',
     reportValidity: () => form.checkValidity(), scrollIntoView() {},
+    requestSubmit: () => form.events.submit({ preventDefault() {} }),
   });
   const data = { gyms: [], active_workout: { id: 1, gym_id: 1, gym_name: 'Home', started_at: '2026-09-22 10:00:00' },
     workout_exercises: [{ id: 3, exercise_name: 'Bench Press', variation_name: 'Standard', equipment: 'Barbell',
-      previous_sets: [], sets: [{ id: 2, position: 1, weight: null, result: null, completed: false }] }] };
+      previous_sets: [], sets: [{ id: 2, position: 1, weight: null, result: null, completed: false }] }], ...initialData };
   const env = {
     window: { localStorage: disk, addEventListener() {}, confirm: () => true },
     navigator: { onLine: true },
@@ -243,4 +245,158 @@ test('filtering exercise search changes only the results container', async () =>
   search.events.input({ target: { value: 'no match' } });
   assert.match(app.nodes['#picker-results'].innerHTML, /No matches/);
   assert.equal(wrapper.innerHTML, original);
+});
+
+test('a valid completed set starts the optional rest timer while offline', async () => {
+  const disk = storage();
+  disk.setItem('gymdex:rest:v1', JSON.stringify({ enabled: true, duration: 30 }));
+  const app = await harness(disk);
+  app.env.navigator.onLine = false;
+  app.form.elements.completed.checked = true;
+  app.form.elements.completed.events.change();
+  assert.equal(app.nodes['#rest-clock'].textContent, '0:00');
+  app.form.elements.result.value = '8';
+  app.form.elements.completed.events.change();
+  assert.equal(app.nodes['#rest-clock'].textContent, '0:30');
+  assert.equal(app.nodes['#rest-status'].textContent, 'Resting');
+  app.nodes['#rest-pause'].events.click();
+  assert.equal(app.nodes['#rest-status'].textContent, 'Paused');
+  app.nodes['#rest-pause'].events.click();
+  assert.equal(app.nodes['#rest-status'].textContent, 'Resting');
+});
+
+test('custom exercise creation offers the new variation for the active workout', async () => {
+  const app = await harness();
+  const wrapper = node();
+  wrapper.remove = () => { delete app.nodes['#picker']; };
+  const sheet = node();
+  const customForm = Object.assign(node(), { querySelector: () => node() });
+  const sheetNodes = {
+    '#back-to-picker': node(), '#close-picker': node(), '#custom-exercise-form': customForm,
+    '[name="name"]': node(),
+  };
+  sheet.querySelector = (selector) => sheetNodes[selector];
+  app.nodes['#picker .sheet'] = sheet;
+  app.nodes['#exercise-search'] = Object.assign(node(), { value: '', setSelectionRange() {} });
+  app.nodes['#close-picker'] = node();
+  app.nodes['#back-to-picker'] = node();
+  app.nodes['#configuration-form'] = node();
+  app.env.document.createElement = () => wrapper;
+  app.env.document.body = { append: () => { app.nodes['#picker'] = wrapper; } };
+  const requests = [];
+  app.env.fetch = async (path, options) => {
+    requests.push([path, options]);
+    if (path.startsWith('/api/catalog')) return response({ recent: [], catalog: [] });
+    if (path === '/api/exercises') return response({ id: 17, exercise_name: 'Leg Press', variation_name: 'Single Leg', tracking_type: 'repetitions', equipment: ['Machine'] }, 201);
+    throw new Error('Unexpected request');
+  };
+  await app.nodes['#open-picker'].events.click();
+  app.nodes['#create-exercise'].events.click();
+  assert.match(sheet.innerHTML, /Create custom exercise/);
+  const originalFormData = globalThis.FormData;
+  globalThis.FormData = class { constructor() { return new Map([
+    ['name', 'Leg Press'], ['variation_name', 'Single Leg'], ['tracking_type', 'repetitions'], ['equipment', 'Machine'],
+  ]); } };
+  try { await customForm.events.submit({ preventDefault() {}, currentTarget: customForm }); }
+  finally { globalThis.FormData = originalFormData; }
+  assert.equal(requests[1][0], '/api/exercises');
+  assert.deepEqual(JSON.parse(requests[1][1].body), { name: 'Leg Press', variation_name: 'Single Leg', tracking_type: 'repetitions', equipment: ['Machine'] });
+  assert.match(sheet.innerHTML, /Single Leg Leg Press/);
+  assert.match(sheet.innerHTML, /data-equipment="Machine"/);
+});
+
+test('progress shows a chart and numeric history for an exercise', async () => {
+  const app = await harness(storage(), { gyms: [{ id: 1, name: 'Home' }] });
+  const nodes = {};
+  const dialog = node();
+  dialog.querySelector = (selector) => nodes[selector] ??= node();
+  dialog.showModal = () => { dialog.open = true; };
+  dialog.remove = () => { delete app.nodes['#progress']; };
+  dialog.close = () => { dialog.open = false; dialog.events.close(); };
+  nodes['#progress-exercise'] = Object.assign(node(), { value: '17' });
+  nodes['#progress-filters'] = Object.assign(node(), { elements: { gym_id: { value: '' } } });
+  app.env.document.createElement = () => dialog;
+  app.env.document.body = { append: () => { app.nodes['#progress'] = dialog; } };
+  const urls = [];
+  app.env.fetch = async (url) => {
+    urls.push(url);
+    if (url.startsWith('/api/catalog')) return response({ catalog: [{ id: 17, exercise_name: 'Leg Press', variation_name: 'Standard', equipment: ['Machine'] }] });
+    return response({ variation_id: 17, exercise_name: 'Leg Press', variation_name: 'Standard', tracking_type: 'repetitions', points: [
+      { workout_id: 1, completed_at: '2026-09-21 10:00:00', best_weight: 80, best_result: 8, completed_sets: 3 },
+      { workout_id: 2, completed_at: '2026-09-22 10:00:00', best_weight: 90, best_result: 10, completed_sets: 3 },
+    ] });
+  };
+  await app.nodes['#open-progress'].events.click();
+  assert.equal(urls[1], '/api/progress?variation_id=17');
+  assert.match(nodes['#progress-results'].innerHTML, /<svg/);
+  assert.match(nodes['#progress-results'].innerHTML, /90 kg/);
+  assert.match(nodes['#progress-results'].innerHTML, /10<\/td>/);
+  assert.match(nodes['#progress-results'].innerHTML, /Completed workout progress/);
+});
+
+test('history repeats a completed workout when no workout is active', async () => {
+  const gym = { id: 1, name: 'Home' };
+  const app = await harness(storage(), { gyms: [gym], active_workout: null, workout_exercises: [] });
+  const { dialog, nodes } = historyDOM(app);
+  const workout = { id: 22, gym_id: 1, gym_name: 'Home', started_at: '2026-09-21 10:00:00', completed_at: '2026-09-21 11:00:00' };
+  const requests = [];
+  app.env.fetch = async (url, options) => {
+    requests.push([url, options]);
+    if (url.startsWith('/api/history?')) return response({ workouts: [{ ...workout, exercise_count: 1, completed_set_count: 3 }], next_offset: null });
+    if (url === '/api/history/22') return response({ workout, workout_exercises: [] });
+    if (url === '/api/history/22/repeat') return response({ id: 23, gym_id: 1, gym_name: 'Home', started_at: '2026-09-24 10:00:00' }, 201);
+    if (url === '/api/bootstrap') return response({ gyms: [gym], active_workout: { id: 23, gym_id: 1, gym_name: 'Home', started_at: '2026-09-24 10:00:00' }, workout_exercises: [] });
+    throw new Error('Unexpected request');
+  };
+  app.nodes['#open-history'].events.click();
+  await settle();
+  await nodes['#history-results'].buttons[0].events.click();
+  assert.match(nodes['#history-detail'].innerHTML, /Repeat this workout/);
+  const repeat = Object.assign(node(), { dataset: { repeatWorkout: '22' } });
+  await nodes['#history-detail'].events.click({ target: { closest: (selector) => selector === '[data-repeat-workout]' ? repeat : null } });
+  assert.equal(requests.find(([url]) => url.endsWith('/repeat'))[1].method, 'POST');
+  assert.equal(dialog.removed, true);
+  assert.match(app.nodes['#app'].innerHTML, /Workout active/);
+});
+
+test('correcting a completed set refreshes active references and the history count without losing a draft', async () => {
+  const app = await harness();
+  app.form.elements.result.value = '9';
+  app.form.events.input();
+  const { nodes } = historyDOM(app);
+  const workout = { id: 22, gym_id: 1, gym_name: 'Home', started_at: '2026-09-21 10:00:00', completed_at: '2026-09-21 11:00:00' };
+  const detail = { workout, workout_exercises: [{ id: 33, variation_id: 11, exercise_name: 'Bench Press', variation_name: 'Standard',
+    equipment: 'Barbell', manufacturer: '', label: '', tracking_type: 'repetitions',
+    sets: [{ id: 44, position: 1, weight: 80, result: 8, completed: 1 }] }] };
+  const requests = [];
+  app.env.fetch = async (url, options) => {
+    requests.push([url, options]);
+    if (url.startsWith('/api/history?')) return response({ workouts: [{ ...workout, exercise_count: 1, completed_set_count: 0 }], next_offset: null });
+    if (url === '/api/history/22') return response(detail);
+    if (url === '/api/history/22/sets/44') return response({ id: 44, position: 1, weight: -75, result: 10, completed: true });
+    if (url === '/api/bootstrap') return response({ gyms: [], active_workout: { id: 1, gym_id: 1, gym_name: 'Home', started_at: '2026-09-22 10:00:00' },
+      workout_exercises: [{ id: 3, variation_id: 11, exercise_name: 'Bench Press', variation_name: 'Standard', equipment: 'Barbell',
+        tracking_type: 'repetitions', previous_sets: [{ result: 10, weight: -75 }], sets: [{ id: 2, position: 1, weight: null, result: null, completed: false }] }] });
+    throw new Error('Unexpected request');
+  };
+  app.nodes['#open-history'].events.click();
+  await settle();
+  await nodes['#history-results'].buttons[0].events.click();
+  assert.match(nodes['#history-detail'].innerHTML, /Edit set 1/);
+  const status = node();
+  const submit = node();
+  const form = Object.assign(node(), {
+    dataset: { historySet: '44' },
+    elements: { weight: { value: '75' }, result: { value: '10', required: false }, assistance: { checked: true }, completed: { checked: true } },
+    closest: () => form, reportValidity: () => true,
+    querySelector: (selector) => selector === '.set-status' ? status : submit,
+  });
+  nodes['#history-detail'].querySelector = () => node();
+  await nodes['#history-detail'].events.submit({ target: form, preventDefault() {} });
+  const correction = requests.find(([url]) => url === '/api/history/22/sets/44');
+  assert.deepEqual(JSON.parse(correction[1].body), { weight: -75, result: 10, completed: true });
+  assert.match(app.nodes['#app'].innerHTML, /10 reps/);
+  assert.equal(app.form.elements.result.value, '9');
+  await nodes['#history-back'].events.click();
+  assert.equal(requests.filter(([url]) => url.startsWith('/api/history?')).length, 2);
 });

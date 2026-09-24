@@ -289,7 +289,7 @@ def completed_workout(connection: sqlite3.Connection, workout_id: int) -> dict[s
     if not workout:
         raise LookupError("Completed workout not found.")
     entries = rows(connection.execute(
-        """SELECT id, position, exercise_name_snapshot AS exercise_name,
+        """SELECT id, variation_id, position, exercise_name_snapshot AS exercise_name,
                   variation_name_snapshot AS variation_name, equipment_snapshot AS equipment,
                   manufacturer_snapshot AS manufacturer, label_snapshot AS label,
                   tracking_type_snapshot AS tracking_type
@@ -311,6 +311,69 @@ def create_gym(connection: sqlite3.Connection, name: str) -> dict[str, Any]:
     return {"id": cursor.lastrowid, "name": clean_name}
 
 
+def create_exercise(
+    connection: sqlite3.Connection,
+    name: str,
+    variation_name: str,
+    tracking_type: str,
+    equipment: list[str],
+) -> dict[str, Any]:
+    """Add a variation to a new or existing exercise in one transaction."""
+    if not isinstance(name, str) or not isinstance(variation_name, str):
+        raise ValueError("Exercise and variation names must be strings.")
+    exercise_name = " ".join(name.split())
+    variation_name = " ".join(variation_name.split()) or "Standard"
+    if not exercise_name or len(exercise_name) > 80:
+        raise ValueError("Exercise name must be 1 to 80 characters.")
+    if len(variation_name) > 80:
+        raise ValueError("Variation name must be 80 characters or fewer.")
+    if tracking_type not in ("repetitions", "duration"):
+        raise ValueError("Tracking type must be repetitions or duration.")
+    if not isinstance(equipment, list) or not 1 <= len(equipment) <= 20:
+        raise ValueError("Choose 1 to 20 equipment options.")
+    clean_equipment = []
+    for value in equipment:
+        if not isinstance(value, str):
+            raise ValueError("Equipment names must be strings.")
+        clean = " ".join(value.split())
+        if not clean or len(clean) > 80 or "|" in clean:
+            raise ValueError("Equipment names must be 1 to 80 characters and cannot contain |.")
+        clean_equipment.append(clean)
+    if len({value.casefold() for value in clean_equipment}) != len(clean_equipment):
+        raise ValueError("Equipment options must be unique.")
+
+    with connection:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("INSERT OR IGNORE INTO exercises(name) VALUES (?)", (exercise_name,))
+        exercise = connection.execute(
+            "SELECT id, name FROM exercises WHERE name = ? COLLATE NOCASE", (exercise_name,)
+        ).fetchone()
+        if connection.execute(
+            """SELECT 1 FROM exercise_variations
+               WHERE exercise_id = ? AND name = ? COLLATE NOCASE""",
+            (exercise["id"], variation_name),
+        ).fetchone():
+            raise RuntimeError("That exercise variation already exists.")
+        cursor = connection.execute(
+            """INSERT INTO exercise_variations(exercise_id, name, tracking_type)
+               VALUES (?, ?, ?)""",
+            (exercise["id"], variation_name, tracking_type),
+        )
+        for position, option in enumerate(clean_equipment):
+            connection.execute(
+                """INSERT INTO variation_equipment(variation_id, equipment, position)
+                   VALUES (?, ?, ?)""",
+                (cursor.lastrowid, option, position),
+            )
+    return {
+        "id": cursor.lastrowid,
+        "exercise_name": exercise["name"],
+        "variation_name": variation_name,
+        "tracking_type": tracking_type,
+        "equipment": clean_equipment,
+    }
+
+
 def start_workout(connection: sqlite3.Connection, gym_id: int) -> dict[str, Any]:
     gym = connection.execute("SELECT id, name FROM gyms WHERE id = ?", (gym_id,)).fetchone()
     if not gym:
@@ -329,6 +392,116 @@ def start_workout(connection: sqlite3.Connection, gym_id: int) -> dict[str, Any]
         "started_at": workout["started_at"],
         "gym_id": gym["id"],
         "gym_name": gym["name"],
+    }
+
+
+def repeat_workout(connection: sqlite3.Connection, workout_id: int) -> dict[str, Any]:
+    """Start a new workout with the source configurations and blank set slots."""
+    if not 1 <= workout_id <= 9223372036854775807:
+        raise LookupError("Completed workout not found.")
+    with connection:
+        connection.execute("BEGIN IMMEDIATE")
+        source = connection.execute(
+            """SELECT w.gym_id, g.name AS gym_name FROM workouts w
+               JOIN gyms g ON g.id = w.gym_id
+               WHERE w.id = ? AND w.completed_at IS NOT NULL""",
+            (workout_id,),
+        ).fetchone()
+        if not source:
+            raise LookupError("Completed workout not found.")
+        if connection.execute(
+            "SELECT 1 FROM workouts WHERE completed_at IS NULL"
+        ).fetchone():
+            raise RuntimeError("A workout is already active.")
+        workout_cursor = connection.execute(
+            "INSERT INTO workouts(gym_id) VALUES (?)", (source["gym_id"],)
+        )
+        new_workout_id = workout_cursor.lastrowid
+        source_entries = connection.execute(
+            """SELECT id, variation_id, gym_profile_id, position,
+                      exercise_name_snapshot, variation_name_snapshot,
+                      equipment_snapshot, manufacturer_snapshot, label_snapshot,
+                      tracking_type_snapshot
+               FROM workout_exercises WHERE workout_id = ? ORDER BY position""",
+            (workout_id,),
+        ).fetchall()
+        for entry in source_entries:
+            entry_cursor = connection.execute(
+                """INSERT INTO workout_exercises
+                   (workout_id, variation_id, gym_profile_id, position,
+                    exercise_name_snapshot, variation_name_snapshot,
+                    equipment_snapshot, manufacturer_snapshot, label_snapshot,
+                    tracking_type_snapshot)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (new_workout_id, *(entry[key] for key in (
+                    "variation_id", "gym_profile_id", "position",
+                    "exercise_name_snapshot", "variation_name_snapshot",
+                    "equipment_snapshot", "manufacturer_snapshot", "label_snapshot",
+                    "tracking_type_snapshot",
+                ))),
+            )
+            positions = [row["position"] for row in connection.execute(
+                """SELECT position FROM workout_sets
+                   WHERE workout_exercise_id = ? ORDER BY position""",
+                (entry["id"],),
+            )]
+            for position in positions or [1]:
+                connection.execute(
+                    """INSERT INTO workout_sets(workout_exercise_id, position)
+                       VALUES (?, ?)""",
+                    (entry_cursor.lastrowid, position),
+                )
+        workout = connection.execute(
+            "SELECT id, started_at FROM workouts WHERE id = ?", (new_workout_id,)
+        ).fetchone()
+    return {
+        "id": workout["id"],
+        "started_at": workout["started_at"],
+        "gym_id": source["gym_id"],
+        "gym_name": source["gym_name"],
+    }
+
+
+def exercise_progress(
+    connection: sqlite3.Connection, variation_id: int, gym_id: int | None = None,
+    equipment: str | None = None, manufacturer: str | None = None,
+    label: str | None = None,
+) -> dict[str, Any]:
+    if not 1 <= variation_id <= 9223372036854775807:
+        raise ValueError("A valid variation_id is required.")
+    if gym_id is not None and not 1 <= gym_id <= 9223372036854775807:
+        raise ValueError("A valid gym_id is required.")
+    variation = connection.execute(
+        """SELECT v.id, e.name AS exercise_name, v.name AS variation_name,
+                  v.tracking_type
+           FROM exercise_variations v JOIN exercises e ON e.id = v.exercise_id
+           WHERE v.id = ?""",
+        (variation_id,),
+    ).fetchone()
+    if not variation:
+        raise LookupError("Exercise variation not found.")
+    points = rows(connection.execute(
+        """SELECT w.id AS workout_id, w.completed_at,
+                  MAX(s.weight) AS best_weight, MAX(s.result) AS best_result,
+                  COUNT(s.id) AS completed_sets
+           FROM workouts w
+           JOIN workout_exercises e ON e.workout_id = w.id
+           JOIN workout_sets s ON s.workout_exercise_id = e.id
+           WHERE w.completed_at IS NOT NULL AND e.variation_id = ?
+             AND s.completed = 1 AND (? IS NULL OR w.gym_id = ?)
+             AND (? IS NULL OR e.equipment_snapshot = ?)
+             AND (? IS NULL OR e.manufacturer_snapshot = ?)
+             AND (? IS NULL OR e.label_snapshot = ?)
+           GROUP BY w.id ORDER BY w.completed_at, w.id""",
+        (variation_id, gym_id, gym_id, equipment, equipment,
+         manufacturer, manufacturer, label, label),
+    ))
+    return {
+        "variation_id": variation["id"],
+        "exercise_name": variation["exercise_name"],
+        "variation_name": variation["variation_name"],
+        "tracking_type": variation["tracking_type"],
+        "points": points,
     }
 
 
@@ -486,7 +659,7 @@ def add_set(connection: sqlite3.Connection, exercise_id: int) -> dict[str, Any]:
         return dict(connection.execute("SELECT id, position, weight, result, completed FROM workout_sets WHERE id = ?", (cursor.lastrowid,)).fetchone())
 
 
-def update_set(connection: sqlite3.Connection, set_id: int, payload: dict) -> dict[str, Any]:
+def validate_set_values(payload: dict) -> tuple[int | float | None, int | None, bool]:
     weight, result, completed = (payload.get(key) for key in ("weight", "result", "completed"))
     if weight is not None and (type(weight) not in (int, float) or not math.isfinite(weight) or abs(weight) > 100000):
         raise ValueError("Weight must be a finite number between -100000 and 100000 kg.")
@@ -496,6 +669,11 @@ def update_set(connection: sqlite3.Connection, set_id: int, payload: dict) -> di
         raise ValueError("Completed must be true or false.")
     if completed and result is None:
         raise ValueError("Enter reps or seconds before completing this set.")
+    return weight, result, completed
+
+
+def update_set(connection: sqlite3.Connection, set_id: int, payload: dict) -> dict[str, Any]:
+    weight, result, completed = validate_set_values(payload)
     with connection:
         connection.execute("BEGIN IMMEDIATE")
         item = connection.execute("SELECT workout_exercise_id FROM workout_sets WHERE id = ?", (set_id,)).fetchone()
@@ -504,6 +682,34 @@ def update_set(connection: sqlite3.Connection, set_id: int, payload: dict) -> di
         require_active_exercise(connection, item["workout_exercise_id"])
         connection.execute("UPDATE workout_sets SET weight = ?, result = ?, completed = ? WHERE id = ?", (weight, result, completed, set_id))
         return dict(connection.execute("SELECT id, position, weight, result, completed FROM workout_sets WHERE id = ?", (set_id,)).fetchone())
+
+
+def correct_completed_set(
+    connection: sqlite3.Connection, workout_id: int, set_id: int, payload: dict
+) -> dict[str, Any]:
+    """Correct a set only when it belongs to the specified completed workout."""
+    if not 1 <= workout_id <= 9223372036854775807 or not 1 <= set_id <= 9223372036854775807:
+        raise LookupError("Completed workout set not found.")
+    weight, result, completed = validate_set_values(payload)
+    with connection:
+        connection.execute("BEGIN IMMEDIATE")
+        if not connection.execute(
+            """SELECT 1 FROM workout_sets s
+               JOIN workout_exercises e ON e.id = s.workout_exercise_id
+               JOIN workouts w ON w.id = e.workout_id
+               WHERE s.id = ? AND w.id = ? AND w.completed_at IS NOT NULL""",
+            (set_id, workout_id),
+        ).fetchone():
+            raise LookupError("Completed workout set not found.")
+        connection.execute(
+            """UPDATE workout_sets SET weight = ?, result = ?, completed = ?
+               WHERE id = ?""",
+            (weight, result, completed, set_id),
+        )
+        return dict(connection.execute(
+            """SELECT id, position, weight, result, completed
+               FROM workout_sets WHERE id = ?""", (set_id,),
+        ).fetchone())
 
 
 def delete_set(connection: sqlite3.Connection, set_id: int) -> dict[str, bool]:

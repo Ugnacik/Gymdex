@@ -1,5 +1,5 @@
-const CACHE = "gymdex-shell-v5";
-const SHELL = ["/", "/index.html", "/styles.css", "/app.js", "/app.mjs", "/workout-editor.mjs", "/drafts.mjs", "/manifest.webmanifest"];
+const CACHE = "gymdex-shell-v6";
+const SHELL = ["/", "/index.html", "/styles.css", "/app.js", "/app.mjs", "/workout-editor.mjs", "/drafts.mjs", "/rest-timer.mjs", "/manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)));

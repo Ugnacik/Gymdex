@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import closing
 import json
 import mimetypes
 import os
@@ -35,7 +36,7 @@ class GymdexServer(ThreadingHTTPServer):
     def __init__(self, address: tuple[str, int], db_path: Path):
         super().__init__(address, GymdexHandler)
         self.db_path = db_path
-        with db.connect(db_path) as connection:
+        with closing(db.connect(db_path)) as connection, connection:
             db.initialize(connection)
 
 
@@ -58,6 +59,24 @@ class GymdexHandler(BaseHTTPRequestHandler):
                 end=query.get("end", [""])[0],
                 offset=query.get("offset", ["0"])[0],
             ))
+        if parsed.path == "/api/progress":
+            query = parse_qs(parsed.query, keep_blank_values=True)
+            try:
+                variation_id = int(query.get("variation_id", [""])[0])
+                gym_value = query.get("gym_id", [""])[0]
+                gym_id = int(gym_value) if gym_value else None
+            except ValueError:
+                return self._json_error("Valid variation_id and gym_id values are required.", HTTPStatus.BAD_REQUEST)
+            return self._with_db(lambda connection: db.exercise_progress(
+                connection, variation_id, gym_id,
+                equipment=query["equipment"][0] if "equipment" in query else None,
+                manufacturer=query["manufacturer"][0] if "manufacturer" in query else None,
+                label=query["label"][0] if "label" in query else None,
+            ))
+        if parsed.path == "/api/export/workouts.csv":
+            from gymdex.export import workout_csv
+            with closing(db.connect(self.server.db_path)) as connection, connection:
+                return self._csv(workout_csv(connection))
         parts = parsed.path.strip("/").split("/")
         if len(parts) == 3 and parts[:2] == ["api", "history"]:
             return self._with_db(lambda connection: db.completed_workout(connection, int(parts[2])))
@@ -87,8 +106,24 @@ class GymdexHandler(BaseHTTPRequestHandler):
                 lambda connection: db.start_workout(connection, id_field(payload, "gym_id")),
                 status=HTTPStatus.CREATED,
             )
+        if parsed.path == "/api/exercises":
+            return self._with_db(
+                lambda connection: db.create_exercise(
+                    connection,
+                    text_field(payload, "name"),
+                    text_field(payload, "variation_name"),
+                    text_field(payload, "tracking_type"),
+                    payload.get("equipment"),
+                ),
+                status=HTTPStatus.CREATED,
+            )
 
         parts = parsed.path.strip("/").split("/")
+        if len(parts) == 4 and parts[:2] == ["api", "history"] and parts[3] == "repeat":
+            return self._with_db(
+                lambda connection: db.repeat_workout(connection, int(parts[2])),
+                status=HTTPStatus.CREATED,
+            )
         if len(parts) == 4 and parts[:2] == ["api", "workout-exercises"] and parts[3] == "sets":
             return self._with_db(lambda connection: db.add_set(connection, int(parts[2])), status=HTTPStatus.CREATED)
         if len(parts) == 4 and parts[:2] == ["api", "workouts"]:
@@ -119,12 +154,19 @@ class GymdexHandler(BaseHTTPRequestHandler):
 
     def do_PUT(self) -> None:
         parts = urlparse(self.path).path.strip("/").split("/")
-        if len(parts) != 3 or parts[:2] != ["api", "sets"]:
+        active_set = len(parts) == 3 and parts[:2] == ["api", "sets"]
+        history_set = (len(parts) == 5 and parts[:2] == ["api", "history"]
+                       and parts[3] == "sets")
+        if not active_set and not history_set:
             return self._json_error("Route not found.", HTTPStatus.NOT_FOUND)
         try:
             payload = self._read_json()
         except ValueError:
             return self._json_error("The request body must be a JSON object.", HTTPStatus.BAD_REQUEST)
+        if history_set:
+            return self._with_db(lambda connection: db.correct_completed_set(
+                connection, int(parts[2]), int(parts[4]), payload,
+            ))
         self._with_db(lambda connection: db.update_set(connection, int(parts[2]), payload))
 
     def do_DELETE(self) -> None:
@@ -137,7 +179,7 @@ class GymdexHandler(BaseHTTPRequestHandler):
 
     def _with_db(self, operation, status: HTTPStatus = HTTPStatus.OK) -> None:
         try:
-            with db.connect(self.server.db_path) as connection:
+            with closing(db.connect(self.server.db_path)) as connection, connection:
                 result = operation(connection)
         except ValueError as error:
             return self._json_error(str(error), HTTPStatus.BAD_REQUEST)
@@ -171,6 +213,17 @@ class GymdexHandler(BaseHTTPRequestHandler):
 
     def _json_error(self, message: str, status: HTTPStatus) -> None:
         self._json({"error": message}, status)
+
+    def _csv(self, content: str) -> None:
+        body = content.encode("utf-8")
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/csv; charset=utf-8")
+        self.send_header("Content-Disposition", 'attachment; filename="gymdex-workouts.csv"')
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(body)
 
     def _serve_static(self, request_path: str) -> None:
         relative = "index.html" if request_path == "/" else request_path.lstrip("/")
