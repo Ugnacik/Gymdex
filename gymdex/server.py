@@ -17,6 +17,20 @@ ROOT = Path(__file__).resolve().parent.parent
 STATIC = ROOT / "static"
 
 
+def text_field(payload: dict, name: str) -> str:
+    value = payload.get(name, "")
+    if not isinstance(value, str):
+        raise ValueError(f"{name} must be a string.")
+    return value
+
+
+def id_field(payload: dict, name: str) -> int:
+    value = payload.get(name)
+    if type(value) is not int or not 0 < value <= 2**63 - 1:
+        raise ValueError(f"{name} must be a positive integer.")
+    return value
+
+
 class GymdexServer(ThreadingHTTPServer):
     def __init__(self, address: tuple[str, int], db_path: Path):
         super().__init__(address, GymdexHandler)
@@ -65,12 +79,12 @@ class GymdexHandler(BaseHTTPRequestHandler):
 
         if parsed.path == "/api/gyms":
             return self._with_db(
-                lambda connection: db.create_gym(connection, payload.get("name", "")),
+                lambda connection: db.create_gym(connection, text_field(payload, "name")),
                 status=HTTPStatus.CREATED,
             )
         if parsed.path == "/api/workouts":
             return self._with_db(
-                lambda connection: db.start_workout(connection, int(payload.get("gym_id", 0))),
+                lambda connection: db.start_workout(connection, id_field(payload, "gym_id")),
                 status=HTTPStatus.CREATED,
             )
 
@@ -83,18 +97,18 @@ class GymdexHandler(BaseHTTPRequestHandler):
             except ValueError:
                 return self._json_error("Workout not found.", HTTPStatus.NOT_FOUND)
             if parts[3] == "exercises":
-                if payload.get("profile_id"):
+                if "profile_id" in payload:
                     operation = lambda connection: db.add_recent_profile(
-                        connection, workout_id, int(payload["profile_id"])
+                        connection, workout_id, id_field(payload, "profile_id")
                     )
                 else:
                     operation = lambda connection: db.add_workout_exercise(
                         connection,
                         workout_id,
-                        int(payload.get("variation_id", 0)),
-                        str(payload.get("equipment", "")),
-                        str(payload.get("manufacturer", "")),
-                        str(payload.get("label", "")),
+                        id_field(payload, "variation_id"),
+                        text_field(payload, "equipment"),
+                        text_field(payload, "manufacturer"),
+                        text_field(payload, "label"),
                     )
                 return self._with_db(operation, status=HTTPStatus.CREATED)
             if parts[3] == "complete":

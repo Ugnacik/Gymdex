@@ -152,6 +152,14 @@ class SetTests(unittest.TestCase):
         self.assertEqual(self.request('DELETE', f'/api/sets/{item["id"]}')[0], 200)
         self.assertEqual(self.request('DELETE', f'/api/sets/{item["id"]}')[0], 404)
 
+    def test_request_field_types_return_json_client_errors(self):
+        for path, payload in [('/api/gyms', {'name': None}),
+                              ('/api/workouts', {'gym_id': None})]:
+            with self.subTest(path=path):
+                status, body = self.request('POST', path, payload)
+                self.assertEqual(status, 400)
+                self.assertIsInstance(body['error'], str)
+
     def test_cancel_discards_active_workout_and_preserves_history_and_profiles(self):
         self.save(self.first_set())
         completed_id = self.workout['id']

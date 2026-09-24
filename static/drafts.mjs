@@ -3,16 +3,23 @@ export class DraftStore {
   constructor(storage) {
     this.storage = storage;
     this.memory = new Map();
-    this.error = false;
+    this.failedKeys = new Set();
   }
 
+  get error() { return this.failedKeys.size > 0; }
+
   read(key) {
+    // This page's latest value wins even when storage still contains an older one.
+    if (this.memory.has(key)) return this.memory.get(key);
     try {
       const raw = this.storage().getItem(key);
-      return raw === null ? this.memory.get(key) ?? null : JSON.parse(raw);
+      const value = raw === null ? null : JSON.parse(raw);
+      this.memory.set(key, value);
+      this.failedKeys.delete(key);
+      return value;
     } catch {
-      this.error = true;
-      return this.memory.get(key) ?? null;
+      this.failedKeys.add(key);
+      return null;
     }
   }
 
@@ -20,10 +27,10 @@ export class DraftStore {
     this.memory.set(key, value);
     try {
       this.storage().setItem(key, JSON.stringify(value));
-      this.error = false;
+      this.failedKeys.delete(key);
       return true;
     } catch {
-      this.error = true;
+      this.failedKeys.add(key);
       return false;
     }
   }
@@ -49,11 +56,17 @@ export class DraftStore {
     const key = this.key(workoutId, setId);
     // A response from an older request must not discard newer edits.
     if (revision && this.read(key)?.revision !== revision) return;
+    this.erase(key);
+  }
+
+  erase(key) {
+    // Keep a tombstone so a failed deletion cannot restore a stale draft here.
+    this.memory.set(key, null);
     try {
       this.storage().removeItem(key);
-      this.memory.delete(key);
+      this.failedKeys.delete(key);
     } catch {
-      this.error = true;
+      this.failedKeys.add(key);
     }
   }
 
@@ -66,14 +79,11 @@ export class DraftStore {
         const key = storage.key(i);
         if (key?.startsWith(prefix)) keys.add(key);
       }
+      this.failedKeys.delete(prefix);
     } catch {
-      this.error = true;
+      this.failedKeys.add(prefix);
     }
-    for (const key of keys) {
-      this.memory.delete(key);
-      try { this.storage().removeItem(key); }
-      catch { this.error = true; }
-    }
+    for (const key of keys) this.erase(key);
   }
 
   snapshot(data) {

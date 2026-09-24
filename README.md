@@ -91,11 +91,13 @@ Run the tests with:
 python3 -m unittest discover -s tests -v
 ```
 
-The mobile saving and cache regression tests use Node.js 18 or newer, with no
-additional packages. Node.js is only needed for these tests:
+The browser behavior, workout editing, and cache regression tests use Node.js
+18 or newer, with no additional packages. Node.js is only needed for these tests:
 
 ```bash
+node tests/app.test.mjs
 node tests/mobile.test.mjs
+node tests/workout-editor.test.mjs
 ```
 
 For a phone smoke test, open Gymdex online, add an exercise and a few sets, then
