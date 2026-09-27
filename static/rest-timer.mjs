@@ -14,6 +14,7 @@ export class RestTimer {
   #schedule;
   #clear;
   #onChange;
+  #onFinish;
   #timerId = null;
   #status = "idle";
   #durationSeconds;
@@ -22,12 +23,13 @@ export class RestTimer {
 
   constructor({ durationSeconds = DEFAULT_REST_DURATION_SECONDS,
     now = () => Date.now(), schedule = setTimeout, clear = clearTimeout,
-    onChange = () => {} } = {}) {
+    onChange = () => {}, onFinish = () => {} } = {}) {
     this.#durationSeconds = validDuration(durationSeconds);
     this.#now = now;
     this.#schedule = schedule;
     this.#clear = clear;
     this.#onChange = onChange;
+    this.#onFinish = onFinish;
   }
 
   snapshot() {
@@ -100,6 +102,7 @@ export class RestTimer {
   dispose() {
     this.#clearScheduled();
     this.#onChange = () => {};
+    this.#onFinish = () => {};
   }
 
   #finish() {
@@ -108,6 +111,8 @@ export class RestTimer {
     this.#deadline = null;
     this.#remainingMs = 0;
     this.#emit();
+    // Called once per countdown, when a running interval is found to have reached zero.
+    this.#onFinish(this.snapshot());
   }
 
   #scheduleNext() {

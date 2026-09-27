@@ -84,6 +84,14 @@ The timer can be started, paused, resumed, or reset manually. Its enabled state
 and interval are kept in this browser; a running countdown is not restored after
 the page closes. The timer does not send notifications when the app is closed.
 
+When the countdown finishes, Gymdex plays a short double beep and vibrates the
+phone where the browser supports it. Phones only allow the sound after a tap, so
+the beep is enabled by checking Done or tapping Start or Resume; a silent switch
+or muted media volume can still mute it. iPhones and iPads do not vibrate
+because Safari has no vibration support. If the countdown ends while the app is
+in the background or the screen is locked, the cue can be late or wait until
+you return to the app.
+
 ## Log sets
 
 Each newly added exercise starts with one empty set. Enter kilograms and reps,

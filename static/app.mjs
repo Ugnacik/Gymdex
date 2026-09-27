@@ -48,7 +48,7 @@ const state = {
   restEnabled: savedRest.enabled,
 };
 
-state.restTimer = new RestTimer({ durationSeconds: savedRest.duration, schedule: setTimeout, clear: clearTimeout, onChange: renderRestTimerState });
+state.restTimer = new RestTimer({ durationSeconds: savedRest.duration, schedule: setTimeout, clear: clearTimeout, onChange: renderRestTimerState, onFinish: playRestEndCue });
 
 function readRestSettings() {
   try {
@@ -313,13 +313,51 @@ function bindRestTimer() {
     state.restTimer.setDuration(Number(event.target.value));
     saveRestSettings();
   });
-  document.querySelector("#rest-start").addEventListener("click", () => state.restTimer.start());
+  document.querySelector("#rest-start").addEventListener("click", () => {
+    unlockRestAudio();
+    state.restTimer.start();
+  });
   document.querySelector("#rest-pause").addEventListener("click", () => {
-    if (state.restTimer.snapshot().status === "paused") state.restTimer.resume();
-    else state.restTimer.pause();
+    if (state.restTimer.snapshot().status === "paused") {
+      unlockRestAudio();
+      state.restTimer.resume();
+    } else state.restTimer.pause();
   });
   document.querySelector("#rest-stop").addEventListener("click", () => state.restTimer.stop());
   renderRestTimerState();
+}
+
+// Rest end cue. iOS Safari only plays Web Audio from a context resumed during a tap,
+// so Done, Start and Resume unlock it. iOS has no navigator.vibrate.
+let restAudio = null;
+
+function unlockRestAudio() {
+  const AudioContext = window.AudioContext ?? window.webkitAudioContext;
+  if (!AudioContext) return;
+  try {
+    restAudio ??= new AudioContext();
+    if (restAudio.state !== "running") restAudio.resume().catch(() => {});
+  } catch { restAudio = null; }
+}
+
+function playRestEndCue() {
+  try { navigator.vibrate?.([200, 100, 200]); } catch { /* Vibration is optional. */ }
+  if (!restAudio) return;
+  try {
+    const start = restAudio.currentTime;
+    for (const offset of [0, 0.3]) {
+      const oscillator = restAudio.createOscillator();
+      const gain = restAudio.createGain();
+      oscillator.frequency.value = 880;
+      gain.gain.setValueAtTime(0.0001, start + offset);
+      gain.gain.exponentialRampToValueAtTime(0.5, start + offset + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + offset + 0.2);
+      oscillator.connect(gain);
+      gain.connect(restAudio.destination);
+      oscillator.start(start + offset);
+      oscillator.stop(start + offset + 0.22);
+    }
+  } catch { /* The visible "Rest complete" status remains the cue. */ }
 }
 
 function renderHistoryDetail(data, canRepeat) {
@@ -943,6 +981,7 @@ function bindSet(form) {
   });
   form.elements.completed.addEventListener("change", () => {
     form.elements.result.required = form.elements.completed.checked;
+    if (state.restEnabled && form.elements.completed.checked) unlockRestAudio();
     if (state.restEnabled && form.elements.completed.checked && form.checkValidity()) state.restTimer.start();
     form.requestSubmit();
   });
