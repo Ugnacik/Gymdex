@@ -279,6 +279,49 @@ class FeatureTests(unittest.TestCase):
                 self.assertEqual(self.request(method, path)[0], 400)
         self.assertEqual(db.bootstrap(self.connection)['workout_exercises'][0]['sets'][0]['id'], set_id)
 
+    def test_manage_routes_rename_archive_and_restore_gyms(self):
+        workout, _, _ = self.workout_with_set(gym_id=self.other_gym['id'])
+        status, overview = self.request('GET', '/api/manage')
+        self.assertEqual(status, 200)
+        self.assertEqual([(gym['name'], gym['used']) for gym in overview['gyms']], [('Home', False), ('Other', True)])
+        self.assertEqual(len(overview['configurations']), 1)
+        self.assertEqual(overview['exercises'], [])
+
+        gym_path = f'/api/manage/gyms/{self.other_gym["id"]}'
+        self.assertEqual(self.request('PUT', gym_path, {'name': 'Downtown'}),
+                         (200, {'id': self.other_gym['id'], 'name': 'Downtown', 'archived': False, 'used': True}))
+        self.assertEqual(self.request('PUT', gym_path, {'name': 'home'}), (409, {'error': 'A gym named Home already exists.'}))
+        self.assertEqual(self.request('PUT', gym_path, {'name': ' '})[0], 400)
+        self.assertEqual(self.request('PUT', gym_path, {})[0], 400)
+
+        self.assertEqual(self.request('DELETE', gym_path), (200, {'outcome': 'archived'}))
+        bootstrap = self.request('GET', '/api/bootstrap')[1]
+        self.assertEqual([gym['name'] for gym in bootstrap['gyms']], ['Home'])
+        self.assertEqual(bootstrap['archived_gyms'], [{'id': self.other_gym['id'], 'name': 'Downtown'}])
+        self.assertTrue(self.request('GET', f'/api/history/{workout["id"]}')[1]['workout']['gym_archived'])
+        self.assertEqual(self.request('POST', '/api/workouts', {'gym_id': self.other_gym['id']}),
+                         (409, {'error': 'Downtown is archived. Restore it in Manage to train there.'}))
+        self.assertEqual(self.request('POST', f'/api/history/{workout["id"]}/repeat')[0], 409)
+        self.assertEqual(self.request('POST', '/api/gyms', {'name': 'downtown'}),
+                         (409, {'error': 'An archived gym is named Downtown. Restore it in Manage.'}))
+
+        status, restored = self.request('POST', f'{gym_path}/restore')
+        self.assertEqual((status, restored['archived']), (200, False))
+        self.assertEqual(self.request('POST', '/api/workouts', {'gym_id': self.other_gym['id']})[0], 201)
+        self.assertEqual(self.request('DELETE', f'/api/manage/gyms/{self.gym["id"]}'), (200, {'outcome': 'deleted'}))
+
+    def test_manage_routes_reject_unknown_items_and_kinds(self):
+        for method, path in (('DELETE', '/api/manage/gyms/9999'),
+                             ('POST', '/api/manage/gyms/9999/restore'),
+                             ('PUT', '/api/manage/gyms/9999'),
+                             ('DELETE', '/api/manage/workouts/1'),
+                             ('POST', '/api/manage/gyms/1/archive'),
+                             ('PUT', '/api/manage/gyms'),
+                             ('DELETE', '/api/manage/exercises/1')):
+            with self.subTest(method=method, path=path):
+                self.assertEqual(self.request(method, path, {'name': 'Gym'})[0], 404)
+        self.assertEqual(self.request('DELETE', '/api/manage/gyms/no')[0], 400)
+
     def test_csv_export_route_downloads_without_caching(self):
         self.workout_with_set()
         handler = object.__new__(GymdexHandler)

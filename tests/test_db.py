@@ -78,6 +78,57 @@ class CatalogUpgradeTests(unittest.TestCase):
             )
             self.assertEqual(len(after), len(db.CATALOG))
 
+    def test_version_three_database_gains_archive_columns_and_marks_custom_variations(self):
+        connection = db.connect(self.path)
+        with mock.patch.object(db, "CATALOG", OLD_CATALOG):
+            db.initialize(connection)
+        # Created before Leg Press was a starter entry; seeding later skips it (NOCASE match).
+        early = db.create_exercise(connection, "leg press", "standard", "repetitions", ["Sled"])
+        db.initialize(connection)
+        custom = db.create_exercise(connection, "Bench Press", "Close Grip", "repetitions", ["Barbell"])
+        gym = db.create_gym(connection, "Home")
+        workout = db.start_workout(connection, gym["id"])
+        db.add_workout_exercise(connection, workout["id"], custom["id"], "Barbell")
+        db.complete_workout(connection, workout["id"])
+        # A version 3 database has none of the migration 4 columns.
+        for table in ("gyms", "gym_exercise_profiles", "exercise_variations"):
+            connection.execute(f"ALTER TABLE {table} DROP COLUMN archived_at")
+        connection.execute("ALTER TABLE exercise_variations DROP COLUMN custom")
+        connection.execute("PRAGMA user_version = 3")
+        connection.commit()
+
+        db.initialize(connection)
+        db.initialize(connection)
+
+        self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 4)
+        for table in ("gyms", "gym_exercise_profiles", "exercise_variations"):
+            with self.subTest(table=table):
+                # Nothing is archived after the upgrade.
+                self.assertEqual(connection.execute(
+                    f"SELECT COUNT(*) FROM {table} WHERE archived_at IS NOT NULL"
+                ).fetchone()[0], 0)
+        custom_ids = {row["id"] for row in connection.execute(
+            "SELECT id FROM exercise_variations WHERE custom = 1"
+        )}
+        # Only the variation outside the starter catalog is custom; the early lowercase
+        # Leg Press matches a starter entry case-insensitively and counts as catalog.
+        self.assertEqual(custom_ids, {custom["id"]})
+        self.assertNotIn(early["id"], custom_ids)
+        self.assertEqual(db.bootstrap(connection)["gyms"], [{"id": gym["id"], "name": "Home"}])
+        self.assertEqual(db.workout_history(connection)["workouts"][0]["id"], workout["id"])
+        connection.close()
+
+    def test_new_databases_mark_only_created_variations_as_custom(self):
+        connection = db.connect(self.path)
+        db.initialize(connection)
+        created = db.create_exercise(connection, "Sled Push", "", "duration", ["Sled"])
+        custom_ids = [row["id"] for row in connection.execute(
+            "SELECT id FROM exercise_variations WHERE custom = 1"
+        )]
+        self.assertEqual(custom_ids, [created["id"]])
+        self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 4)
+        connection.close()
+
 
 class DatabaseTests(unittest.TestCase):
     def setUp(self):

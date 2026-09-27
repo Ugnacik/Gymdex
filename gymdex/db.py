@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import math
 import sqlite3
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 SCHEMA = """
@@ -192,6 +193,32 @@ def migrate(connection: sqlite3.Connection) -> None:
                 if "note" not in columns:
                     connection.execute(f"ALTER TABLE {table} ADD COLUMN note TEXT NOT NULL DEFAULT ''")
             connection.execute("PRAGMA user_version = 3")
+    if version < 4:
+        with connection:
+            connection.execute("BEGIN IMMEDIATE")
+            # archived_at is NULL for items offered for new Workouts; see "Archived" in CONTEXT.md.
+            for table in ("gyms", "gym_exercise_profiles", "exercise_variations"):
+                columns = {row["name"] for row in connection.execute(f"PRAGMA table_info({table})")}
+                if "archived_at" not in columns:
+                    connection.execute(f"ALTER TABLE {table} ADD COLUMN archived_at TEXT")
+            columns = {row["name"] for row in connection.execute("PRAGMA table_info(exercise_variations)")}
+            if "custom" not in columns:
+                connection.execute(
+                    """ALTER TABLE exercise_variations ADD COLUMN
+                       custom INTEGER NOT NULL DEFAULT 0 CHECK (custom IN (0, 1))"""
+                )
+            # Variations outside the starter catalog were created by the user. A created
+            # variation that happens to share a starter name counts as catalog.
+            starter = {(entry[0].casefold(), entry[1].casefold()) for entry in CATALOG}
+            custom_ids = [
+                (row["id"],) for row in connection.execute(
+                    """SELECT v.id, e.name AS exercise_name, v.name AS variation_name
+                       FROM exercise_variations v JOIN exercises e ON e.id = v.exercise_id"""
+                )
+                if (row["exercise_name"].casefold(), row["variation_name"].casefold()) not in starter
+            ]
+            connection.executemany("UPDATE exercise_variations SET custom = 1 WHERE id = ?", custom_ids)
+            connection.execute("PRAGMA user_version = 4")
 
 
 def rows(cursor: sqlite3.Cursor) -> list[dict[str, Any]]:
@@ -199,7 +226,11 @@ def rows(cursor: sqlite3.Cursor) -> list[dict[str, Any]]:
 
 
 def bootstrap(connection: sqlite3.Connection) -> dict[str, Any]:
-    gyms = rows(connection.execute("SELECT id, name FROM gyms ORDER BY name"))
+    gyms = rows(connection.execute("SELECT id, name FROM gyms WHERE archived_at IS NULL ORDER BY name"))
+    # Archived gyms stay selectable where recorded workouts are browsed: history and progress.
+    archived_gyms = rows(connection.execute(
+        "SELECT id, name FROM gyms WHERE archived_at IS NOT NULL ORDER BY name"
+    ))
     active = connection.execute(
         """SELECT w.id, w.started_at, w.note, g.id AS gym_id, g.name AS gym_name
            FROM workouts w JOIN gyms g ON g.id = w.gym_id
@@ -230,6 +261,7 @@ def bootstrap(connection: sqlite3.Connection) -> dict[str, Any]:
         )
     return {
         "gyms": gyms,
+        "archived_gyms": archived_gyms,
         "active_workout": active_workout,
         "workout_exercises": workout_exercises,
     }
@@ -350,12 +382,14 @@ def completed_workout(connection: sqlite3.Connection, workout_id: int) -> dict[s
     if not 1 <= workout_id <= 9223372036854775807:
         raise LookupError("Completed workout not found.")
     workout = connection.execute(
-        """SELECT w.id, w.started_at, w.completed_at, w.note, w.gym_id, g.name AS gym_name
+        """SELECT w.id, w.started_at, w.completed_at, w.note, w.gym_id, g.name AS gym_name,
+                  g.archived_at IS NOT NULL AS gym_archived
            FROM workouts w JOIN gyms g ON g.id = w.gym_id
            WHERE w.id = ? AND w.completed_at IS NOT NULL""", (workout_id,),
     ).fetchone()
     if not workout:
         raise LookupError("Completed workout not found.")
+    workout = {**dict(workout), "gym_archived": bool(workout["gym_archived"])}
     entries = rows(connection.execute(
         """SELECT id, variation_id, position, exercise_name_snapshot AS exercise_name,
                   variation_name_snapshot AS variation_name, equipment_snapshot AS equipment,
@@ -367,18 +401,44 @@ def completed_workout(connection: sqlite3.Connection, workout_id: int) -> dict[s
     ))
     for entry in entries:
         entry["sets"] = sets_for_exercise(connection, entry["id"])
-    return {"workout": dict(workout), "workout_exercises": entries}
+    return {"workout": workout, "workout_exercises": entries}
 
 
-def create_gym(connection: sqlite3.Connection, name: str) -> dict[str, Any]:
+def clean_gym_name(name: object) -> str:
+    if not isinstance(name, str):
+        raise ValueError("Gym name must be text.")
     clean_name = " ".join(name.split())
     if not clean_name:
         raise ValueError("Gym name is required.")
     if len(clean_name) > 80:
         raise ValueError("Gym name must be 80 characters or fewer.")
-    cursor = connection.execute("INSERT INTO gyms(name) VALUES (?)", (clean_name,))
-    connection.commit()
+    return clean_name
+
+
+def require_free_gym_name(connection: sqlite3.Connection, name: str, gym_id: int | None = None) -> None:
+    """Gym names are unique ignoring case, archived gyms included; a gym may keep its own name."""
+    taken = connection.execute(
+        "SELECT name, archived_at FROM gyms WHERE name = ? AND id IS NOT ?", (name, gym_id),
+    ).fetchone()
+    if taken and taken["archived_at"]:
+        raise RuntimeError(f"An archived gym is named {taken['name']}. Restore it in Manage.")
+    if taken:
+        raise RuntimeError(f"A gym named {taken['name']} already exists.")
+
+
+def create_gym(connection: sqlite3.Connection, name: str) -> dict[str, Any]:
+    clean_name = clean_gym_name(name)
+    with connection:
+        connection.execute("BEGIN IMMEDIATE")
+        require_free_gym_name(connection, clean_name)
+        cursor = connection.execute("INSERT INTO gyms(name) VALUES (?)", (clean_name,))
     return {"id": cursor.lastrowid, "name": clean_name}
+
+
+def require_unarchived_gym(name: str, archived_at: str | None) -> None:
+    """New workouts, started or repeated, are refused at an archived gym."""
+    if archived_at:
+        raise RuntimeError(f"{name} is archived. Restore it in Manage to train there.")
 
 
 def create_exercise(
@@ -428,8 +488,8 @@ def create_exercise(
         ).fetchone():
             raise RuntimeError("That exercise variation already exists.")
         cursor = connection.execute(
-            """INSERT INTO exercise_variations(exercise_id, name, tracking_type, assisted)
-               VALUES (?, ?, ?, ?)""",
+            """INSERT INTO exercise_variations(exercise_id, name, tracking_type, assisted, custom)
+               VALUES (?, ?, ?, ?, 1)""",
             (exercise["id"], variation_name, tracking_type, int(assisted)),
         )
         for position, option in enumerate(clean_equipment):
@@ -449,9 +509,10 @@ def create_exercise(
 
 
 def start_workout(connection: sqlite3.Connection, gym_id: int) -> dict[str, Any]:
-    gym = connection.execute("SELECT id, name FROM gyms WHERE id = ?", (gym_id,)).fetchone()
+    gym = connection.execute("SELECT id, name, archived_at FROM gyms WHERE id = ?", (gym_id,)).fetchone()
     if not gym:
         raise LookupError("Gym not found.")
+    require_unarchived_gym(gym["name"], gym["archived_at"])
     if connection.execute(
         "SELECT 1 FROM workouts WHERE completed_at IS NULL"
     ).fetchone():
@@ -476,13 +537,14 @@ def repeat_workout(connection: sqlite3.Connection, workout_id: int) -> dict[str,
     with connection:
         connection.execute("BEGIN IMMEDIATE")
         source = connection.execute(
-            """SELECT w.gym_id, g.name AS gym_name FROM workouts w
+            """SELECT w.gym_id, g.name AS gym_name, g.archived_at FROM workouts w
                JOIN gyms g ON g.id = w.gym_id
                WHERE w.id = ? AND w.completed_at IS NOT NULL""",
             (workout_id,),
         ).fetchone()
         if not source:
             raise LookupError("Completed workout not found.")
+        require_unarchived_gym(source["gym_name"], source["archived_at"])
         if connection.execute(
             "SELECT 1 FROM workouts WHERE completed_at IS NULL"
         ).fetchone():
@@ -998,3 +1060,174 @@ def delete_set(connection: sqlite3.Connection, set_id: int) -> dict[str, bool]:
         require_active_exercise(connection, item["workout_exercise_id"])
         connection.execute("DELETE FROM workout_sets WHERE id = ?", (set_id,))
     return {"ok": True}
+
+
+# Manage: rename, remove and restore the items new Workouts are built from. Removing
+# deletes a never-used item and archives a used one. An item is used when a surviving
+# Workout, active or completed, refers to it (see "Archived" in CONTEXT.md).
+# Each kind of item registers its rules in MANAGED_KINDS; rename_item, remove_item and
+# restore_item are the only entry points and apply them in one transaction.
+
+
+@dataclass(frozen=True)
+class ManagedKind:
+    table: str
+    missing: str
+    # Selects a row when a surviving Workout uses the item with the given id.
+    used_sql: str
+    # The item as manage_overview lists it.
+    describe: Callable[[sqlite3.Connection, int], dict[str, Any]]
+    # Validates and applies a new name. None means the kind cannot be renamed.
+    rename: Callable[[sqlite3.Connection, int, object], None] | None = None
+    # Deletes a never-used item and its dependents. None means the kind cannot be removed.
+    delete: Callable[[sqlite3.Connection, int], None] | None = None
+    # Raises to refuse archiving a used item, such as the Active Workout's gym.
+    before_archive: Callable[[sqlite3.Connection, int], None] | None = None
+
+
+def _gym_rows(connection: sqlite3.Connection, gym_id: int | None = None) -> list[dict[str, Any]]:
+    items = rows(connection.execute(
+        """SELECT id, name, archived_at IS NOT NULL AS archived,
+                  EXISTS (SELECT 1 FROM workouts WHERE gym_id = gyms.id) AS used
+           FROM gyms WHERE ? IS NULL OR id = ? ORDER BY name, id""",
+        (gym_id, gym_id),
+    ))
+    return [{**item, "archived": bool(item["archived"]), "used": bool(item["used"])} for item in items]
+
+
+def _rename_gym(connection: sqlite3.Connection, gym_id: int, name: object) -> None:
+    clean_name = clean_gym_name(name)
+    require_free_gym_name(connection, clean_name, gym_id)
+    connection.execute("UPDATE gyms SET name = ? WHERE id = ?", (clean_name, gym_id))
+
+
+def _delete_gym(connection: sqlite3.Connection, gym_id: int) -> None:
+    # A never-used gym's Exercise Configurations are never used either.
+    connection.execute("DELETE FROM gym_exercise_profiles WHERE gym_id = ?", (gym_id,))
+    connection.execute("DELETE FROM gyms WHERE id = ?", (gym_id,))
+
+
+def _before_gym_archive(connection: sqlite3.Connection, gym_id: int) -> None:
+    if connection.execute(
+        "SELECT 1 FROM workouts WHERE gym_id = ? AND completed_at IS NULL", (gym_id,)
+    ).fetchone():
+        raise RuntimeError("Finish or cancel the active workout first.")
+
+
+MANAGED_KINDS: dict[str, ManagedKind] = {
+    "gym": ManagedKind(
+        table="gyms",
+        missing="Gym not found.",
+        used_sql="SELECT 1 FROM workouts WHERE gym_id = ? LIMIT 1",
+        describe=lambda connection, gym_id: _gym_rows(connection, gym_id)[0],
+        rename=_rename_gym,
+        delete=_delete_gym,
+        before_archive=_before_gym_archive,
+    ),
+}
+
+
+def _configuration_rows(connection: sqlite3.Connection) -> list[dict[str, Any]]:
+    items = rows(connection.execute(
+        """SELECT p.id, p.gym_id, g.name AS gym_name, g.archived_at IS NOT NULL AS gym_archived,
+                  p.variation_id, e.name AS exercise_name, v.name AS variation_name,
+                  p.equipment, p.manufacturer, p.label,
+                  p.archived_at IS NOT NULL AS archived,
+                  EXISTS (SELECT 1 FROM workout_exercises WHERE gym_profile_id = p.id) AS used
+           FROM gym_exercise_profiles p
+           JOIN gyms g ON g.id = p.gym_id
+           JOIN exercise_variations v ON v.id = p.variation_id
+           JOIN exercises e ON e.id = v.exercise_id
+           ORDER BY g.name, g.id, e.name, v.name, p.equipment, p.manufacturer, p.label"""
+    ))
+    flags = ("gym_archived", "archived", "used")
+    return [{**item, **{flag: bool(item[flag]) for flag in flags}} for item in items]
+
+
+def _custom_exercise_rows(connection: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Exercises that have custom Variations, each listing only those Variations."""
+    exercises: dict[int, dict[str, Any]] = {}
+    for variation in rows(connection.execute(
+        """SELECT v.id, v.exercise_id, e.name AS exercise_name, v.name, v.tracking_type,
+                  v.assisted, v.archived_at IS NOT NULL AS archived,
+                  EXISTS (SELECT 1 FROM workout_exercises WHERE variation_id = v.id) AS used
+           FROM exercise_variations v JOIN exercises e ON e.id = v.exercise_id
+           WHERE v.custom = 1 ORDER BY e.name, e.id, v.name, v.id"""
+    )):
+        exercise_id, exercise_name = variation.pop("exercise_id"), variation.pop("exercise_name")
+        exercise = exercises.setdefault(
+            exercise_id, {"id": exercise_id, "name": exercise_name, "variations": []}
+        )
+        # An Equipment value is used when a Workout Exercise of this Variation recorded it.
+        equipment = [{"name": row["equipment"], "used": bool(row["used"])} for row in connection.execute(
+            """SELECT equipment, EXISTS (
+                   SELECT 1 FROM workout_exercises
+                   WHERE variation_id = ve.variation_id AND equipment_snapshot = ve.equipment
+               ) AS used
+               FROM variation_equipment ve WHERE variation_id = ? ORDER BY position""",
+            (variation["id"],),
+        )]
+        exercise["variations"].append({
+            **variation, "archived": bool(variation["archived"]), "used": bool(variation["used"]),
+            "equipment": equipment,
+        })
+    return list(exercises.values())
+
+
+def manage_overview(connection: sqlite3.Connection) -> dict[str, Any]:
+    """Gyms, Exercise Configurations and custom Exercises, each marked archived and used."""
+    return {
+        "gyms": _gym_rows(connection),
+        "configurations": _configuration_rows(connection),
+        "exercises": _custom_exercise_rows(connection),
+    }
+
+
+def _managed_kind(kind: str, action: str) -> ManagedKind:
+    spec = MANAGED_KINDS.get(kind)
+    if not spec or not (spec.rename if action == "rename" else spec.delete):
+        raise LookupError(f"Cannot {action} {kind} items.")
+    return spec
+
+
+def _require_managed_item(connection: sqlite3.Connection, spec: ManagedKind, item_id: int) -> None:
+    if type(item_id) is not int or not 1 <= item_id <= 9223372036854775807 or not connection.execute(
+        f"SELECT 1 FROM {spec.table} WHERE id = ?", (item_id,)
+    ).fetchone():
+        raise LookupError(spec.missing)
+
+
+def rename_item(connection: sqlite3.Connection, kind: str, item_id: int, name: object) -> dict[str, Any]:
+    spec = _managed_kind(kind, "rename")
+    with connection:
+        connection.execute("BEGIN IMMEDIATE")
+        _require_managed_item(connection, spec, item_id)
+        spec.rename(connection, item_id, name)
+        return spec.describe(connection, item_id)
+
+
+def remove_item(connection: sqlite3.Connection, kind: str, item_id: int) -> dict[str, str]:
+    """Delete a never-used item or archive a used one, deciding inside the transaction."""
+    spec = _managed_kind(kind, "remove")
+    with connection:
+        connection.execute("BEGIN IMMEDIATE")
+        _require_managed_item(connection, spec, item_id)
+        if not connection.execute(spec.used_sql, (item_id,)).fetchone():
+            spec.delete(connection, item_id)
+            return {"outcome": "deleted"}
+        if spec.before_archive:
+            spec.before_archive(connection, item_id)
+        connection.execute(
+            f"UPDATE {spec.table} SET archived_at = COALESCE(archived_at, CURRENT_TIMESTAMP) WHERE id = ?",
+            (item_id,),
+        )
+        return {"outcome": "archived"}
+
+
+def restore_item(connection: sqlite3.Connection, kind: str, item_id: int) -> dict[str, Any]:
+    spec = _managed_kind(kind, "restore")
+    with connection:
+        connection.execute("BEGIN IMMEDIATE")
+        _require_managed_item(connection, spec, item_id)
+        connection.execute(f"UPDATE {spec.table} SET archived_at = NULL WHERE id = ?", (item_id,))
+        return spec.describe(connection, item_id)

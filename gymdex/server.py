@@ -25,6 +25,19 @@ def text_field(payload: dict, name: str) -> str:
     return value
 
 
+# /api/manage/<segment>/<id> names a db item kind; db.MANAGED_KINDS decides what each supports.
+MANAGE_SEGMENTS = {
+    "gyms": "gym", "configurations": "configuration", "exercises": "exercise", "variations": "variation",
+}
+
+
+def manage_kind(parts: list[str], length: int) -> str | None:
+    """The item kind of a /api/manage/<segment>/<id>[/...] path with the given part count."""
+    if len(parts) == length and parts[:2] == ["api", "manage"]:
+        return MANAGE_SEGMENTS.get(parts[2])
+    return None
+
+
 def id_field(payload: dict, name: str) -> int:
     value = payload.get(name)
     if type(value) is not int or not 0 < value <= 2**63 - 1:
@@ -50,6 +63,8 @@ class GymdexHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.path == "/api/bootstrap":
             return self._with_db(lambda connection: db.bootstrap(connection))
+        if parsed.path == "/api/manage":
+            return self._with_db(lambda connection: db.manage_overview(connection))
         if parsed.path == "/api/history":
             query = parse_qs(parsed.query)
             return self._with_db(lambda connection: db.workout_history(
@@ -120,6 +135,9 @@ class GymdexHandler(BaseHTTPRequestHandler):
             )
 
         parts = parsed.path.strip("/").split("/")
+        kind = manage_kind(parts, 5)
+        if kind and parts[4] == "restore":
+            return self._with_db(lambda connection: db.restore_item(connection, kind, int(parts[3])))
         if len(parts) == 4 and parts[:2] == ["api", "history"] and parts[3] == "repeat":
             return self._with_db(
                 lambda connection: db.repeat_workout(connection, int(parts[2])),
@@ -167,12 +185,17 @@ class GymdexHandler(BaseHTTPRequestHandler):
         workout_exercise = len(parts) == 3 and parts[:2] == ["api", "workout-exercises"]
         note = (len(parts) == 4 and parts[3] == "note"
                 and parts[1] in ("workouts", "workout-exercises") and parts[0] == "api")
-        if not active_set and not history_set and not workout_exercise and not note:
+        kind = manage_kind(parts, 4)
+        if not active_set and not history_set and not workout_exercise and not note and not kind:
             return self._json_error("Route not found.", HTTPStatus.NOT_FOUND)
         try:
             payload = self._read_json()
         except ValueError:
             return self._json_error("The request body must be a JSON object.", HTTPStatus.BAD_REQUEST)
+        if kind:
+            return self._with_db(lambda connection: db.rename_item(
+                connection, kind, int(parts[3]), payload.get("name"),
+            ))
         if note:
             save_note = db.set_workout_note if parts[1] == "workouts" else db.set_workout_exercise_note
             return self._with_db(lambda connection: save_note(
@@ -190,6 +213,9 @@ class GymdexHandler(BaseHTTPRequestHandler):
 
     def do_DELETE(self) -> None:
         parts = urlparse(self.path).path.strip("/").split("/")
+        kind = manage_kind(parts, 4)
+        if kind:
+            return self._with_db(lambda connection: db.remove_item(connection, kind, int(parts[3])))
         if len(parts) == 3 and parts[:2] == ["api", "workouts"]:
             return self._with_db(lambda connection: db.cancel_workout(connection, int(parts[2])))
         if len(parts) == 3 and parts[:2] == ["api", "workout-exercises"]:

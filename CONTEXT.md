@@ -24,6 +24,10 @@ _Avoid_: Gear, variation
 The collection of Exercises available to add to a Workout.
 _Avoid_: Exercise library
 
+**Custom Exercise Variation**:
+An Exercise Variation created by the user, not supplied by the starter Exercise Catalog.
+_Avoid_: User exercise
+
 **Muscle Group**:
 A body area that an Exercise Variation is intentionally selected to train. Incidental muscle involvement does not qualify a Variation for that Muscle Group.
 _Avoid_: Category, body part
@@ -31,6 +35,17 @@ _Avoid_: Category, body part
 **Tracking Type**:
 The kind of result recorded for each Set of an Exercise Variation. The initial Tracking Types are Repetitions and Duration.
 _Avoid_: Exercise type, measurement mode
+
+**Gym**:
+A place where the user trains. Each Workout happens at exactly one Gym.
+
+**Exercise Configuration**:
+An Exercise Variation with one Equipment value and an optional manufacturer and machine label, remembered for one Gym when first added to a Workout there. The most recently used ones are offered as Recent.
+_Avoid_: Profile, machine setup, recent entry
+
+**Archived**:
+The state of a used Gym, Exercise Configuration or Custom Exercise Variation that is no longer offered for new Workouts but remains in everything already recorded. It can be restored. Never-used items are deleted instead.
+_Avoid_: Hidden, inactive, soft-deleted
 
 **Workout**:
 A time-bounded record of performed exercises and their sets.
