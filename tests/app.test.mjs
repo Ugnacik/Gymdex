@@ -35,7 +35,7 @@ async function harness(disk = storage(), initialData = {}) {
     .map((key) => [key, node()]));
   const timers = new Map();
   let timerId = 0;
-  const formNodes = { fieldset: node(), '.set-status': node(), '.remove-set': node(), legend: node() };
+  const formNodes = { fieldset: node(), '.set-status': node(), '.remove-set': node(), '.set-retry': Object.assign(node(), { hidden: true }), legend: node() };
   formNodes.legend.textContent = 'Set 1';
   const form = Object.assign(node(), {
     isConnected: true, dataset: { setId: '2', entryId: '3' },
@@ -399,4 +399,49 @@ test('correcting a completed set refreshes active references and the history cou
   assert.equal(app.form.elements.result.value, '9');
   await nodes['#history-back'].events.click();
   assert.equal(requests.filter(([url]) => url.startsWith('/api/history?')).length, 2);
+});
+
+test('set card puts completion beside the inputs and has no separate save button', async () => {
+  const app = await harness();
+  const html = app.nodes['#app'].innerHTML;
+  assert.match(html, /<div class="set-inputs">[\s\S]*name="result"[\s\S]*<label class="set-complete">Done <input name="completed"[\s\S]*?<\/div>/);
+  assert.match(html, /aria-label="Mark Bench Press, set 1 completed and save"/);
+  assert.match(html, /<button type="button" class="remove-set" aria-label="Remove Bench Press, set 1">/);
+  assert.doesNotMatch(html, /Save changes|completion-hint/);
+  assert.equal(app.form.querySelector('.set-retry').hidden, true);
+});
+
+test('a blocked set offers Retry, which saves it again', async () => {
+  const app = await harness();
+  const puts = [];
+  app.env.fetch = async (path, options) => {
+    puts.push(path);
+    return puts.length === 1 ? response({ error: 'Set not found.' }, 404) : response({ id: 2, position: 1, weight: null, result: 8, completed: false });
+  };
+  app.form.elements.result.value = '8';
+  app.form.events.input();
+  app.form.events.submit({ preventDefault() {} });
+  await settle();
+  assert.match(app.form.querySelector('.set-status').textContent, /Set not found\. Review the set, then tap Retry\./);
+  assert.equal(app.form.querySelector('.set-retry').hidden, false);
+  app.form.querySelector('.set-retry').events.click();
+  await settle();
+  assert.deepEqual(puts, ['/api/sets/2', '/api/sets/2']);
+  assert.equal(app.form.querySelector('.set-status').textContent, 'Saved to server');
+  assert.equal(app.form.querySelector('.set-retry').hidden, true);
+  assert.equal(app.form.dataset.dirty, undefined);
+});
+
+test('pressing Enter in a set input saves immediately', async () => {
+  const app = await harness();
+  const puts = [];
+  app.env.fetch = async (path, options) => { puts.push(JSON.parse(options.body)); return response({ id: 2, position: 1, weight: 40, result: 8, completed: false }); };
+  app.form.elements.weight.value = '40';
+  app.form.elements.result.value = '8';
+  let prevented = false;
+  app.form.events.keydown({ key: 'Enter', target: { type: 'number', tagName: 'INPUT' }, preventDefault() { prevented = true; } });
+  await settle();
+  assert.equal(prevented, true);
+  assert.deepEqual(puts, [{ weight: 40, result: 8, completed: false }]);
+  app.form.events.keydown({ key: 'Enter', target: { type: 'checkbox', tagName: 'INPUT' }, preventDefault() { assert.fail('checkbox Enter intercepted'); } });
 });

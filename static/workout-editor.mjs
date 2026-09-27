@@ -118,7 +118,7 @@ export class WorkoutEditor {
         // A rejection belongs to the submitted revision, not a later edit.
         set.blocked = set.draft.revision === draft.revision && Boolean(error.status && error.status < 500);
         set.error = true;
-        set.message = `${this.#drafts.error ? "Not saved on phone." : "Kept on this phone."} ${error.message} ${set.blocked ? "Review the set, then try Save changes." : "Will retry automatically."}`;
+        set.message = `${this.#drafts.error ? "Not saved on phone." : "Kept on this phone."} ${error.message} ${set.blocked ? "Review the set, then tap Retry." : "Will retry automatically."}`;
         return false;
       }
     })();

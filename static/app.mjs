@@ -637,6 +637,7 @@ function syncEditorView() {
     else delete form.dataset.dirty;
     form.querySelector("fieldset").disabled = status.removing;
     if (status.message) setStatus(form, status.message, status.error);
+    form.querySelector(".set-retry").hidden = !status.blocked || status.saving;
     const saved = state.data.workout_exercises.flatMap((entry) => entry.sets)
       .find((set) => set.id === Number(form.dataset.setId));
     if (saved && !status.dirty) form.classList.toggle("is-complete", Boolean(saved.completed));
@@ -830,18 +831,17 @@ function renderSet(entry, set, index) {
   return `<form class="set-form${set.completed ? " is-complete" : ""}" data-set-id="${set.id}" data-entry-id="${entry.id}">
     <fieldset>
       <legend>Set ${set.position}</legend>
+      <button type="button" class="remove-set" aria-label="Remove ${escapeHtml(name)}"><span aria-hidden="true">×</span></button>
       <p class="previous-set">Last workout: ${escapeHtml(previousText)}</p>
       <div class="set-inputs">
         <label>kg <input name="weight" type="number" inputmode="decimal" step="any" min="0" max="100000" aria-label="${escapeHtml(name)} weight in kilograms" value="${set.weight === null ? "" : Math.abs(set.weight)}" /></label>
         <label>${unit === "sec" ? "Seconds" : "Reps"} <input name="result" type="number" inputmode="numeric" min="1" max="1000000" step="1" aria-label="${escapeHtml(name)} ${unit}" value="${set.result ?? ""}" ${set.completed ? "required" : ""} /></label>
+        <label class="set-complete">Done <input name="completed" type="checkbox" aria-label="Mark ${escapeHtml(name)} completed and save" ${set.completed ? "checked" : ""} /></label>
       </div>
       <label class="assistance-option"><input name="assistance" type="checkbox" ${set.weight < 0 ? "checked" : ""} /> Assistance</label>
-      <label class="set-complete"><input name="completed" type="checkbox" aria-label="Mark ${escapeHtml(name)} completed and save" aria-describedby="completion-hint-${set.id}" ${set.completed ? "checked" : ""} /> Set completed</label>
-      <p class="completion-hint" id="completion-hint-${set.id}">Checking saves and completes this set. Save changes also keeps unfinished sets.</p>
       <div class="set-actions">
-        <button type="submit" class="text-button">Save changes</button>
-        <button type="button" class="text-button remove-set" aria-label="Remove ${escapeHtml(name)}">Remove</button>
         <span class="set-status" role="status">${set.completed ? "Completed" : "Saved"}</span>
+        <button type="button" class="text-button set-retry" hidden>Retry</button>
       </div>
     </fieldset>
   </form>`;
@@ -878,10 +878,20 @@ function bindSet(form) {
     state.editor.edit(form.dataset.setId, setValues(form));
     state.editor.save(form.dataset.setId);
   });
+  // Without a submit button, browsers skip implicit submission for multi-input forms.
+  form.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || event.target.type === "checkbox" || event.target.tagName === "BUTTON") return;
+    event.preventDefault();
+    form.requestSubmit();
+  });
   form.elements.completed.addEventListener("change", () => {
     form.elements.result.required = form.elements.completed.checked;
     if (state.restEnabled && form.elements.completed.checked && form.checkValidity()) state.restTimer.start();
     form.requestSubmit();
+  });
+  form.querySelector(".set-retry").addEventListener("click", () => {
+    if (state.editor.busy || !form.reportValidity()) return;
+    state.editor.save(form.dataset.setId);
   });
   form.querySelector(".remove-set").addEventListener("click", () => removeSet(form));
   syncEditorView();

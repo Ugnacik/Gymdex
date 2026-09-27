@@ -261,6 +261,7 @@ input::placeholder { color: var(--muted); opacity: 1; }
   .gym-card:hover, .exercise-card:hover, .recent-card:hover, .secondary:hover, .equipment-option:hover { border-color: var(--accent); }
   .primary:not(:disabled):hover { background: var(--accent-hover); }
   .text-button:hover { background: var(--accent-soft); }
+  .remove-set:hover { background: var(--surface-muted); color: var(--ink); }
 }
 
 @media (min-width: 720px) {
@@ -276,23 +277,26 @@ input::placeholder { color: var(--muted); opacity: 1; }
 /* Set entry keeps numeric inputs usable at the 320px minimum width. */
 .set-hint { font-size: 0.8rem; margin: 14px 0; }
 .sets-list { display: grid; gap: 12px; }
-.set-form { border: 1px solid var(--line); border-radius: var(--radius-control); padding: 12px; background: var(--surface-raised); }
+.set-form { position: relative; border: 1px solid var(--line); border-radius: var(--radius-control); padding: 12px; background: var(--surface-raised); }
 .set-form.is-complete { border-color: var(--accent); }
 .set-form fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
 .set-form legend { padding: 0; font-weight: 650; }
-.previous-set { margin: 6px 0 12px; font-size: 0.8rem; }
+.remove-set { position: absolute; top: 2px; right: 2px; display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 12px; background: transparent; color: var(--muted); font-size: 1.5rem; line-height: 1; }
+.previous-set { margin: 6px 44px 12px 0; font-size: 0.8rem; }
 .set-inputs { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+.set-form .set-inputs { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; }
 .set-inputs label { display: grid; gap: 6px; color: var(--muted); font-size: 0.8rem; }
 .set-inputs input { min-width: 0; min-height: 48px; padding: 0 8px; border-radius: 10px; }
 .set-complete { display: flex; align-items: center; gap: 10px; min-height: 48px; margin-top: 8px; font-size: 0.9rem; cursor: pointer; }
 .set-complete input { width: 24px; height: 24px; min-height: 24px; padding: 0; accent-color: var(--accent); cursor: pointer; }
-.assistance-option { display: flex; align-items: center; gap: 10px; min-height: 44px; margin-top: 8px; font-size: 0.9rem; }
+.set-inputs .set-complete { grid-template-rows: auto 48px; justify-items: center; min-width: 48px; margin: 0; }
+.set-inputs .set-complete input { width: 28px; height: 28px; min-height: 28px; align-self: center; padding: 0; accent-color: var(--accent); cursor: pointer; }
+.assistance-option { display: flex; align-items: center; gap: 10px; min-height: 44px; margin-top: 4px; font-size: 0.85rem; }
 .assistance-option input { width: 24px; height: 24px; min-height: 24px; padding: 0; accent-color: var(--accent); }
-.completion-hint { margin: 0; font-size: 0.75rem; }
-.set-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; margin-top: 8px; }
+.set-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; margin-top: 4px; }
 .set-actions .text-button { padding: 0 6px; min-height: 44px; font-size: 0.85rem; }
-.set-actions .remove-set { color: var(--muted); }
 .set-status { margin-left: auto; font-size: 0.75rem; color: var(--muted); }
+.set-actions .set-status { margin-left: 0; }
 .set-status.error { width: 100%; color: var(--danger); }
 .add-set { width: 100%; margin-top: 12px; color: var(--accent); }
 .rest-timer { margin: 4px 0 24px; padding: 16px 18px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--surface); }

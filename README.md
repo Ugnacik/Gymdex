@@ -69,10 +69,11 @@ the page closes. The timer does not send notifications when the app is closed.
 Each newly added exercise starts with one empty set. Enter kilograms and reps,
 or seconds for duration exercises. Weight is optional. Enter a positive amount
 and check Assistance for assisted weight; Gymdex stores it as a negative value.
-Checking Set completed saves the set as completed; Save changes also saves an unfinished set.
-Valid edits save automatically after a short typing pause. Add set creates
-another row, and Remove deletes a row after confirmation. Sets can be edited
-while the workout is active.
+Checking Done beside the inputs saves the set as completed right away.
+Valid edits, including unfinished sets, save automatically after a short typing
+pause, and pressing Enter in a field saves immediately. Add set creates another
+row, and the × in a set's corner deletes it after confirmation. Sets can be
+edited while the workout is active.
 
 Outstanding set edits must reach the server before adding another exercise or
 finishing the workout. Every input change also saves a draft on the current
@@ -82,7 +83,7 @@ shows whether changes are saved to the server or waiting on the phone.
 If the server cannot be reached, keep editing existing sets. Pending saves retry
 when the connection returns, when you return to the page, and every 15 seconds
 while the page is visible. Invalid values require correction; server-rejected
-sets stay on the phone and require review and a manual Save changes retry.
+sets stay on the phone and show a Retry button for a manual retry after review.
 
 After one online visit over HTTPS, the app caches its files and last loaded
 workout so it can reopen offline. Localhost also supports this for development;
