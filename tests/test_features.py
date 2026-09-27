@@ -54,26 +54,26 @@ class FeatureTests(unittest.TestCase):
 
     def test_custom_exercise_and_variation_are_available_in_catalog(self):
         status, item = self.request('POST', '/api/exercises', {
-            'name': '  Hip   Thrust ', 'variation_name': '',
+            'name': '  Glute   Bridge ', 'variation_name': '',
             'tracking_type': 'repetitions', 'equipment': ['Barbell', 'Machine'],
         })
         self.assertEqual(status, 201)
-        self.assertEqual(item['exercise_name'], 'Hip Thrust')
+        self.assertEqual(item['exercise_name'], 'Glute Bridge')
         self.assertEqual(item['variation_name'], 'Standard')
         self.assertEqual(item['equipment'], ['Barbell', 'Machine'])
         catalog = db.catalog_for_gym(self.connection, self.gym['id'])['catalog']
         self.assertIn(item, catalog)
         self.assertEqual(self.request('POST', '/api/exercises', {
-            'name': 'hip thrust', 'variation_name': 'standard',
+            'name': 'glute bridge', 'variation_name': 'standard',
             'tracking_type': 'duration', 'equipment': ['Bodyweight'],
         })[0], 409)
         status, incline = self.request('POST', '/api/exercises', {
-            'name': 'Hip Thrust', 'variation_name': 'Single Leg',
+            'name': 'Glute Bridge', 'variation_name': 'Single Leg',
             'tracking_type': 'repetitions', 'equipment': ['Bodyweight'],
         })
         self.assertEqual(status, 201)
         self.assertNotEqual(item['id'], incline['id'])
-        self.assertEqual(incline['exercise_name'], 'Hip Thrust')
+        self.assertEqual(incline['exercise_name'], 'Glute Bridge')
         workout = db.start_workout(self.connection, self.gym['id'])
         entry = db.add_workout_exercise(
             self.connection, workout['id'], incline['id'], 'Bodyweight',
