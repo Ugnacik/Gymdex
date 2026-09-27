@@ -1,0 +1,10 @@
+# Backup machine: runs gymdex-backup-prune.service daily, or at the next boot if missed.
+[Unit]
+Description=Prune received Gymdex backups daily
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+
+[Install]
+WantedBy=timers.target

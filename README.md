@@ -188,6 +188,8 @@ connected to the same tailnet. Add it to the home screen for app-like access.
 For a persistent installation at `~/apps/gymdex`, copy
 [deploy/gymdex.service](deploy/gymdex.service) to
 `~/.config/systemd/user/gymdex.service`, then enable it as a systemd user service.
+To keep daily backups on the Pi and on a second machine, see
+[Daily backups](#daily-backups).
 
 ## Export and database backup
 
@@ -205,9 +207,9 @@ included command. It can safely snapshot a running Gymdex database:
 python3 -m gymdex.backup backup ~/gymdex-backup.sqlite3
 ```
 
-Copy the backup somewhere other than the Pi and verify you can restore it. To
-restore, stop the Gymdex service first and keep a copy of the current database.
-Then run:
+Copy the backup somewhere other than the Pi and verify you can restore it.
+[Daily backups](#daily-backups) does both automatically. To restore, stop the
+Gymdex service first and keep a copy of the current database. Then run:
 
 ```bash
 systemctl --user stop gymdex
@@ -222,6 +224,140 @@ existing output unless you pass `--replace`. Restore checks that the source is a
 readable Gymdex database and requires `--replace` for the destination. A restore
 also refuses to write beside leftover SQLite journal files; stop the service
 and let SQLite close or checkpoint the database before retrying.
+
+### Daily backups
+
+Two sets of systemd user units in [deploy/](deploy/) keep 14 days of backups on
+the Pi and send a copy to a second machine on your tailnet with Taildrop
+(`tailscale file cp`):
+
+- On the Pi, `gymdex-backup.timer` runs `gymdex-backup.service` every night at
+  about 03:30, or at the next boot if the Pi was off. It writes
+  `~/gymdex-backups/gymdex-YYYY-MM-DD.sqlite3`, deletes dated backups older than
+  the newest 14 days, and sends the new file to the device named in
+  `~/.config/gymdex/backup.env`. Without that file the backup stays on the Pi.
+- On the backup machine, `gymdex-backup-receive.service` moves arriving files
+  into `~/gymdex-backups`, and `gymdex-backup-prune.timer` keeps the newest
+  14 days there.
+
+Each backup is a full copy of the database, so the newest one is enough to
+restore. If the backup machine is off or asleep, the send fails. The local
+backup is kept, the service is marked failed, and systemd retries the whole
+backup every hour until a send works. Only the newest backup is sent; days
+missed while the backup machine was away are not sent later. If the same day is
+sent twice, the backup machine keeps both, and the copy with the highest number
+in `gymdex-YYYY-MM-DD (N).sqlite3` is the latest.
+
+The same commands work by hand:
+
+```bash
+python3 -m gymdex.backup daily ~/gymdex-backups --keep 14 --send-to rhel-thinkpad
+python3 -m gymdex.backup prune ~/gymdex-backups --keep 14
+```
+
+`daily` reads the target from `GYMDEX_BACKUP_TARGET` when `--send-to` is not
+given. Running it again on the same day replaces that day's backup. `prune`
+only deletes files named `gymdex-YYYY-MM-DD.sqlite3` or
+`gymdex-YYYY-MM-DD (N).sqlite3`.
+
+#### One-time setup on both machines
+
+Taildrop only sends between devices signed in to the same Tailscale account.
+Let your user run `tailscale file` without `sudo`, and make sure user services
+run while you are logged out:
+
+```bash
+sudo tailscale set --operator=$USER
+loginctl show-user $USER --property=Linger   # needs Linger=yes
+sudo loginctl enable-linger $USER             # only if it said Linger=no
+```
+
+#### Backup machine (for example `rhel-thinkpad`)
+
+Set this up first so the Pi's first send has somewhere to go. The prune step
+needs a copy of this repository at `~/apps/gymdex`, as on the Pi. The backup
+commands work with Python 3.9, the default `python3` on RHEL 9.
+
+```bash
+git clone <this repository> ~/apps/gymdex    # or copy it, as on the Pi
+mkdir -p ~/.config/systemd/user
+cp ~/apps/gymdex/deploy/gymdex-backup-receive.service \
+   ~/apps/gymdex/deploy/gymdex-backup-prune.service \
+   ~/apps/gymdex/deploy/gymdex-backup-prune.timer ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now gymdex-backup-receive.service gymdex-backup-prune.timer
+systemctl --user status gymdex-backup-receive.service   # should be active (running)
+```
+
+The receiver moves every file sent to this machine with Taildrop into
+`~/gymdex-backups`, not only Gymdex backups. Pruning leaves other files alone.
+
+#### Raspberry Pi
+
+Update `~/apps/gymdex` to this version, then install the timer and name the
+backup machine as it appears in `tailscale status`:
+
+```bash
+tailscale file cp --targets                  # the backup machine must be listed
+mkdir -p ~/.config/systemd/user ~/.config/gymdex
+cp ~/apps/gymdex/deploy/gymdex-backup.service \
+   ~/apps/gymdex/deploy/gymdex-backup.timer ~/.config/systemd/user/
+printf 'GYMDEX_BACKUP_TARGET=rhel-thinkpad\n' > ~/.config/gymdex/backup.env
+systemctl --user daemon-reload
+systemctl --user enable --now gymdex-backup.timer
+systemctl --user start gymdex-backup.service  # first backup now
+```
+
+The backup uses the same database as the app, `data/gymdex.sqlite3` inside
+`~/apps/gymdex`. If you set `GYMDEX_DB_PATH` for the app, add the same line to
+`~/.config/gymdex/backup.env`.
+
+#### Check that the timer ran
+
+On the Pi:
+
+```bash
+systemctl --user list-timers gymdex-backup.timer   # LAST and NEXT run times
+systemctl --user status gymdex-backup.service      # result and the last log lines
+journalctl --user -u gymdex-backup.service -n 20
+ls -l ~/gymdex-backups
+```
+
+A successful run logs `Backed up …` and `Sent gymdex-YYYY-MM-DD.sqlite3 to …`
+and the service is `inactive (dead)`. After a failed send it shows
+`activating (auto-restart)` and `Could not send …` until the hourly retry
+works. On the backup machine, `ls -l ~/gymdex-backups` shows the received
+files, and `systemctl --user list-timers gymdex-backup-prune.timer` shows the
+prune runs.
+
+#### Verify a restore from a received backup
+
+On the backup machine, restore the newest backup into a scratch database. The
+restore checks that the file is an intact Gymdex database; a damaged or wrong
+file fails with an error:
+
+```bash
+cd ~/apps/gymdex
+ls ~/gymdex-backups
+python3 -m gymdex.backup restore ~/gymdex-backups/gymdex-YYYY-MM-DD.sqlite3 \
+  --db /tmp/gymdex-restore-check.sqlite3 --replace
+python3 -c "import sqlite3; print(sqlite3.connect('/tmp/gymdex-restore-check.sqlite3').execute('SELECT count(*), max(completed_at) FROM workouts').fetchone())"
+```
+
+The last command prints the number of workouts and when the latest one was
+completed, in UTC. To look through the restored data in the app, start a
+second server on the copy (Gymdex needs Python 3.11 or newer; on RHEL 9 install
+`python3.11` and use it here), open <http://127.0.0.1:8099>, and check Workout
+history. Press Ctrl+C when done and delete the scratch file:
+
+```bash
+GYMDEX_DB_PATH=/tmp/gymdex-restore-check.sqlite3 python3.11 -m gymdex.server --port 8099
+rm /tmp/gymdex-restore-check.sqlite3
+```
+
+To restore the Pi from a received backup, send it back
+(`tailscale file cp ~/gymdex-backups/gymdex-YYYY-MM-DD.sqlite3 <pi>:`), fetch
+it on the Pi with `tailscale file get ~/`, and follow the restore steps above.
 
 ## Data model
 

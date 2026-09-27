@@ -1,0 +1,15 @@
+# Backup machine: moves files sent with Taildrop into ~/gymdex-backups as they arrive.
+# Needs `sudo tailscale set --operator=$USER` once. Takes every Taildrop file, not only
+# Gymdex backups; a second copy with the same name is saved as "name (1).sqlite3".
+[Unit]
+Description=Receive Gymdex backups sent with Taildrop
+
+[Service]
+Type=simple
+ExecStartPre=/usr/bin/mkdir -p %h/gymdex-backups
+ExecStart=/usr/bin/tailscale file get --loop --conflict=rename %h/gymdex-backups
+Restart=always
+RestartSec=1min
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,9 @@
+# Backup machine: keeps the newest 14 days of received gymdex-YYYY-MM-DD*.sqlite3 files.
+# Other files in the folder are left alone. Needs a copy of Gymdex at ~/apps/gymdex.
+[Unit]
+Description=Delete received Gymdex backups older than the newest 14 days
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/apps/gymdex
+ExecStart=/usr/bin/python3 -m gymdex.backup prune %h/gymdex-backups --keep 14
