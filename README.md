@@ -202,7 +202,14 @@ sudo tailscale serve --bg 8080
 ```
 
 Tailscale prints the private HTTPS address. Open that address on a phone that is
-connected to the same tailnet. Add it to the home screen for app-like access.
+connected to the same tailnet. Once it loads over HTTPS, use **Add to Home Screen**
+(Safari's Share menu on iPhone, or the browser menu on Android) for app-like
+access: Gymdex then opens full screen with its own dumbbell icon. Use the HTTPS
+address, not plain `http://`, because the offline app shell only works over HTTPS.
+
+The icons are PNGs in `static/`. To change them, edit and run
+`python3 scripts/make_icons.py`, which regenerates them with the standard
+library only.
 
 For a persistent installation at `~/apps/gymdex`, copy
 [deploy/gymdex.service](deploy/gymdex.service) to
