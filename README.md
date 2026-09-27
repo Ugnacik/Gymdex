@@ -11,6 +11,7 @@ Gymdex supports:
 - searching a starter exercise catalog of common movements;
 - remembering equipment and machine details separately for each gym;
 - logging sets with optional weight, repetitions or duration, and completion;
+- removing and reordering exercises in the active workout;
 - showing completed sets from the last matching workout and copying one in a tap;
 - prefilling each added set from the set above it;
 - browsing completed workouts by gym and date;
@@ -99,8 +100,14 @@ not completed; Gymdex saves any edit to the set above first. The × in a set's
 corner deletes it after confirmation. Sets can be edited while the workout is
 active.
 
-Outstanding set edits must reach the server before adding another exercise or
-finishing the workout. Every input change also saves a draft on the current
+Below each exercise's sets, **Move up** and **Move down** change its place in
+the workout, and **Remove** deletes the exercise with all its sets after
+confirmation. Both actions first save outstanding set edits to the server;
+removing an exercise also discards any unsaved drafts for its sets on this
+phone.
+
+Outstanding set edits must reach the server before adding, moving or removing an
+exercise, or finishing the workout. Every input change also saves a draft on the current
 device. Reloading restores those drafts, including unfinished entries. The page
 shows whether changes are saved to the server or waiting on the phone.
 
@@ -112,8 +119,8 @@ sets stay on the phone and show a Retry button for a manual retry after review.
 After one online visit over HTTPS, the app caches its files and last loaded
 workout so it can reopen offline. Localhost also supports this for development;
 a plain HTTP LAN address does not support offline reopening. Creating gyms,
-starting or finishing workouts, adding exercises or sets, and removing sets
-still require the server. Drafts belong to this browser and site address, do not
+starting or finishing workouts, adding, removing or reordering exercises, and
+adding or removing sets still require the server. Drafts belong to this browser and site address, do not
 sync in the background while the app is closed, and disappear if browser site
 data is cleared. Use one device at a time when editing a workout.
 

@@ -314,6 +314,10 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .set-actions .set-status { margin-left: 0; }
 .set-status.error { width: 100%; color: var(--danger); }
 .add-set { width: 100%; margin-top: 12px; color: var(--accent); }
+.exercise-tools { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+.exercise-tools .text-button { min-height: 44px; padding: 0 10px; font-size: 0.85rem; }
+.exercise-tools .text-button:disabled { cursor: default; opacity: 0.4; background: transparent; }
+.exercise-tools .remove-exercise { margin-left: auto; color: var(--danger); }
 .rest-timer { margin: 4px 0 24px; padding: 16px 18px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--surface); }
 .rest-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .rest-heading h2 { margin: 0; }

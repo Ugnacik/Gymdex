@@ -149,12 +149,64 @@ export class WorkoutEditor {
     return this.#flush();
   }
 
-  async #flush() {
+  async #flush(skip = new Set()) {
     await this.#settle();
     for (const [id, set] of this.#sets) {
-      if (set.draft && !await this.#save(id)) return false;
+      if (set.draft && !skip.has(id) && !await this.#save(id)) return false;
     }
     return true;
+  }
+
+  // Structural changes run exclusively, like finish: automatic saves pause and
+  // drafts are saved first. Request failures throw and leave the workout editable.
+  async #exclusive(action) {
+    if (this.#busy || !this.data.active_workout) return false;
+    this.#busy = true;
+    for (const set of this.#sets.values()) this.#clear(set.timer);
+    this.#onChange();
+    try { return await action(); }
+    finally {
+      this.#busy = false;
+      this.#onChange();
+    }
+  }
+
+  async removeExercise(entryId, confirm = () => true) {
+    entryId = Number(entryId);
+    const entry = this.data.workout_exercises.find((item) => item.id === entryId);
+    // Ask before pausing autosave so declining leaves every pending save queued.
+    if (this.#busy || !this.data.active_workout || !entry || !confirm()) return false;
+    return this.#exclusive(async () => {
+      // The removed exercise's drafts are discarded, so they are neither saved nor retried.
+      const removed = new Set(entry.sets.map((set) => set.id));
+      if (!await this.#flush(removed)) return false;
+      const workoutId = this.data.active_workout.id;
+      await this.#request(`/api/workout-exercises/${entryId}`, { method: "DELETE" });
+      this.data.workout_exercises = this.data.workout_exercises.filter((item) => item.id !== entryId);
+      this.data.workout_exercises.forEach((item, index) => { item.position = index + 1; });
+      for (const id of removed) {
+        this.#drafts.remove(workoutId, id);
+        this.#sets.delete(id);
+      }
+      this.#drafts.snapshot(this.data);
+      return true;
+    });
+  }
+
+  async moveExercise(entryId, position) {
+    entryId = Number(entryId);
+    if (!this.data.workout_exercises.some((item) => item.id === entryId)) return false;
+    return this.#exclusive(async () => {
+      if (!await this.#flush()) return false;
+      const moved = await this.#request(`/api/workout-exercises/${entryId}`, {
+        method: "PUT", body: JSON.stringify({ position }),
+      });
+      const positions = new Map(moved.workout_exercises.map((item) => [item.id, item.position]));
+      for (const item of this.data.workout_exercises) item.position = positions.get(item.id) ?? item.position;
+      this.data.workout_exercises.sort((a, b) => a.position - b.position);
+      this.#drafts.snapshot(this.data);
+      return true;
+    });
   }
 
   async finish(confirm = () => true) { return this.#end(false, confirm); }

@@ -703,6 +703,78 @@ def require_active_exercise(connection: sqlite3.Connection, exercise_id: int) ->
         raise LookupError("Active workout exercise not found.")
 
 
+# Tables whose rows are numbered 1..n by position within a parent row.
+POSITIONED_TABLES = {"workout_exercises": "workout_id", "workout_sets": "workout_exercise_id"}
+
+
+def renumber_positions(
+    connection: sqlite3.Connection, table: str, parent_id: int,
+    ordered_ids: list[int] | None = None,
+) -> None:
+    """Number a parent's rows 1..n in ordered_ids order, or their current order.
+
+    Works for active and completed workouts; the caller owns the transaction.
+    """
+    parent_column = POSITIONED_TABLES[table]
+    current = connection.execute(
+        f"SELECT id, position FROM {table} WHERE {parent_column} = ? ORDER BY position, id",
+        (parent_id,),
+    ).fetchall()
+    ids = [row["id"] for row in current] if ordered_ids is None else ordered_ids
+    # Move every row above the current maximum first so UNIQUE positions never collide.
+    offset = max((row["position"] for row in current), default=0)
+    for step in (offset, 0):
+        for index, row_id in enumerate(ids, 1):
+            connection.execute(f"UPDATE {table} SET position = ? WHERE id = ?", (step + index, row_id))
+
+
+def delete_workout_exercise(connection: sqlite3.Connection, exercise_id: int) -> None:
+    """Delete a Workout Exercise and its sets, then close the position gap.
+
+    Works for active and completed workouts; the caller owns the transaction.
+    """
+    entry = connection.execute(
+        "SELECT workout_id FROM workout_exercises WHERE id = ?", (exercise_id,)
+    ).fetchone()
+    if not entry:
+        raise LookupError("Workout exercise not found.")
+    connection.execute("DELETE FROM workout_sets WHERE workout_exercise_id = ?", (exercise_id,))
+    connection.execute("DELETE FROM workout_exercises WHERE id = ?", (exercise_id,))
+    renumber_positions(connection, "workout_exercises", entry["workout_id"])
+
+
+def remove_workout_exercise(connection: sqlite3.Connection, exercise_id: int) -> dict[str, bool]:
+    with connection:
+        connection.execute("BEGIN IMMEDIATE")
+        require_active_exercise(connection, exercise_id)
+        delete_workout_exercise(connection, exercise_id)
+    return {"ok": True}
+
+
+def move_workout_exercise(
+    connection: sqlite3.Connection, exercise_id: int, position: int
+) -> dict[str, Any]:
+    """Move an active Workout Exercise to a 1-based position, shifting the others."""
+    with connection:
+        connection.execute("BEGIN IMMEDIATE")
+        require_active_exercise(connection, exercise_id)
+        workout_id = connection.execute(
+            "SELECT workout_id FROM workout_exercises WHERE id = ?", (exercise_id,)
+        ).fetchone()["workout_id"]
+        ids = [row["id"] for row in connection.execute(
+            "SELECT id FROM workout_exercises WHERE workout_id = ? ORDER BY position, id",
+            (workout_id,),
+        )]
+        if type(position) is not int or not 1 <= position <= len(ids):
+            raise ValueError(f"Position must be a whole number from 1 to {len(ids)}.")
+        ids.remove(exercise_id)
+        ids.insert(position - 1, exercise_id)
+        renumber_positions(connection, "workout_exercises", workout_id, ids)
+    return {"workout_exercises": [
+        {"id": row_id, "position": index} for index, row_id in enumerate(ids, 1)
+    ]}
+
+
 def add_set(connection: sqlite3.Connection, exercise_id: int) -> dict[str, Any]:
     """Append a set that copies the weight and result of the set above, not completed."""
     with connection:

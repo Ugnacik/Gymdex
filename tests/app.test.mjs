@@ -657,3 +657,62 @@ test('Add set waits when the set above cannot reach the server', async () => {
   assert.match(app.nodes['#toast'].textContent, /Set 1 must reach the server before adding another set/);
   assert.equal(app.addSetButton.disabled, false);
 });
+
+const pressEntry = { id: 3, variation_id: 11, exercise_name: 'Bench Press', variation_name: 'Standard', equipment: 'Barbell',
+  tracking_type: 'repetitions', previous_sets: [], sets: [{ id: 2, position: 1, weight: null, result: null, completed: false }] };
+const plankEntry = { id: 4, variation_id: 12, exercise_name: 'Plank', variation_name: 'Front Plank', equipment: 'Bodyweight',
+  tracking_type: 'duration', previous_sets: [], sets: [
+    { id: 5, position: 1, weight: null, result: 60, completed: true }, { id: 6, position: 2, weight: null, result: null, completed: false }] };
+function clickIn(app, selector, dataset) {
+  const button = Object.assign(node(), { dataset });
+  return app.nodes['#app'].events.click({ target: { closest: (wanted) => wanted === selector ? button : null } });
+}
+
+test('each exercise offers move up, move down and remove with the ends disabled', async () => {
+  const app = await harness(storage(), { workout_exercises: [pressEntry, plankEntry] });
+  const html = app.nodes['#app'].innerHTML;
+  assert.match(html, /data-move-exercise="3" data-move-to="0" aria-label="Move Bench Press up" disabled>Move up/);
+  assert.match(html, /data-move-exercise="3" data-move-to="2" aria-label="Move Bench Press down" >Move down/);
+  assert.match(html, /data-move-exercise="4" data-move-to="1" aria-label="Move Front Plank up" >Move up/);
+  assert.match(html, /data-move-exercise="4" data-move-to="3" aria-label="Move Front Plank down" disabled>Move down/);
+  assert.match(html, /data-remove-exercise="4" aria-label="Remove Front Plank">Remove/);
+});
+
+test('removing an exercise asks first, then drops it and its drafts from the workout', async () => {
+  const disk = storage();
+  new DraftStore(() => disk).put(1, 6, { weight: '', result: '45', completed: false, assistance: false });
+  const app = await harness(disk, { workout_exercises: [pressEntry, plankEntry] });
+  const requests = [];
+  const questions = [];
+  app.env.fetch = async (url, options) => { requests.push(`${options.method} ${url}`); return response({ ok: true }); };
+  app.env.window.confirm = (question) => { questions.push(question); return false; };
+  await clickIn(app, '[data-remove-exercise]', { removeExercise: '4' });
+  assert.deepEqual(requests, []);
+  assert.deepEqual(questions, ['Remove Front Plank and its 2 sets from this workout? This cannot be undone.']);
+  app.env.window.confirm = () => true;
+  await clickIn(app, '[data-remove-exercise]', { removeExercise: '4' });
+  assert.deepEqual(requests, ['DELETE /api/workout-exercises/4']);
+  assert.doesNotMatch(app.nodes['#app'].innerHTML, /Plank/);
+  assert.match(app.nodes['#app'].innerHTML, /<h2>Exercises<\/h2><span>1<\/span>/);
+  assert.equal(app.nodes['#toast'].textContent, 'Front Plank removed.');
+  assert.equal(new DraftStore(() => disk).get(1, 6), null);
+  assert.deepEqual(new DraftStore(() => disk).cachedWorkout().workout_exercises.map((entry) => entry.id), [3]);
+});
+
+test('moving an exercise saves set drafts first and re-renders in the new order', async () => {
+  const app = await harness(storage(), { workout_exercises: [pressEntry, plankEntry] });
+  const requests = [];
+  app.env.fetch = async (url, options) => {
+    requests.push([`${options.method} ${url}`, JSON.parse(options.body)]);
+    if (url === '/api/sets/2') return response({ id: 2, position: 1, weight: null, result: 8, completed: false });
+    return response({ workout_exercises: [{ id: 4, position: 1 }, { id: 3, position: 2 }] });
+  };
+  app.form.elements.result.value = '8';
+  app.form.events.input();
+  await clickIn(app, '[data-move-exercise]', { moveExercise: '4', moveTo: '1' });
+  assert.deepEqual(requests, [['PUT /api/sets/2', { weight: null, result: 8, completed: false }],
+    ['PUT /api/workout-exercises/4', { position: 1 }]]);
+  const html = app.nodes['#app'].innerHTML;
+  assert.ok(html.indexOf('data-entry-id="4"') < html.indexOf('data-entry-id="3"'));
+  assert.match(html, /data-move-exercise="4" data-move-to="0" aria-label="Move Front Plank up" disabled>/);
+});
