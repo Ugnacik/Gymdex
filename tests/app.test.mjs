@@ -376,6 +376,77 @@ test('a valid completed set starts the optional rest timer while offline', async
   assert.equal(app.nodes['#rest-status'].textContent, 'Resting');
 });
 
+// A stand-in for the browser's Web Audio API that records what was played.
+function fakeAudio() {
+  const audio = { contexts: 0, resumes: 0, beeps: 0 };
+  const param = () => ({ value: 0, setValueAtTime() {}, linearRampToValueAtTime() {}, exponentialRampToValueAtTime() {} });
+  audio.AudioContext = class {
+    constructor() { audio.contexts += 1; this.state = 'suspended'; this.currentTime = 0; this.destination = {}; }
+    resume() { audio.resumes += 1; this.state = 'running'; return Promise.resolve(); }
+    createGain() { return { gain: param(), connect() {} }; }
+    createOscillator() {
+      return { frequency: param(), connect() {}, start: () => { audio.beeps += 1; }, stop() {} };
+    }
+  };
+  return audio;
+}
+
+function runTimers(timers) {
+  for (const [id, task] of [...timers]) { timers.delete(id); task.callback(); }
+}
+
+test('a finished rest plays a beep and vibrates after Done unlocks audio', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-09-22T10:30:00Z') });
+  const disk = storage();
+  disk.setItem('gymdex:rest:v1', JSON.stringify({ enabled: true, duration: 30 }));
+  const app = await harness(disk);
+  const audio = fakeAudio();
+  const vibrations = [];
+  app.env.window.AudioContext = audio.AudioContext;
+  app.env.navigator.vibrate = (pattern) => { vibrations.push(pattern); return true; };
+  app.env.navigator.onLine = false;
+  app.form.elements.result.value = '8';
+  app.form.elements.completed.checked = true;
+  app.form.elements.completed.events.change();
+  assert.equal(audio.resumes, 1);
+  t.mock.timers.tick(29_000);
+  runTimers(app.timers);
+  assert.equal(audio.beeps, 0);
+  assert.deepEqual(vibrations, []);
+  t.mock.timers.tick(1_000);
+  runTimers(app.timers);
+  assert.equal(app.nodes['#rest-status'].textContent, 'Rest complete');
+  assert.ok(audio.beeps > 0);
+  assert.equal(vibrations.length, 1);
+  assert.equal(audio.contexts, 1);
+});
+
+test('Start unlocks audio and a finished rest works without vibration support', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-09-22T10:30:00Z') });
+  const disk = storage();
+  disk.setItem('gymdex:rest:v1', JSON.stringify({ enabled: true, duration: 30 }));
+  const app = await harness(disk);
+  const audio = fakeAudio();
+  app.env.window.webkitAudioContext = audio.AudioContext;
+  app.nodes['#rest-start'].events.click();
+  assert.equal(audio.resumes, 1);
+  t.mock.timers.tick(30_000);
+  runTimers(app.timers);
+  assert.equal(app.nodes['#rest-status'].textContent, 'Rest complete');
+  assert.ok(audio.beeps > 0);
+});
+
+test('a finished rest still completes when the browser has no Web Audio', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-09-22T10:30:00Z') });
+  const disk = storage();
+  disk.setItem('gymdex:rest:v1', JSON.stringify({ enabled: true, duration: 30 }));
+  const app = await harness(disk);
+  app.nodes['#rest-start'].events.click();
+  t.mock.timers.tick(30_000);
+  runTimers(app.timers);
+  assert.equal(app.nodes['#rest-status'].textContent, 'Rest complete');
+});
+
 test('custom exercise creation offers the new variation for the active workout', async () => {
   const app = await harness();
   const wrapper = node();

@@ -7,6 +7,7 @@ function fixture(durationSeconds = 3) {
   let nextId = 0;
   const scheduled = new Map();
   const changes = [];
+  const finishes = [];
   const timer = new RestTimer({
     durationSeconds,
     now: () => now,
@@ -17,9 +18,10 @@ function fixture(durationSeconds = 3) {
     },
     clear: (id) => scheduled.delete(id),
     onChange: (snapshot) => changes.push(snapshot),
+    onFinish: (snapshot) => finishes.push(snapshot),
   });
   return {
-    timer, scheduled, changes,
+    timer, scheduled, changes, finishes,
     advance(ms) { now += ms; },
     tick() {
       const [id, task] = scheduled.entries().next().value;
@@ -100,4 +102,42 @@ test("duration changes apply to the next interval and reject invalid settings", 
     assert.throws(() => clock.timer.setDuration(value), RangeError);
   }
   assert.equal(clock.timer.snapshot().durationSeconds, 120);
+});
+
+test("finishing a countdown signals once, on the tick that reaches zero", () => {
+  const clock = fixture(2);
+  clock.timer.start();
+  clock.advance(1000);
+  clock.tick();
+  assert.equal(clock.finishes.length, 0);
+  clock.advance(1000);
+  clock.tick();
+  assert.deepEqual(clock.finishes, [{ status: "finished", durationSeconds: 2, remainingSeconds: 0 }]);
+  clock.timer.refresh();
+  clock.timer.pause();
+  assert.equal(clock.finishes.length, 1);
+});
+
+test("a countdown that ends while the page is throttled signals when refreshed", () => {
+  const clock = fixture(3);
+  clock.timer.start();
+  clock.advance(10_000);
+  assert.equal(clock.finishes.length, 0);
+  clock.timer.refresh();
+  assert.equal(clock.finishes.length, 1);
+});
+
+test("reset, restart and disabling do not signal a finished rest", () => {
+  const clock = fixture(3);
+  clock.timer.start();
+  clock.advance(1000);
+  clock.timer.start();
+  clock.timer.pause();
+  clock.timer.stop();
+  assert.equal(clock.finishes.length, 0);
+  clock.timer.start();
+  clock.timer.dispose();
+  clock.advance(5000);
+  clock.timer.refresh();
+  assert.equal(clock.finishes.length, 0);
 });
