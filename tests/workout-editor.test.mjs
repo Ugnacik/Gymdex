@@ -11,7 +11,7 @@ function deferred() {
   const promise = new Promise((done) => { resolve = done; });
   return { promise, resolve };
 }
-function fixture(drafts = new DraftStore(() => disk)) {
+function fixture(drafts = new DraftStore(() => disk), initial = data()) {
   const timers = new Map();
   let clock = 0;
   const requests = [];
@@ -19,7 +19,7 @@ function fixture(drafts = new DraftStore(() => disk)) {
     if (options.method === 'PUT') return { id: 2, ...JSON.parse(options.body) };
     return { ok: true };
   } };
-  const editor = new WorkoutEditor({ data: data(), drafts,
+  const editor = new WorkoutEditor({ data: initial, drafts,
     request: (path, options) => { requests.push({ path, ...options }); return env.request(path, options); },
     schedule: (callback) => { timers.set(++clock, callback); return clock; },
     clear: (id) => timers.delete(id), online: () => env.online,
@@ -258,4 +258,55 @@ test('failed removal preserves drafts, and finish waits for an in-flight removal
   await removal;
   assert.equal(await finish, true);
   assert.deepEqual(calls, ['/api/sets/2', '/api/workouts/1/complete']);
+});
+
+const blank = (id) => ({ id, weight: null, result: null, completed: false });
+const twoExercises = () => ({ active_workout: { id: 1, gym_id: 1 }, gyms: [], workout_exercises: [
+  { id: 3, position: 1, sets: [blank(2)] }, { id: 4, position: 2, sets: [blank(5), blank(6)] }] });
+const echoSets = async (path, options) => options.method === 'PUT' && path.startsWith('/api/sets/')
+  ? { id: Number(path.split('/').pop()), ...JSON.parse(options.body) } : { ok: true };
+
+test('removing an exercise saves other drafts first and discards its own for good', async () => {
+  const { editor, env, drafts, requests, timers } = fixture(undefined, twoExercises());
+  env.request = echoSets;
+  editor.edit(2, values);
+  editor.edit(5, { ...values, result: '' });
+  editor.edit(6, values);
+  assert.equal(await editor.removeExercise(4, () => false), false);
+  assert.deepEqual(requests, []);
+  assert.equal(timers.size, 3, 'declining keeps autosave queued');
+  assert.equal(await editor.removeExercise(4), true);
+  assert.deepEqual(requests.map(({ method, path }) => `${method} ${path}`),
+    ['PUT /api/sets/2', 'DELETE /api/workout-exercises/4']);
+  assert.deepEqual(editor.data.workout_exercises.map((entry) => [entry.id, entry.position]), [[3, 1]]);
+  assert.deepEqual(drafts.cachedWorkout().workout_exercises.map((entry) => entry.id), [3]);
+  assert.equal(drafts.get(1, 5), null);
+  assert.equal(drafts.get(1, 6), null);
+  assert.equal(editor.status(5), null);
+  assert.equal(editor.pending, false);
+  await editor.retry();
+  assert.equal(requests.length, 2);
+  assert.equal(editor.busy, false);
+});
+
+test('moving an exercise saves drafts first and applies the server order', async () => {
+  const { editor, env, drafts, requests } = fixture(undefined, twoExercises());
+  editor.edit(2, { ...values, result: '' });
+  assert.equal(await editor.moveExercise(4, 1), false, 'an invalid draft must be corrected first');
+  assert.deepEqual(requests, []);
+  editor.edit(2, values);
+  env.request = async (path, options) => path === '/api/workout-exercises/4'
+    ? { workout_exercises: [{ id: 4, position: 1 }, { id: 3, position: 2 }] } : echoSets(path, options);
+  assert.equal(await editor.moveExercise(4, 1), true);
+  assert.deepEqual(requests.map(({ method, path }) => `${method} ${path}`),
+    ['PUT /api/sets/2', 'PUT /api/workout-exercises/4']);
+  assert.deepEqual(JSON.parse(requests[1].body), { position: 1 });
+  assert.deepEqual(editor.data.workout_exercises.map((entry) => [entry.id, entry.position]), [[4, 1], [3, 2]]);
+  assert.deepEqual(drafts.cachedWorkout().workout_exercises.map((entry) => entry.id), [4, 3]);
+  env.request = async () => { throw new Error('Offline'); };
+  await assert.rejects(editor.moveExercise(3, 1), /Offline/);
+  await assert.rejects(editor.removeExercise(3), /Offline/);
+  assert.deepEqual(editor.data.workout_exercises.map((entry) => entry.id), [4, 3]);
+  assert.equal(editor.busy, false);
+  assert.equal(editor.edit(2, values), true);
 });

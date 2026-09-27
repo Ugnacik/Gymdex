@@ -210,13 +210,14 @@ function renderWorkout() {
       ${renderRestTimer()}
       <div class="section-title"><h2>Exercises</h2><span>${entries.length}</span></div>
       <section class="exercise-list">
-        ${entries.length ? entries.map((entry) => `
+        ${entries.length ? entries.map((entry, index) => `
           <article class="exercise-entry" data-entry-id="${entry.id}">
             <div class="history-exercise-heading"><h3>${escapeHtml(exerciseDisplayName(entry))}</h3><button type="button" class="text-button" data-active-progress="${entry.variation_id}" data-progress-equipment="${escapeHtml(entry.equipment)}" data-progress-manufacturer="${escapeHtml(entry.manufacturer || "")}" data-progress-label="${escapeHtml(entry.label || "")}">View progress</button></div>
             <p class="meta">${escapeHtml(configurationLabel(entry))}</p>
             <p class="set-hint">${entry.tracking_type === "duration" ? "Duration in seconds" : "Repetitions"}. ${entry.assisted ? "Assist kg is the counterweight and is optional." : "Weight is optional."}</p>
             <div class="sets-list">${entry.sets.map((set, index) => renderSet(entry, set, index)).join("")}</div>
             <button class="secondary add-set" data-add-set="${entry.id}">Add set</button>
+            ${renderExerciseTools(entry, index, entries.length)}
           </article>`).join("") : `<div class="empty"><h3>No exercises yet</h3><p>Add a recent choice in one tap, or search the catalog.</p></div>`}
       </section>
       <button class="primary accent add-exercise" id="open-picker">Add exercise</button>
@@ -240,6 +241,16 @@ function renderWorkout() {
     },
   )));
   bindRestTimer();
+}
+
+function renderExerciseTools(entry, index, count) {
+  const name = escapeHtml(exerciseDisplayName(entry));
+  // data-move-to is the 1-based target position; the ends keep their disabled button for a stable layout.
+  return `<div class="exercise-tools">
+    <button type="button" class="text-button" data-move-exercise="${entry.id}" data-move-to="${index}" aria-label="Move ${name} up" ${index === 0 ? "disabled" : ""}>Move up</button>
+    <button type="button" class="text-button" data-move-exercise="${entry.id}" data-move-to="${index + 2}" aria-label="Move ${name} down" ${index === count - 1 ? "disabled" : ""}>Move down</button>
+    <button type="button" class="text-button remove-exercise" data-remove-exercise="${entry.id}" aria-label="Remove ${name}">Remove</button>
+  </div>`;
 }
 
 function renderRestTimer() {
@@ -975,6 +986,37 @@ async function addSet(button) {
   finally { button.disabled = false; }
 }
 
+async function moveExercise(entryId, position) {
+  if (!state.editor || state.editor.busy) return;
+  const from = state.data.workout_exercises.findIndex((item) => item.id === entryId) + 1;
+  try {
+    if (!await state.editor.moveExercise(entryId, position)) { showInvalidSet(); return; }
+    render();
+    // Keep focus on the moved exercise, preferring the button for the same direction.
+    const [preferred, other] = position < from ? [position - 1, position + 1] : [position + 1, position - 1];
+    const button = (to) => document.querySelector(`[data-move-exercise="${entryId}"][data-move-to="${to}"]:not(:disabled)`);
+    (button(preferred) || button(other))?.focus();
+  } catch (error) { showToast(error.message); }
+}
+
+async function removeExercise(entryId) {
+  const entry = state.data.workout_exercises.find((item) => item.id === entryId);
+  if (!entry || !state.editor || state.editor.busy) return;
+  const name = exerciseDisplayName(entry);
+  const count = entry.sets.length;
+  const question = `Remove ${name}${count ? ` and its ${count} set${count === 1 ? "" : "s"}` : ""} from this workout? This cannot be undone.`;
+  let confirmed = false;
+  try {
+    if (!await state.editor.removeExercise(entryId, () => (confirmed = window.confirm(question)))) {
+      if (confirmed) showInvalidSet();
+      return;
+    }
+    render();
+    document.querySelector("#open-picker")?.focus();
+    showToast(`${name} removed.`);
+  } catch (error) { showToast(error.message); }
+}
+
 async function removeSet(form) {
   if (state.editor.busy) return;
   if (!window.confirm(`Remove set ${form.querySelector("legend").textContent.replace("Set ", "")}?`)) return;
@@ -985,6 +1027,13 @@ async function removeSet(form) {
     updateSyncStatus();
   }
 }
+
+app.addEventListener("click", (event) => {
+  const move = event.target.closest?.("[data-move-exercise]");
+  if (move) return moveExercise(Number(move.dataset.moveExercise), Number(move.dataset.moveTo));
+  const remove = event.target.closest?.("[data-remove-exercise]");
+  if (remove) return removeExercise(Number(remove.dataset.removeExercise));
+});
 
 window.addEventListener("beforeunload", (event) => {
   if (drafts.error && state.editor?.pending) {

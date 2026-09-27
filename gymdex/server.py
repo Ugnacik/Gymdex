@@ -158,12 +158,17 @@ class GymdexHandler(BaseHTTPRequestHandler):
         active_set = len(parts) == 3 and parts[:2] == ["api", "sets"]
         history_set = (len(parts) == 5 and parts[:2] == ["api", "history"]
                        and parts[3] == "sets")
-        if not active_set and not history_set:
+        workout_exercise = len(parts) == 3 and parts[:2] == ["api", "workout-exercises"]
+        if not active_set and not history_set and not workout_exercise:
             return self._json_error("Route not found.", HTTPStatus.NOT_FOUND)
         try:
             payload = self._read_json()
         except ValueError:
             return self._json_error("The request body must be a JSON object.", HTTPStatus.BAD_REQUEST)
+        if workout_exercise:
+            return self._with_db(lambda connection: db.move_workout_exercise(
+                connection, int(parts[2]), payload.get("position"),
+            ))
         if history_set:
             return self._with_db(lambda connection: db.correct_completed_set(
                 connection, int(parts[2]), int(parts[4]), payload,
@@ -174,6 +179,8 @@ class GymdexHandler(BaseHTTPRequestHandler):
         parts = urlparse(self.path).path.strip("/").split("/")
         if len(parts) == 3 and parts[:2] == ["api", "workouts"]:
             return self._with_db(lambda connection: db.cancel_workout(connection, int(parts[2])))
+        if len(parts) == 3 and parts[:2] == ["api", "workout-exercises"]:
+            return self._with_db(lambda connection: db.remove_workout_exercise(connection, int(parts[2])))
         if len(parts) != 3 or parts[:2] != ["api", "sets"]:
             return self._json_error("Route not found.", HTTPStatus.NOT_FOUND)
         self._with_db(lambda connection: db.delete_set(connection, int(parts[2])))
