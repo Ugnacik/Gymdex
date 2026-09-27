@@ -86,6 +86,31 @@ class SetTests(unittest.TestCase):
                 action()
         self.assertEqual(third['position'], 3)
 
+    def test_added_set_copies_the_set_above_without_completing_it(self):
+        self.save(self.first_set(), result=8, weight=42.5, completed=True)
+        last = db.add_set(self.connection, self.entry['id'])
+        self.save(last, result=6, weight=40, completed=False)
+        added = db.add_set(self.connection, self.entry['id'])
+        self.assertEqual((added['position'], added['weight'], added['result'], added['completed']), (3, 40, 6, 0))
+        self.assertEqual(db.sets_for_exercise(self.connection, self.entry['id'])[2], added)
+        plank = self.add_exercise(self.plank, 'Bodyweight')
+        self.save(self.first_set(plank), result=60, weight=None)
+        copied = db.add_set(self.connection, plank['id'])
+        self.assertEqual((copied['weight'], copied['result'], copied['completed']), (None, 60, 0))
+
+    def test_added_set_copies_assisted_counterweight_as_negative(self):
+        catalog = db.catalog_for_gym(self.connection, self.gym['id'])['catalog']
+        pull_up = next(v for v in catalog if v['exercise_name'] == 'Pull-up' and v['variation_name'] == 'Assisted')
+        entry = self.add_exercise(pull_up, 'Machine')
+        self.save(self.first_set(entry), result=8, weight=25)
+        self.assertEqual(db.add_set(self.connection, entry['id'])['weight'], -25)
+
+    def test_added_set_after_removing_every_set_starts_empty(self):
+        self.save(self.first_set())
+        db.delete_set(self.connection, self.first_set()['id'])
+        added = db.add_set(self.connection, self.entry['id'])
+        self.assertEqual((added['position'], added['weight'], added['result'], added['completed']), (1, None, None, 0))
+
     def test_completed_workout_rejects_set_mutations(self):
         item = self.first_set()
         self.save(item)
@@ -205,6 +230,8 @@ class SetTests(unittest.TestCase):
         status, saved = self.request('PUT', f'/api/sets/{item["id"]}', dict(result=12, weight=None, completed=True))
         self.assertEqual(status, 200)
         self.assertEqual(saved['completed'], 1)
+        status, copied = self.request('POST', f'/api/workout-exercises/{self.entry["id"]}/sets', {})
+        self.assertEqual((status, copied['result'], copied['completed']), (201, 12, 0))
         for payload in [[], None, dict(result=0, weight=None, completed=True)]:
             self.assertEqual(self.request('PUT', f'/api/sets/{item["id"]}', payload)[0], 400)
         self.assertEqual(self.request('PUT', '/api/sets/invalid', {})[0], 400)

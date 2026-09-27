@@ -873,7 +873,9 @@ function renderSet(entry, set, index) {
     <fieldset>
       <legend>Set ${set.position}</legend>
       <button type="button" class="remove-set" aria-label="Remove ${escapeHtml(name)}"><span aria-hidden="true">×</span></button>
-      <p class="previous-set">Last workout: ${escapeHtml(previousText)}</p>
+      ${previous
+        ? `<button type="button" class="previous-set fill-previous" data-previous-weight="${previous.weight ?? ""}" data-previous-result="${previous.result}" aria-label="Fill ${escapeHtml(name)} from last workout: ${escapeHtml(previousText)}">Last workout: ${escapeHtml(previousText)}</button>`
+        : `<p class="previous-set">Last workout: ${escapeHtml(previousText)}</p>`}
       <div class="set-inputs">
         <label>${assisted ? "Assist kg" : "kg"} <input name="weight" type="number" inputmode="decimal" step="any" min="0" max="100000" aria-label="${escapeHtml(name)} ${assisted ? "assistance" : "weight"} in kilograms" value="${set.weight === null ? "" : Math.abs(set.weight)}" /></label>
         <label>${unit === "sec" ? "Seconds" : "Reps"} <input name="result" type="number" inputmode="numeric" min="1" max="1000000" step="1" aria-label="${escapeHtml(name)} ${unit}" value="${set.result ?? ""}" ${set.completed ? "required" : ""} /></label>
@@ -933,7 +935,23 @@ function bindSet(form) {
     state.editor.save(form.dataset.setId);
   });
   form.querySelector(".remove-set").addEventListener("click", () => removeSet(form));
+  const fill = form.querySelector(".fill-previous");
+  fill?.addEventListener("click", () => fillFromPrevious(form, fill.dataset));
   syncEditorView();
+}
+
+function fillFromPrevious(form, previous) {
+  if (state.editor.busy) return;
+  const weight = previous.previousWeight === "" ? null : Number(previous.previousWeight);
+  // Last time's assistance stays assistance, even on sets recorded before it was a variation property.
+  if (weight < 0 && form.dataset.assisted !== "true") {
+    form.dataset.assisted = "true";
+    const label = form.elements.weight.labels?.[0]?.firstChild;
+    if (label) label.textContent = "Assist kg ";
+  }
+  form.elements.weight.value = weight === null ? "" : String(Math.abs(weight));
+  form.elements.result.value = previous.previousResult;
+  form.requestSubmit();
 }
 
 async function retryPendingSets() {
@@ -961,9 +979,17 @@ async function saveAllSets() {
 }
 
 async function addSet(button) {
+  if (state.editor.busy) return;
   button.disabled = true;
   try {
     const entry = state.data.workout_exercises.find((item) => item.id === Number(button.dataset.addSet));
+    const above = entry.sets.at(-1);
+    // The server copies the set above, so its latest edit must be saved first.
+    if (above && !await state.editor.save(above.id)) {
+      [...document.querySelectorAll(".set-form")].find((form) => form.dataset.setId === String(above.id))?.reportValidity();
+      showToast(`Set ${above.position} must reach the server before adding another set.`);
+      return;
+    }
     const set = await api(`/api/workout-exercises/${entry.id}/sets`, { method: "POST", body: "{}" });
     entry.sets.push(set);
     drafts.snapshot(state.data);
