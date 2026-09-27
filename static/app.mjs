@@ -728,20 +728,58 @@ function renderCustomExerciseForm(query = "") {
       <label class="field">Exercise name<input name="name" maxlength="80" value="${escapeHtml(query)}" placeholder="e.g. Leg Press" required /></label>
       <label class="field">Variation<input name="variation_name" maxlength="80" placeholder="Standard" /></label>
       <label class="field">Track by<select name="tracking_type"><option value="repetitions">Repetitions</option><option value="duration">Duration in seconds</option></select></label>
-      <label class="field">Equipment options<input name="equipment" maxlength="1639" placeholder="e.g. Machine, Plate-loaded machine" required /></label>
-      <p class="field-help">Separate equipment options with commas. You can choose one for each gym machine when logging.</p>
+      <div class="field equipment-field">
+        <label for="equipment-entry">Equipment options</label>
+        <div class="equipment-entry"><input id="equipment-entry" maxlength="80" placeholder="e.g. Machine" autocomplete="off" enterkeyhint="done" aria-describedby="equipment-help" /><button type="button" class="secondary" id="add-equipment">Add</button></div>
+        <ul class="equipment-chips" id="equipment-chips" aria-label="Added equipment options"></ul>
+      </div>
+      <p class="field-help" id="equipment-help">Type one option, then tap Add or press Enter. You can choose one for each gym machine when logging.</p>
       <label class="assistance-option"><input name="assisted" type="checkbox" /> Assisted (weight is counterweight)</label>
       <button class="primary accent" type="submit">Create exercise</button>
     </form>`;
   sheet.querySelector("#back-to-picker").addEventListener("click", () => renderPicker(query));
   sheet.querySelector("#close-picker").addEventListener("click", closePicker);
+  const equipment = [];
+  const entry = sheet.querySelector("#equipment-entry");
+  const chips = sheet.querySelector("#equipment-chips");
+  const renderChips = () => {
+    chips.innerHTML = equipment.map((name, index) => `<li class="equipment-chip"><span>${escapeHtml(name)}</span><button type="button" class="chip-remove" data-remove-equipment="${index}" aria-label="Remove ${escapeHtml(name)}"><span aria-hidden="true">×</span></button></li>`).join("");
+  };
+  const addEquipment = () => {
+    const name = entry.value.split(/\s+/).filter(Boolean).join(" ");
+    if (!name) return true;
+    let problem = "";
+    if (name.includes("|")) problem = "Equipment names cannot contain |.";
+    else if (equipment.some((item) => item.toLowerCase() === name.toLowerCase())) problem = `${name} is already added.`;
+    else if (equipment.length >= 20) problem = "You can add up to 20 equipment options.";
+    if (problem) { showToast(problem); entry.focus(); return false; }
+    equipment.push(name);
+    entry.value = "";
+    renderChips();
+    entry.focus();
+    return true;
+  };
+  entry.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    addEquipment();
+  });
+  sheet.querySelector("#add-equipment").addEventListener("click", addEquipment);
+  chips.addEventListener("click", (event) => {
+    const button = event.target.closest?.("[data-remove-equipment]");
+    if (!button) return;
+    equipment.splice(Number(button.dataset.removeEquipment), 1);
+    renderChips();
+    entry.focus();
+  });
   sheet.querySelector("#custom-exercise-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
     const values = new FormData(form);
-    const equipment = String(values.get("equipment")).split(",").map((item) => item.trim()).filter(Boolean);
-    if (!equipment.length || equipment.length > 20 || equipment.some((item) => item.length > 80 || item.includes("|"))) {
-      showToast("Enter 1 to 20 equipment options, each up to 80 characters.");
+    if (!addEquipment()) return;
+    if (!equipment.length) {
+      showToast("Add at least one equipment option.");
+      entry.focus();
       return;
     }
     const submit = form.querySelector('[type="submit"]');

@@ -49,8 +49,10 @@ mixed. These two best values can come from different sets in the same workout.
 ## Custom exercises
 
 During a workout, open Add exercise and choose **Create custom exercise**.
-Enter an exercise name, optional variation name, tracking type, and one or more
-comma-separated equipment choices. An empty variation name becomes Standard.
+Enter an exercise name, optional variation name, and tracking type. Add
+equipment choices one at a time: type one, then tap Add or press Enter. Each
+choice appears as a chip you can remove with its ×. An empty variation name
+becomes Standard.
 Check Assisted when the variation's weight is a machine counterweight.
 Using an existing exercise name adds another variation. The resulting catalog
 entry is available at every gym; machine details are still recorded for the

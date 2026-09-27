@@ -303,9 +303,11 @@ test('custom exercise creation offers the new variation for the active workout',
   wrapper.remove = () => { delete app.nodes['#picker']; };
   const sheet = node();
   const customForm = Object.assign(node(), { querySelector: () => node() });
+  const entry = Object.assign(node(), { value: '' });
+  const chips = node();
   const sheetNodes = {
     '#back-to-picker': node(), '#close-picker': node(), '#custom-exercise-form': customForm,
-    '[name="name"]': node(),
+    '[name="name"]': node(), '#equipment-entry': entry, '#add-equipment': node(), '#equipment-chips': chips,
   };
   sheet.querySelector = (selector) => sheetNodes[selector];
   app.nodes['#picker .sheet'] = sheet;
@@ -326,14 +328,38 @@ test('custom exercise creation offers the new variation for the active workout',
   app.nodes['#create-exercise'].events.click();
   assert.match(sheet.innerHTML, /Create custom exercise/);
   assert.match(sheet.innerHTML, /<input name="assisted" type="checkbox" \/> Assisted \(weight is counterweight\)/);
+  assert.doesNotMatch(sheet.innerHTML, /commas/);
+  assert.match(sheet.innerHTML, /<input id="equipment-entry"[^>]*maxlength="80"/);
   const originalFormData = globalThis.FormData;
   globalThis.FormData = class { constructor() { return new Map([
-    ['name', 'Leg Press'], ['variation_name', 'Single Leg'], ['tracking_type', 'repetitions'], ['equipment', 'Machine'],
+    ['name', 'Leg Press'], ['variation_name', 'Single Leg'], ['tracking_type', 'repetitions'],
   ]); } };
-  try { await customForm.events.submit({ preventDefault() {}, currentTarget: customForm }); }
-  finally { globalThis.FormData = originalFormData; }
+  try {
+    await customForm.events.submit({ preventDefault() {}, currentTarget: customForm });
+    assert.equal(requests.length, 1);
+    assert.equal(app.nodes['#toast'].textContent, 'Add at least one equipment option.');
+    assert.equal(entry.focused, true);
+    let prevented = false;
+    entry.value = '  Plate-loaded,   45° ';
+    entry.events.keydown({ key: 'Enter', preventDefault() { prevented = true; } });
+    assert.equal(prevented, true);
+    assert.equal(entry.value, '');
+    entry.value = 'Machine';
+    sheetNodes['#add-equipment'].events.click();
+    entry.value = 'machine';
+    sheetNodes['#add-equipment'].events.click();
+    assert.equal(app.nodes['#toast'].textContent, 'machine is already added.');
+    assert.equal(entry.value, 'machine');
+    assert.match(chips.innerHTML, /<span>Plate-loaded, 45°<\/span>.*aria-label="Remove Plate-loaded, 45°"/);
+    assert.match(chips.innerHTML, /data-remove-equipment="1" aria-label="Remove Machine"/);
+    const removeFirst = { dataset: { removeEquipment: '0' } };
+    chips.events.click({ target: { closest: () => removeFirst } });
+    assert.doesNotMatch(chips.innerHTML, /Plate-loaded/);
+    entry.value = 'Cable';
+    await customForm.events.submit({ preventDefault() {}, currentTarget: customForm });
+  } finally { globalThis.FormData = originalFormData; }
   assert.equal(requests[1][0], '/api/exercises');
-  assert.deepEqual(JSON.parse(requests[1][1].body), { name: 'Leg Press', variation_name: 'Single Leg', tracking_type: 'repetitions', equipment: ['Machine'], assisted: false });
+  assert.deepEqual(JSON.parse(requests[1][1].body), { name: 'Leg Press', variation_name: 'Single Leg', tracking_type: 'repetitions', equipment: ['Machine', 'Cable'], assisted: false });
   assert.match(sheet.innerHTML, /Single Leg Leg Press/);
   assert.match(sheet.innerHTML, /data-equipment="Machine"/);
 });

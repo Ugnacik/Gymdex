@@ -196,6 +196,7 @@ input::placeholder { color: var(--muted); opacity: 1; }
   position: fixed;
   right: 18px;
   bottom: calc(90px + env(safe-area-inset-bottom));
+  pointer-events: none;
   left: 18px;
   z-index: 20;
   max-width: 520px;
@@ -294,6 +295,15 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .set-complete input { width: 24px; height: 24px; min-height: 24px; padding: 0; accent-color: var(--accent); cursor: pointer; }
 .set-inputs .set-complete { grid-template-rows: auto 48px; justify-items: center; min-width: 48px; margin: 0; }
 .set-inputs .set-complete input { width: 28px; height: 28px; min-height: 28px; align-self: center; padding: 0; accent-color: var(--accent); cursor: pointer; }
+.equipment-field label { font-size: inherit; font-weight: inherit; }
+.equipment-entry { display: flex; gap: 8px; }
+.equipment-entry input { flex: 1; min-width: 0; }
+.equipment-entry .secondary { min-width: 72px; }
+.equipment-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 2px 0 0; padding: 0; list-style: none; }
+.equipment-chips:empty { display: none; }
+.equipment-chip { display: inline-flex; align-items: center; max-width: 100%; padding-left: 14px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 0.9rem; font-weight: 650; }
+.equipment-chip span { overflow-wrap: anywhere; }
+.chip-remove { width: 44px; height: 44px; flex-shrink: 0; border: 0; background: transparent; color: inherit; font-size: 1.3rem; cursor: pointer; }
 .assistance-option { display: flex; align-items: center; gap: 10px; min-height: 44px; margin-bottom: 14px; font-size: 0.9rem; cursor: pointer; }
 .assistance-option input { width: 24px; height: 24px; min-height: 24px; padding: 0; accent-color: var(--accent); cursor: pointer; }
 .set-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; margin-top: 4px; }
