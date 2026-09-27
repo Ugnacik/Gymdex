@@ -145,6 +145,34 @@ class FeatureTests(unittest.TestCase):
             'SELECT COUNT(*) FROM workouts WHERE completed_at IS NULL'
         ).fetchone()[0], 1)
 
+    def test_picker_and_recent_add_empty_slots_for_each_set_of_last_matching_workout(self):
+        original = db.start_workout(self.connection, self.gym['id'])
+        press = db.add_workout_exercise(
+            self.connection, original['id'], self.press['id'], 'Machine', 'Acme', 'Rack 1',
+        )
+        db.update_set(self.connection, db.sets_for_exercise(self.connection, press['id'])[0]['id'],
+                      {'weight': 50, 'result': 8, 'completed': True})
+        db.update_set(self.connection, db.add_set(self.connection, press['id'])['id'],
+                      {'weight': 55, 'result': 6, 'completed': True})
+        db.complete_workout(self.connection, original['id'])
+        workout = db.start_workout(self.connection, self.gym['id'])
+        recent = db.catalog_for_gym(self.connection, self.gym['id'])['recent']
+        profile_id = next(item['profile_id'] for item in recent if item['variation_id'] == self.press['id'])
+
+        for payload in [
+            {'variation_id': self.press['id'], 'equipment': 'Machine', 'manufacturer': 'Acme', 'label': 'Rack 1'},
+            {'profile_id': profile_id},
+        ]:
+            with self.subTest(payload=payload):
+                status, added = self.request('POST', f'/api/workouts/{workout["id"]}/exercises', payload)
+                self.assertEqual(status, 201)
+                entry = next(item for item in db.bootstrap(self.connection)['workout_exercises']
+                             if item['id'] == added['id'])
+                self.assertEqual([(s['position'], s['weight'], s['result'], s['completed'])
+                                  for s in entry['sets']],
+                                 [(1, None, None, 0), (2, None, None, 0)])
+                self.assertEqual([s['result'] for s in entry['previous_sets']], [8, 6])
+
     def test_progress_uses_completed_sets_and_gym_filter(self):
         first, _, first_set = self.workout_with_set(weight=40, result=10)
         self.connection.execute(

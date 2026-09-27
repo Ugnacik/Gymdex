@@ -216,25 +216,35 @@ def bootstrap(connection: sqlite3.Connection) -> dict[str, Any]:
         )
     for entry in workout_exercises:
         entry["sets"] = sets_for_exercise(connection, entry["id"])
-        previous = connection.execute(
-            """SELECT we.id FROM workout_exercises we
-               JOIN workouts w ON w.id = we.workout_id
-               WHERE w.completed_at IS NOT NULL AND w.gym_id = ?
-                 AND we.variation_id = ? AND we.equipment_snapshot = ?
-                 AND we.manufacturer_snapshot = ? AND we.label_snapshot = ?
-                 AND we.tracking_type_snapshot = ?
-               ORDER BY w.completed_at DESC, w.id DESC, we.position DESC LIMIT 1""",
-            (active_workout["gym_id"], entry["variation_id"], entry["equipment"],
-             entry["manufacturer"], entry["label"], entry["tracking_type"]),
-        ).fetchone()
-        entry["previous_sets"] = [
-            item for item in sets_for_exercise(connection, previous["id"]) if item["completed"]
-        ] if previous else []
+        entry["previous_sets"] = previous_sets(
+            connection, active_workout["gym_id"], entry["variation_id"], entry["equipment"],
+            entry["manufacturer"], entry["label"], entry["tracking_type"],
+        )
     return {
         "gyms": gyms,
         "active_workout": active_workout,
         "workout_exercises": workout_exercises,
     }
+
+
+def previous_sets(
+    connection: sqlite3.Connection, gym_id: int, variation_id: int, equipment: str,
+    manufacturer: str, label: str, tracking_type: str,
+) -> list[dict[str, Any]]:
+    """Completed sets of the last matching Workout Exercise in a completed workout."""
+    previous = connection.execute(
+        """SELECT we.id FROM workout_exercises we
+           JOIN workouts w ON w.id = we.workout_id
+           WHERE w.completed_at IS NOT NULL AND w.gym_id = ?
+             AND we.variation_id = ? AND we.equipment_snapshot = ?
+             AND we.manufacturer_snapshot = ? AND we.label_snapshot = ?
+             AND we.tracking_type_snapshot = ?
+           ORDER BY w.completed_at DESC, w.id DESC, we.position DESC LIMIT 1""",
+        (gym_id, variation_id, equipment, manufacturer, label, tracking_type),
+    ).fetchone()
+    return [
+        item for item in sets_for_exercise(connection, previous["id"]) if item["completed"]
+    ] if previous else []
 
 
 def catalog_for_gym(connection: sqlite3.Connection, gym_id: int) -> dict[str, Any]:
@@ -627,7 +637,14 @@ def add_workout_exercise(
             variation["tracking_type"],
         ),
     )
-    connection.execute("INSERT INTO workout_sets(workout_exercise_id, position) VALUES (?, 1)", (cursor.lastrowid,))
+    slots = len(previous_sets(
+        connection, workout["gym_id"], variation_id, equipment, manufacturer, label,
+        variation["tracking_type"],
+    ))
+    connection.executemany(
+        "INSERT INTO workout_sets(workout_exercise_id, position) VALUES (?, ?)",
+        [(cursor.lastrowid, slot) for slot in range(1, max(slots, 1) + 1)],
+    )
     connection.commit()
     return {
         "id": cursor.lastrowid,
