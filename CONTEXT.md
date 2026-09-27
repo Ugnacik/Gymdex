@@ -46,6 +46,10 @@ A finished Workout retained in history. Its recorded details may still be correc
 A particular Exercise Variation and one relevant Equipment value recorded at one position within a Workout. The same combination may appear more than once, and each occurrence preserves the details used in that Workout even when the catalog changes later.
 _Avoid_: Archived Exercise, logged exercise
 
+**Note**:
+Optional free text attached to one Workout or one Workout Exercise, recording what its sets do not, such as how the session felt or why a load dropped. A Note describes only that occurrence and is never copied to another Workout.
+_Avoid_: Comment, remark, memo
+
 **Set**:
 A recorded effort of one Exercise Variation within a Workout. A Set records the result required by the Variation's Tracking Type, may record weight, and counts as performed only after the user marks it complete.
 

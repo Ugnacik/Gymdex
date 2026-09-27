@@ -1,5 +1,5 @@
 import { DraftStore, setPayload } from "./drafts.mjs";
-import { WorkoutEditor } from "./workout-editor.mjs";
+import { NOTE_MAX_LENGTH, WorkoutEditor } from "./workout-editor.mjs";
 import { RestTimer } from "./rest-timer.mjs";
 
 // The server stores times as SQLite CURRENT_TIMESTAMP values in UTC ("YYYY-MM-DD HH:MM:SS").
@@ -105,14 +105,16 @@ function updateSyncStatus() {
   const status = document.querySelector("#sync-status");
   if (!status) return;
   const count = document.querySelectorAll('.set-form[data-dirty="true"]').length;
+  const notes = noteTargets().filter((target) => state.editor?.noteStatus(target)?.dirty).length;
+  const waiting = [count && `${count} set${count === 1 ? "" : "s"}`, notes && `${notes} note${notes === 1 ? "" : "s"}`].filter(Boolean);
   const unavailable = state.unavailable || !navigator.onLine;
   status.textContent = drafts.error
-    ? "Phone storage is unavailable. Keep this page open until your sets are saved to the server."
+    ? "Phone storage is unavailable. Keep this page open until your changes are saved to the server."
     : unavailable
-      ? "Server unavailable. Set edits are kept on this phone and will retry automatically. Adding items and finishing require a connection."
-      : count
-        ? `${count} set${count === 1 ? "" : "s"} waiting to save. Drafts are kept on this phone.`
-        : "All set changes saved to server.";
+      ? "Server unavailable. Set and note edits are kept on this phone and will retry automatically. Adding items and finishing require a connection."
+      : waiting.length
+        ? `${waiting.join(" and ")} waiting to save. Drafts are kept on this phone.`
+        : "All changes saved to server.";
   if (!state.offlineReady && unavailable) status.textContent += " Offline reopening is not available yet; keep this page open.";
   status.classList.toggle("error", drafts.error);
 }
@@ -253,10 +255,12 @@ function renderWorkout() {
             <p class="set-hint">${entry.tracking_type === "duration" ? "Duration in seconds" : "Repetitions"}. ${entry.assisted ? "Assist kg is the counterweight and is optional." : "Weight is optional."}</p>
             <div class="sets-list">${entry.sets.map((set, index) => renderSet(entry, set, index)).join("")}</div>
             <button class="secondary add-set" data-add-set="${entry.id}">Add set</button>
+            ${renderNote(`exercise:${entry.id}`, "Note", `Note for ${exerciseDisplayName(entry)}`)}
             ${renderExerciseTools(entry, index, entries.length)}
           </article>`).join("") : `<div class="empty"><h3>No exercises yet</h3><p>Add a recent choice in one tap, or search the catalog.</p></div>`}
       </section>
       <button class="primary accent add-exercise" id="open-picker">Add exercise</button>
+      ${renderNote("workout", "Workout note")}
       <div class="workout-actions">
         <button class="secondary" data-finish-workout>Finish workout</button>
         <button class="text-button cancel-workout" id="cancel-workout">Cancel workout</button>
@@ -268,6 +272,7 @@ function renderWorkout() {
   document.querySelectorAll("[data-finish-workout]").forEach((button) => button.addEventListener("click", finishWorkout));
   document.querySelector("#cancel-workout").addEventListener("click", cancelWorkout);
   document.querySelectorAll(".set-form").forEach(bindSet);
+  document.querySelectorAll("[data-note-target]").forEach(bindNote);
   document.querySelectorAll("[data-add-set]").forEach((button) => button.addEventListener("click", () => addSet(button)));
   document.querySelectorAll("[data-active-progress]").forEach((button) => button.addEventListener("click", () => openProgress(
     Number(button.dataset.activeProgress), workout.gym_id, {
@@ -317,6 +322,38 @@ function updateWorkoutElapsed() {
 function stopWorkoutElapsed() {
   if (state.elapsedTimer !== null) clearInterval(state.elapsedTimer);
   state.elapsedTimer = null;
+}
+
+// Notes are collapsed so they never lengthen the set recording path. A note still
+// waiting to reach the server opens so its draft is visible.
+function renderNote(target, label, accessibleName = label) {
+  const status = state.editor?.noteStatus(target);
+  const note = status?.note ?? "";
+  return `<details class="note" ${status?.dirty ? "open" : ""}>
+    <summary><span class="note-label" data-note-summary="${target}" data-label="${label}">${noteLabel(label, note)}</span><span class="note-preview" data-note-preview="${target}">${escapeHtml(note)}</span></summary>
+    <textarea data-note-target="${target}" maxlength="${NOTE_MAX_LENGTH}" rows="3" aria-label="${escapeHtml(accessibleName)}" placeholder="Optional">${escapeHtml(note)}</textarea>
+    <p class="note-status" data-note-status="${target}" role="status"></p>
+  </details>`;
+}
+
+function noteLabel(label, note) {
+  return note ? label : `Add ${label.toLowerCase()}`;
+}
+
+function noteTargets() {
+  if (!state.data?.active_workout) return [];
+  return ["workout", ...state.data.workout_exercises.map((entry) => `exercise:${entry.id}`)];
+}
+
+function bindNote(field) {
+  const target = field.dataset.noteTarget;
+  field.addEventListener("input", () => {
+    if (!state.editor.busy) state.editor.editNote(target, field.value);
+  });
+  // Leaving the field saves at once instead of after the typing pause.
+  field.addEventListener("change", () => {
+    if (!state.editor.busy) state.editor.saveNote(target);
+  });
 }
 
 function renderExerciseTools(entry, index, count) {
@@ -425,11 +462,13 @@ function renderHistoryDetail(data, canRepeat) {
   const { workout, workout_exercises: entries } = data;
   return `<h3>${escapeHtml(workout.gym_name)}</h3>
     <p>Started ${escapeHtml(formatLocalDateTime(workout.started_at))}<br>Finished ${escapeHtml(formatLocalDateTime(workout.completed_at))}</p>
+    ${renderHistoryNote("workout", workout.note, "workout note")}
     ${canRepeat ? `<button class="secondary history-repeat" type="button" data-repeat-workout="${workout.id}">Repeat this workout</button>` : `<p class="history-notice">Finish the active workout before repeating this one.</p>`}
     <div class="exercise-list">${entries.length ? entries.map((entry) => `
       <article class="exercise-entry">
         <div class="history-exercise-heading"><h3>${escapeHtml(exerciseDisplayName(entry))}</h3>${entry.variation_id ? `<button type="button" class="text-button" data-progress-variation="${entry.variation_id}" data-progress-equipment="${escapeHtml(entry.equipment)}" data-progress-manufacturer="${escapeHtml(entry.manufacturer || "")}" data-progress-label="${escapeHtml(entry.label || "")}">View progress</button>` : ""}</div>
         <p class="meta">${escapeHtml(configurationLabel(entry))}</p>
+        ${renderHistoryNote(`exercise:${entry.id}`, entry.note, "note", ` for ${exerciseDisplayName(entry)}`)}
         ${entry.sets.length ? `<ol class="history-sets">${entry.sets.map((set, index) => {
           const weight = set.weight === null ? "No weight recorded" : `${Math.abs(set.weight)} kg${set.weight < 0 ? " assistance" : ""}`;
           const result = set.result === null ? "No result recorded" : `${set.result} ${entry.tracking_type === "duration" ? "seconds" : "reps"}`;
@@ -447,6 +486,17 @@ function renderHistoryDetail(data, canRepeat) {
               </form>` : ""}</li>`;
         }).join("")}</ol>` : `<p>No sets recorded.</p>`}
       </article>`).join("") : `<p>No exercises recorded.</p>`}</div>`;
+}
+
+function renderHistoryNote(target, note = "", label, subject = "") {
+  const action = `${note ? "Edit" : "Add"} ${label}`;
+  return `${note ? `<p class="note-text">${escapeHtml(note)}</p>` : ""}
+    <button type="button" class="text-button history-edit-toggle history-note-toggle" data-edit-note="${target}" aria-label="${escapeHtml(action + subject)}">${action}</button>
+    <form class="history-note-form" data-history-note="${target}" hidden>
+      <textarea name="note" maxlength="${NOTE_MAX_LENGTH}" rows="3" aria-label="${escapeHtml(`${label[0].toUpperCase()}${label.slice(1)}${subject}`)}">${escapeHtml(note)}</textarea>
+      <div class="history-edit-actions"><button type="submit" class="secondary">Save note</button><button type="button" class="text-button" data-cancel-edit>Cancel</button></div>
+      <p class="set-status" role="status"></p>
+    </form>`;
 }
 
 function openHistory() {
@@ -545,6 +595,14 @@ function openHistory() {
       });
       return;
     }
+    const noteToggle = target.closest("[data-edit-note]");
+    if (noteToggle) {
+      const form = detail.querySelector(`[data-history-note="${noteToggle.dataset.editNote}"]`);
+      form.hidden = !form.hidden;
+      if (form.hidden) form.reset();
+      else form.elements.note.focus();
+      return;
+    }
     const toggle = target.closest("[data-edit-set]");
     if (toggle) {
       const form = detail.querySelector(`[data-history-set="${toggle.dataset.editSet}"]`);
@@ -568,7 +626,8 @@ function openHistory() {
   });
   detail.addEventListener("submit", async (event) => {
     const form = event.target.closest("[data-history-set]");
-    if (!form || !selectedDetail) return;
+    if (!form) return saveHistoryNote(event);
+    if (!selectedDetail) return;
     event.preventDefault();
     form.elements.result.required = form.elements.completed.checked;
     if (!form.reportValidity()) return;
@@ -589,6 +648,27 @@ function openHistory() {
       showToast("Set corrected.");
     } catch (error) { status.textContent = error.message; button.disabled = false; }
   });
+  async function saveHistoryNote(event) {
+    const form = event.target.closest("[data-history-note]");
+    if (!form || !selectedDetail) return;
+    event.preventDefault();
+    const target = form.dataset.historyNote;
+    const exerciseId = target === "workout" ? null : Number(target.split(":")[1]);
+    const status = form.querySelector(".set-status");
+    const button = form.querySelector('[type="submit"]');
+    button.disabled = true;
+    status.textContent = "Saving note…";
+    try {
+      const saved = await api(exerciseId ? `/api/workout-exercises/${exerciseId}/note` : `/api/workouts/${selectedDetail.workout.id}/note`, {
+        method: "PUT", body: JSON.stringify({ note: form.elements.note.value }),
+      });
+      const owner = exerciseId ? selectedDetail.workout_exercises.find((item) => item.id === exerciseId) : selectedDetail.workout;
+      owner.note = saved.note;
+      detail.innerHTML = renderHistoryDetail(selectedDetail, !state.data.active_workout);
+      detail.querySelector(`[data-edit-note="${target}"]`)?.focus();
+      showToast("Note saved.");
+    } catch (error) { status.textContent = error.message; button.disabled = false; }
+  }
   async function loadPage(pageOffset) {
     const version = ++request;
     previous.disabled = next.disabled = true;
@@ -758,6 +838,22 @@ function syncEditorView() {
     const saved = state.data.workout_exercises.flatMap((entry) => entry.sets)
       .find((set) => set.id === Number(form.dataset.setId));
     if (saved && !status.dirty) form.classList.toggle("is-complete", Boolean(saved.completed));
+  });
+  document.querySelectorAll("[data-note-target]").forEach((field) => {
+    const target = field.dataset.noteTarget;
+    const status = state.editor?.noteStatus(target);
+    if (!status) return;
+    if (status.dirty) field.dataset.dirty = "true";
+    else delete field.dataset.dirty;
+    const message = document.querySelector(`[data-note-status="${target}"]`);
+    if (message) {
+      message.textContent = status.message;
+      message.classList.toggle("error", status.error);
+    }
+    const summary = document.querySelector(`[data-note-summary="${target}"]`);
+    if (summary) summary.textContent = noteLabel(summary.dataset.label, status.note);
+    const preview = document.querySelector(`[data-note-preview="${target}"]`);
+    if (preview) preview.textContent = status.note;
   });
   updateSyncStatus();
 }
@@ -1086,8 +1182,16 @@ function setStatus(form, message, error = false) {
 
 function showInvalidSet() {
   const form = document.querySelector('.set-form[data-dirty="true"]');
-  form?.scrollIntoView({ block: "center" });
-  form?.reportValidity();
+  if (form) {
+    form.scrollIntoView({ block: "center" });
+    form.reportValidity();
+    return;
+  }
+  const note = document.querySelector('[data-note-target][data-dirty="true"]');
+  if (!note) return;
+  note.closest("details").open = true;
+  note.scrollIntoView({ block: "center" });
+  note.focus();
 }
 
 async function saveAllSets() {

@@ -310,3 +310,66 @@ test('moving an exercise saves drafts first and applies the server order', async
   assert.equal(editor.busy, false);
   assert.equal(editor.edit(2, values), true);
 });
+
+const noted = () => ({ active_workout: { id: 1, gym_id: 1, note: '' }, gyms: [], workout_exercises: [
+  { id: 3, position: 1, note: 'Old', sets: [blank(2)] }, { id: 4, position: 2, note: '', sets: [blank(5)] }] });
+const echoNotes = async (path, options) => path.endsWith('/note')
+  ? { id: Number(path.split('/')[3]), note: JSON.parse(options.body).note.trim() } : echoSets(path, options);
+
+test('a note is kept on the phone, restores in another editor, and autosaves after a typing pause', async () => {
+  const { editor, drafts, timers, requests, env } = fixture(undefined, noted());
+  env.request = echoNotes;
+  assert.deepEqual(editor.noteStatus('exercise:3'), { note: 'Old', dirty: false, saving: false, blocked: false, message: '', error: false });
+  assert.equal(editor.editNote('workout', 'Felt strong '), true);
+  assert.equal(editor.pending, true);
+  const restored = fixture(drafts, noted()).editor;
+  assert.equal(restored.noteStatus('workout').note, 'Felt strong ');
+  assert.equal(restored.noteStatus('workout').dirty, true);
+  assert.equal(timers.size, 1);
+  await [...timers.values()][0]();
+  assert.deepEqual(requests.map(({ method, path, body }) => [method, path, JSON.parse(body)]),
+    [['PUT', '/api/workouts/1/note', { note: 'Felt strong ' }]]);
+  assert.equal(editor.noteStatus('workout').dirty, false);
+  assert.equal(editor.noteStatus('workout').note, 'Felt strong');
+  assert.equal(editor.pending, false);
+  assert.equal(drafts.cachedWorkout().active_workout.note, 'Felt strong');
+  assert.equal(fixture(drafts, noted()).editor.noteStatus('workout').dirty, false);
+  editor.editNote('exercise:4', 'Seat 4');
+  await editor.saveNote('exercise:4');
+  assert.deepEqual(requests.at(-1).path, '/api/workout-exercises/4/note');
+  assert.equal(editor.data.workout_exercises[1].note, 'Seat 4');
+  assert.equal(editor.noteStatus('exercise:99'), null);
+});
+
+test('a note typed without signal retries on reconnect and is saved before finishing', async () => {
+  const { editor, env, requests } = fixture(undefined, noted());
+  env.request = async () => { throw new Error('Cannot reach the server.'); };
+  editor.editNote('exercise:3', 'Grip slipped');
+  assert.equal(await editor.saveNote('exercise:3'), false);
+  assert.match(editor.noteStatus('exercise:3').message, /Will retry automatically/);
+  assert.equal(editor.noteStatus('exercise:3').dirty, true);
+  env.request = echoNotes;
+  await editor.retry();
+  assert.equal(editor.noteStatus('exercise:3').dirty, false);
+  assert.equal(editor.data.workout_exercises[0].note, 'Grip slipped');
+  editor.editNote('workout', 'Good session');
+  assert.equal(await editor.finish(), true);
+  assert.deepEqual(requests.slice(-2).map(({ method, path }) => `${method} ${path}`),
+    ['PUT /api/workouts/1/note', 'POST /api/workouts/1/complete']);
+});
+
+test('a rejected note waits for an edit, and removing an exercise discards its note draft', async () => {
+  const { editor, env, drafts, requests } = fixture(undefined, noted());
+  env.request = async () => { throw Object.assign(new Error('Notes must be 1000 characters or fewer.'), { status: 400 }); };
+  editor.editNote('exercise:4', 'Too long');
+  assert.equal(await editor.saveNote('exercise:4'), false);
+  assert.equal(editor.noteStatus('exercise:4').blocked, true);
+  await editor.retry();
+  assert.equal(requests.length, 1);
+  env.request = echoNotes;
+  assert.equal(await editor.removeExercise(4), true);
+  assert.deepEqual(requests.slice(1).map(({ method, path }) => `${method} ${path}`), ['DELETE /api/workout-exercises/4']);
+  assert.equal(editor.noteStatus('exercise:4'), null);
+  assert.equal(fixture(drafts, noted()).editor.noteStatus('exercise:4').dirty, false);
+  assert.equal(editor.pending, false);
+});

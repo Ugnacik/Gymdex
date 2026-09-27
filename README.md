@@ -13,12 +13,13 @@ Gymdex supports:
 - remembering equipment and machine details separately for each gym;
 - logging sets with optional weight, repetitions or duration, and completion;
 - removing and reordering exercises in the active workout;
+- adding an optional note to a workout and to each of its exercises;
 - showing completed sets from the last matching workout and copying one in a tap;
 - prefilling each added set from the set above it;
 - browsing completed workouts by gym and date;
 - creating exercise variations with custom tracking and equipment choices;
 - repeating a completed workout with fresh, empty set slots;
-- correcting sets in completed workouts;
+- correcting sets and notes in completed workouts;
 - viewing exercise progress across completed workouts;
 - using an optional rest timer;
 - exporting workout data as CSV and backing up the SQLite database.
@@ -42,9 +43,15 @@ and completion state. A corrected set immediately affects progress and future
 "Last workout" reference values. Existing sets can be corrected; completed
 workouts cannot gain or lose exercises or sets.
 
+The workout's note appears under its start and finish times, and each
+exercise's note under its equipment. **Add workout note**, **Edit workout note**,
+**Add note** and **Edit note** open a text box; **Save note** saves it, and
+saving an empty box removes the note.
+
 With no active workout, **Repeat this workout** starts a new workout at the same
 gym. It copies the exercise configurations and number of set slots, but clears
-all results, weights, and completion marks. The source stays in history.
+all results, weights, and completion marks, and it does not copy notes. The
+source stays in history.
 
 Use **Progress** to choose an exercise and optional gym. The chart and table
 show the best completed result and best weight for each workout. From a workout
@@ -115,15 +122,23 @@ active.
 Below each exercise's sets, **Move up** and **Move down** change its place in
 the workout, and **Remove** deletes the exercise with all its sets after
 confirmation. Both actions first save outstanding set edits to the server;
-removing an exercise also discards any unsaved drafts for its sets on this
-phone.
+removing an exercise also discards any unsaved drafts for its sets and note on
+this phone.
 
-Outstanding set edits must reach the server before adding, moving or removing an
-exercise, or finishing the workout. Every input change also saves a draft on the current
+Notes are optional free text, up to 1,000 characters, for anything the numbers
+don't capture. They stay collapsed so they never get in the way of logging sets:
+tap **Add note** below an exercise's sets, or **Add workout note** below Add
+exercise, to open a text box. A collapsed note shows its first words. Notes save
+like sets: automatically after a short typing pause or when you leave the box,
+with a draft kept on this phone until the server has it, so a note typed without
+signal is not lost. A note still waiting to save opens when the page reloads.
+
+Outstanding set and note edits must reach the server before adding, moving or
+removing an exercise, or finishing the workout. Every input change also saves a draft on the current
 device. Reloading restores those drafts, including unfinished entries. The page
 shows whether changes are saved to the server or waiting on the phone.
 
-If the server cannot be reached, keep editing existing sets. Pending saves retry
+If the server cannot be reached, keep editing existing sets and notes. Pending saves retry
 when the connection returns, when you return to the page, and every 15 seconds
 while the page is visible. Invalid values require correction; server-rejected
 sets stay on the phone and show a Retry button for a manual retry after review.
@@ -229,7 +244,9 @@ For a persistent installation at `~/apps/gymdex`, copy
 ## Export and database backup
 
 Use **Export CSV** in Workout history to download workout, exercise, and set rows.
-The CSV includes empty workouts and unfinished sets. It is for spreadsheets and
+The CSV includes empty workouts and unfinished sets. The `workout_note` and
+`exercise_note` columns hold the notes; a note repeats on every row of its
+workout or exercise. It is for spreadsheets and
 analysis; it does not contain the full catalog or gym configurations. Unlike the
 app, the export keeps timestamps in UTC, as its `started_at_utc` and
 `completed_at_utc` column names say. Text fields that could be interpreted as

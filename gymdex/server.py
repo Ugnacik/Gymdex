@@ -159,12 +159,19 @@ class GymdexHandler(BaseHTTPRequestHandler):
         history_set = (len(parts) == 5 and parts[:2] == ["api", "history"]
                        and parts[3] == "sets")
         workout_exercise = len(parts) == 3 and parts[:2] == ["api", "workout-exercises"]
-        if not active_set and not history_set and not workout_exercise:
+        note = (len(parts) == 4 and parts[3] == "note"
+                and parts[1] in ("workouts", "workout-exercises") and parts[0] == "api")
+        if not active_set and not history_set and not workout_exercise and not note:
             return self._json_error("Route not found.", HTTPStatus.NOT_FOUND)
         try:
             payload = self._read_json()
         except ValueError:
             return self._json_error("The request body must be a JSON object.", HTTPStatus.BAD_REQUEST)
+        if note:
+            save_note = db.set_workout_note if parts[1] == "workouts" else db.set_workout_exercise_note
+            return self._with_db(lambda connection: save_note(
+                connection, int(parts[2]), payload.get("note"),
+            ))
         if workout_exercise:
             return self._with_db(lambda connection: db.move_workout_exercise(
                 connection, int(parts[2]), payload.get("position"),
