@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 import sqlite3
-from datetime import date, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -252,9 +252,28 @@ def catalog_for_gym(connection: sqlite3.Connection, gym_id: int) -> dict[str, An
     return {"catalog": catalog, "recent": recent}
 
 
+def _utc_timestamp(value: str) -> str:
+    """Convert an ISO 8601 instant to the UTC format SQLite uses for CURRENT_TIMESTAMP."""
+    try:
+        moment = datetime.fromisoformat(value)
+        if moment.tzinfo is None:
+            raise ValueError
+        moment = moment.astimezone(timezone.utc)
+        if moment.microsecond:
+            # Stored times have whole seconds; round up so the bound keeps its meaning.
+            moment = moment.replace(microsecond=0) + timedelta(seconds=1)
+    except (ValueError, OverflowError):
+        raise ValueError("Date filters must be times with a time zone, such as 2026-09-21T22:00:00Z.") from None
+    return moment.replace(tzinfo=None).isoformat(sep=" ")
+
+
 def workout_history(connection: sqlite3.Connection, gym_id: str = "", start: str = "",
                     end: str = "", offset: str = "0") -> dict[str, Any]:
-    """Page completed workouts, filtering by their UTC start date."""
+    """Page completed workouts started at or after start and before end.
+
+    The bounds are ISO 8601 instants with a time zone, such as the UTC instants of
+    the device's local midnights, so date filters follow the user's local days.
+    """
     clauses = ["w.completed_at IS NOT NULL"]
     parameters: list[Any] = []
     if gym_id:
@@ -263,20 +282,15 @@ def workout_history(connection: sqlite3.Connection, gym_id: str = "", start: str
             raise ValueError("A valid gym_id is required.")
         clauses.append("w.gym_id = ?")
         parameters.append(gym)
-    for value in (start, end):
-        if value and (len(value) != 10 or date.fromisoformat(value).isoformat() != value):
-            raise ValueError("Dates must use YYYY-MM-DD.")
-    if start and end and start > end:
+    start_at, end_at = (_utc_timestamp(value) if value else "" for value in (start, end))
+    if start_at and end_at and start_at >= end_at:
         raise ValueError("From date must not be after To date.")
-    if start:
+    if start_at:
         clauses.append("w.started_at >= ?")
-        parameters.append(start)
-    if end:
+        parameters.append(start_at)
+    if end_at:
         clauses.append("w.started_at < ?")
-        try:
-            parameters.append((date.fromisoformat(end) + timedelta(days=1)).isoformat())
-        except OverflowError:
-            raise ValueError("To date must be before 9999-12-31.") from None
+        parameters.append(end_at)
     page_offset = int(offset)
     if not 0 <= page_offset <= 1000000:
         raise ValueError("Invalid history offset.")

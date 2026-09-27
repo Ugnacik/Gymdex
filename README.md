@@ -23,8 +23,11 @@ Gymdex supports:
 ## Workout history
 
 Open History from the start screen or during a workout. Completed workouts appear
-newest first, with 20 per page. Filter by gym and workout start date. History dates
-and times use UTC, including both ends of the date filter.
+newest first, with 20 per page. Filter by gym and workout start date. Dates and
+times in history, progress, and the active workout use the phone's time zone.
+From and To are whole local days: a workout started at 00:30 belongs to that
+day, not the previous one. Gymdex stores times in UTC, so changing the phone's
+time zone changes how existing times are shown but not the stored workouts.
 
 Select a workout to see its saved exercise names, equipment, machine details,
 and every recorded set. Unfinished sets are labeled Not completed and do not
@@ -176,9 +179,10 @@ For a persistent installation at `~/apps/gymdex`, copy
 
 Use **Export CSV** in Workout history to download workout, exercise, and set rows.
 The CSV includes empty workouts and unfinished sets. It is for spreadsheets and
-analysis; it does not contain the full catalog or gym configurations. Timestamps
-in the export are UTC. Text fields that could be interpreted as spreadsheet
-formulas are prefixed with an apostrophe.
+analysis; it does not contain the full catalog or gym configurations. Unlike the
+app, the export keeps timestamps in UTC, as its `started_at_utc` and
+`completed_at_utc` column names say. Text fields that could be interpreted as
+spreadsheet formulas are prefixed with an apostrophe.
 
 For a complete, restorable copy, use SQLite's online backup API through the
 included command. It can safely snapshot a running Gymdex database:
