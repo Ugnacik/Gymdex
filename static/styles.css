@@ -257,6 +257,40 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .history-edit-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .history-edit-actions .secondary, .history-edit-actions .text-button { min-height: 44px; }
 .history-set-form .set-status { margin: 0; }
+.history-note-toggle { display: block; min-height: 44px; }
+.history-note-form { display: grid; gap: 8px; margin: 8px 0; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface-raised); }
+.history-note-form[hidden] { display: none; }
+.history-note-form .set-status { margin: 0; }
+.note-text { margin: 8px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* Notes: collapsed, optional free text on a Workout or Workout Exercise. */
+textarea {
+  display: block;
+  width: 100%;
+  min-height: 88px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--ink);
+  padding: 12px 14px;
+  font: inherit;
+  font-size: 1rem;
+  resize: vertical;
+}
+textarea::placeholder { color: var(--muted); opacity: 1; }
+textarea:focus-visible, summary:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.note { margin-top: 8px; }
+.add-exercise + .note { margin-top: 12px; }
+.note summary { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 44px; cursor: pointer; list-style: none; color: var(--accent); font-size: 0.9rem; font-weight: 650; }
+.note summary::-webkit-details-marker { display: none; }
+.note summary::before { content: "+"; flex-shrink: 0; width: 1em; text-align: center; }
+.note[open] summary::before { content: "−"; }
+.note-label { flex-shrink: 0; }
+.note-preview { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-weight: 400; }
+.note[open] .note-preview { display: none; }
+.note-status { margin: 6px 0 0; font-size: 0.75rem; color: var(--muted); }
+.note-status:empty { display: none; }
+.note-status.error { color: var(--danger); }
 .export-link { display: inline-flex; align-items: center; justify-content: center; margin-top: 22px; text-decoration: none; }
 .create-exercise-button { width: 100%; margin-top: 18px; }
 .field-help { margin-top: -4px; font-size: 0.8rem; }

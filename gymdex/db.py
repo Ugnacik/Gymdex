@@ -184,6 +184,14 @@ def migrate(connection: sqlite3.Connection) -> None:
                        assisted INTEGER NOT NULL DEFAULT 0 CHECK (assisted IN (0, 1))"""
                 )
             connection.execute("PRAGMA user_version = 2")
+    if version < 3:
+        with connection:
+            connection.execute("BEGIN IMMEDIATE")
+            for table in ("workouts", "workout_exercises"):
+                columns = {row["name"] for row in connection.execute(f"PRAGMA table_info({table})")}
+                if "note" not in columns:
+                    connection.execute(f"ALTER TABLE {table} ADD COLUMN note TEXT NOT NULL DEFAULT ''")
+            connection.execute("PRAGMA user_version = 3")
 
 
 def rows(cursor: sqlite3.Cursor) -> list[dict[str, Any]]:
@@ -193,7 +201,7 @@ def rows(cursor: sqlite3.Cursor) -> list[dict[str, Any]]:
 def bootstrap(connection: sqlite3.Connection) -> dict[str, Any]:
     gyms = rows(connection.execute("SELECT id, name FROM gyms ORDER BY name"))
     active = connection.execute(
-        """SELECT w.id, w.started_at, g.id AS gym_id, g.name AS gym_name
+        """SELECT w.id, w.started_at, w.note, g.id AS gym_id, g.name AS gym_name
            FROM workouts w JOIN gyms g ON g.id = w.gym_id
            WHERE w.completed_at IS NULL"""
     ).fetchone()
@@ -207,7 +215,7 @@ def bootstrap(connection: sqlite3.Connection) -> dict[str, Any]:
                           variation_name_snapshot AS variation_name,
                           equipment_snapshot AS equipment,
                           manufacturer_snapshot AS manufacturer,
-                          label_snapshot AS label,
+                          label_snapshot AS label, note,
                           (SELECT assisted FROM exercise_variations
                            WHERE id = workout_exercises.variation_id) AS assisted
                    FROM workout_exercises WHERE workout_id = ? ORDER BY position""",
@@ -342,7 +350,7 @@ def completed_workout(connection: sqlite3.Connection, workout_id: int) -> dict[s
     if not 1 <= workout_id <= 9223372036854775807:
         raise LookupError("Completed workout not found.")
     workout = connection.execute(
-        """SELECT w.id, w.started_at, w.completed_at, w.gym_id, g.name AS gym_name
+        """SELECT w.id, w.started_at, w.completed_at, w.note, w.gym_id, g.name AS gym_name
            FROM workouts w JOIN gyms g ON g.id = w.gym_id
            WHERE w.id = ? AND w.completed_at IS NOT NULL""", (workout_id,),
     ).fetchone()
@@ -352,7 +360,7 @@ def completed_workout(connection: sqlite3.Connection, workout_id: int) -> dict[s
         """SELECT id, variation_id, position, exercise_name_snapshot AS exercise_name,
                   variation_name_snapshot AS variation_name, equipment_snapshot AS equipment,
                   manufacturer_snapshot AS manufacturer, label_snapshot AS label,
-                  tracking_type_snapshot AS tracking_type,
+                  tracking_type_snapshot AS tracking_type, note,
                   (SELECT assisted FROM exercise_variations
                    WHERE id = workout_exercises.variation_id) AS assisted
            FROM workout_exercises WHERE workout_id = ? ORDER BY position""", (workout_id,),
@@ -703,6 +711,42 @@ def cancel_workout(connection: sqlite3.Connection, workout_id: int) -> dict[str,
         if not cursor.rowcount:
             raise LookupError("Active workout not found.")
     return {"ok": True}
+
+
+NOTE_MAX_LENGTH = 1000
+
+
+def clean_note(note: object) -> str:
+    """A Note is optional free text; an empty string means no note."""
+    if not isinstance(note, str):
+        raise ValueError("Note must be text.")
+    clean = note.strip()
+    if len(clean) > NOTE_MAX_LENGTH:
+        raise ValueError(f"Notes must be {NOTE_MAX_LENGTH} characters or fewer.")
+    return clean
+
+
+def _set_note(connection: sqlite3.Connection, table: str, row_id: int, note: object,
+              missing: str) -> dict[str, Any]:
+    """Save a note on an active or completed workout record."""
+    clean = clean_note(note)
+    if not 1 <= row_id <= 9223372036854775807:
+        raise LookupError(missing)
+    with connection:
+        cursor = connection.execute(f"UPDATE {table} SET note = ? WHERE id = ?", (clean, row_id))
+        if not cursor.rowcount:
+            raise LookupError(missing)
+    return {"id": row_id, "note": clean}
+
+
+def set_workout_note(connection: sqlite3.Connection, workout_id: int, note: object) -> dict[str, Any]:
+    return _set_note(connection, "workouts", workout_id, note, "Workout not found.")
+
+
+def set_workout_exercise_note(
+    connection: sqlite3.Connection, exercise_id: int, note: object
+) -> dict[str, Any]:
+    return _set_note(connection, "workout_exercises", exercise_id, note, "Workout exercise not found.")
 
 
 def sets_for_exercise(connection: sqlite3.Connection, exercise_id: int) -> list[dict[str, Any]]:

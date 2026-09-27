@@ -78,6 +78,16 @@ async function harness(disk = storage(), initialData = {}, { now = Date.parse('2
     forms.push(added);
     this.lastElementChild = added;
   } };
+  // Like a browser, each render creates fresh note textareas with the rendered text as their value.
+  const rendered = { html: null, fields: [] };
+  const noteFields = (html) => {
+    if (rendered.html !== html) {
+      rendered.html = html;
+      rendered.fields = [...html.matchAll(/<textarea data-note-target="([^"]+)"[^>]*>([^<]*)<\/textarea>/g)]
+        .map(([, target, value]) => Object.assign(node(), { dataset: { noteTarget: target }, value }));
+    }
+    return rendered.fields;
+  };
   const entryNode = { querySelector: (selector) => selector === '.sets-list' ? list : null };
   const addSetButton = Object.assign(node(), { dataset: { addSet: '3' }, closest: () => entryNode });
   const data = { gyms: [], active_workout: { id: 1, gym_id: 1, gym_name: 'Home', started_at: '2026-09-22 10:00:00' },
@@ -96,6 +106,7 @@ async function harness(disk = storage(), initialData = {}, { now = Date.parse('2
         if (selector === '[data-add-set]') return form.isConnected ? [addSetButton] : [];
         if (selector === '[data-finish-workout]') return [nodes['#finish']];
         if (selector === '[data-finish-workout], #cancel-workout') return [nodes['#finish'], nodes['#cancel-workout']];
+        if (selector === '[data-note-target]') return noteFields(nodes['#app'].innerHTML);
         return [];
       },
     },
@@ -111,7 +122,8 @@ async function harness(disk = storage(), initialData = {}, { now = Date.parse('2
   const app = createApp({ ...env, fetch: (...args) => env.fetch(...args) });
   await app.load();
   readPreviousButton(form, nodes['#app'].innerHTML);
-  return { env, nodes, form, forms, list, addSetButton, disk, timers, intervals, clock, app };
+  const noteField = (target) => env.document.querySelectorAll('[data-note-target]').find((field) => field.dataset.noteTarget === target);
+  return { env, nodes, form, forms, list, addSetButton, disk, timers, intervals, clock, app, noteField };
 }
 
 function historyDOM(app) {
@@ -840,6 +852,78 @@ test('a workout started more than 3 hours ago offers Finish it, which uses the n
   assert.ok(requests.includes('POST /api/workouts/1/complete'), requests.join());
   assert.match(app.nodes['#app'].innerHTML, /No active workout/);
   assert.match(app.nodes['#toast'].textContent, /Workout finished/);
+});
+
+test('workout and exercise notes stay collapsed, keep drafts on the phone, and autosave after a typing pause', async () => {
+  const noted = { active_workout: { id: 1, gym_id: 1, gym_name: 'Home', started_at: '2026-09-22 10:00:00', note: 'Slept <5h' },
+    workout_exercises: [{ ...pressEntry, note: '' }] };
+  const app = await harness(storage(), noted);
+  const html = app.nodes['#app'].innerHTML;
+  assert.match(html, /<details class="note"[^>]*>\s*<summary[^>]*>[\s\S]*?Workout note[\s\S]*?<textarea data-note-target="workout"[^>]*maxlength="1000"[^>]*>Slept &lt;5h<\/textarea>/);
+  assert.match(html, /Add note[\s\S]*?<textarea data-note-target="exercise:3"[^>]*aria-label="Note for Bench Press"[^>]*><\/textarea>/);
+  assert.doesNotMatch(html, /<details[^>]*\bopen\b/, 'notes are collapsed so the recording path stays short');
+  const order = ['data-add-set="3"', 'data-note-target="exercise:3"', 'class="exercise-tools"', 'id="open-picker"',
+    'data-note-target="workout"', 'data-finish-workout'].map((marker) => html.indexOf(marker));
+  assert.ok(order.every((index, i) => index >= 0 && (i === 0 || index > order[i - 1])), `unexpected order ${order}`);
+
+  const requests = [];
+  app.env.fetch = async (path, options) => {
+    requests.push([`${options.method} ${path}`, JSON.parse(options.body)]);
+    return response({ id: 3, note: 'Seat 4' });
+  };
+  const field = app.noteField('exercise:3');
+  field.value = 'Seat 4';
+  field.events.input();
+  assert.match(app.nodes['#sync-status'].textContent, /1 note waiting to save/);
+  const reopened = await harness(app.disk, noted);
+  assert.match(reopened.nodes['#app'].innerHTML, /<details class="note" open[^>]*>[\s\S]*?<textarea data-note-target="exercise:3"[^>]*>Seat 4<\/textarea>/);
+  assert.deepEqual(requests, []);
+  [...app.timers.values()].find((timer) => timer.delay === 800).callback();
+  await settle();
+  assert.deepEqual(requests, [['PUT /api/workout-exercises/3/note', { note: 'Seat 4' }]]);
+  assert.equal(app.nodes['#sync-status'].textContent, 'All changes saved to server.');
+  assert.equal(new DraftStore(() => app.disk).cachedWorkout().workout_exercises[0].note, 'Seat 4');
+});
+
+test('history detail shows notes as text and saves an added exercise note', async () => {
+  const app = await harness();
+  const { nodes } = historyDOM(app);
+  const workout = { id: 22, gym_id: 1, gym_name: 'Home', started_at: '2026-09-21 10:00:00', completed_at: '2026-09-21 11:00:00',
+    note: 'Line one\n<b>bold</b>' };
+  const detail = { workout, workout_exercises: [{ id: 33, variation_id: 11, exercise_name: 'Bench Press', variation_name: 'Standard',
+    equipment: 'Barbell', manufacturer: '', label: '', tracking_type: 'repetitions', note: '', sets: [] }] };
+  const requests = [];
+  app.env.fetch = async (url, options) => {
+    requests.push([url, options]);
+    if (url.startsWith('/api/history?')) return response({ workouts: [{ ...workout, exercise_count: 1, completed_set_count: 0 }], next_offset: null });
+    if (url === '/api/history/22') return response(detail);
+    if (url === '/api/workout-exercises/33/note') return response({ id: 33, note: 'Paused reps' });
+    throw new Error('Unexpected request');
+  };
+  app.nodes['#open-history'].events.click();
+  await settle();
+  await nodes['#history-results'].buttons[0].events.click();
+  let html = nodes['#history-detail'].innerHTML;
+  assert.match(html, /<p class="note-text">Line one\n&lt;b&gt;bold&lt;\/b&gt;<\/p>/);
+  assert.doesNotMatch(html, /<b>/);
+  assert.match(html, /data-edit-note="workout"[^>]*>Edit workout note</);
+  assert.match(html, /data-edit-note="exercise:33"[^>]*aria-label="Add note for Bench Press"[^>]*>Add note</);
+  assert.match(html, /<form class="history-note-form" data-history-note="exercise:33" hidden>[\s\S]*?<textarea name="note"[^>]*maxlength="1000"/);
+  const status = node();
+  const form = Object.assign(node(), {
+    dataset: { historyNote: 'exercise:33' }, elements: { note: { value: 'Paused reps' } },
+    closest: (selector) => selector === '[data-history-note]' ? form : null,
+    querySelector: (selector) => selector === '.set-status' ? status : node(),
+  });
+  nodes['#history-detail'].querySelector = () => node();
+  await nodes['#history-detail'].events.submit({ target: form, preventDefault() {} });
+  const saved = requests.find(([url]) => url === '/api/workout-exercises/33/note');
+  assert.equal(saved[1].method, 'PUT');
+  assert.deepEqual(JSON.parse(saved[1].body), { note: 'Paused reps' });
+  html = nodes['#history-detail'].innerHTML;
+  assert.match(html, /<p class="note-text">Paused reps<\/p>/);
+  assert.match(html, /data-edit-note="exercise:33"[^>]*>Edit note</);
+  assert.equal(app.nodes['#toast'].textContent, 'Note saved.');
 });
 
 test('Keep going hides the stale workout banner for that workout, also after reopening', async () => {

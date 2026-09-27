@@ -251,7 +251,7 @@ class SetTests(unittest.TestCase):
         self.connection.commit()
         db.initialize(self.connection)
         db.initialize(self.connection)
-        self.assertEqual(self.connection.execute('PRAGMA user_version').fetchone()[0], 2)
+        self.assertGreaterEqual(self.connection.execute('PRAGMA user_version').fetchone()[0], 2)
         catalog = db.catalog_for_gym(self.connection, self.gym['id'])['catalog']
         self.assertEqual({(v['exercise_name'], v['variation_name']) for v in catalog if v['assisted']},
                          {('Pull-up', 'Assisted'), ('Dip', 'Assisted')})
