@@ -142,6 +142,13 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .workout-heading > div { min-width: 0; }
 .workout-heading h1 { font-size: clamp(1.75rem, 6vw, 2.25rem); }
 .workout-heading p { margin: 0; }
+#workout-elapsed { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.stale-banner { margin: -8px 0 24px; padding: 16px 18px; border: 1px solid var(--accent); border-radius: var(--radius-card); background: var(--accent-soft); }
+.stale-banner[hidden] { display: none; }
+.stale-banner h2 { margin: 0 0 4px; font-size: 1.05rem; }
+.stale-banner p { margin: 0 0 12px; color: var(--ink); }
+.stale-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.stale-actions button { min-height: 48px; padding: 0 12px; }
 /* The workout screen has no fixed bottom bar to clear. */
 .workout-shell { padding-bottom: calc(32px + env(safe-area-inset-bottom)); }
 .add-exercise { width: 100%; min-height: 58px; margin-top: 16px; }

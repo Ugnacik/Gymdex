@@ -54,12 +54,16 @@ function readPreviousButton(form, html) {
   if (match) form.querySelector('.fill-previous').dataset = { previousWeight: match[1], previousResult: match[2] };
 }
 
-async function harness(disk = storage(), initialData = {}) {
+// The harness workout started 2026-09-22 10:00 UTC; by default the clock reads 25 minutes later.
+async function harness(disk = storage(), initialData = {}, { now = Date.parse('2026-09-22T10:25:00Z') } = {}) {
   const nodes = Object.fromEntries(['#app', '#toast', '#sync-status', '#picker-results', 'main',
     '#open-picker', '#open-history', '#open-progress', '#cancel-workout', '#finish', '#add-gym-form', '#start-workout', '#create-exercise',
-    '#rest-enabled', '#rest-controls', '#rest-duration', '#rest-clock', '#rest-status', '#rest-start', '#rest-pause', '#rest-stop']
+    '#rest-enabled', '#rest-controls', '#rest-duration', '#rest-clock', '#rest-status', '#rest-start', '#rest-pause', '#rest-stop',
+    '#workout-elapsed', '#stale-banner', '#stale-finish', '#stale-keep']
     .map((key) => [key, node()]));
   const timers = new Map();
+  const intervals = new Map();
+  const clock = { now };
   let timerId = 0;
   const forms = [];
   const form = setForm(2, 1);
@@ -96,7 +100,9 @@ async function harness(disk = storage(), initialData = {}) {
       },
     },
     setTimeout: (callback, delay) => { timers.set(++timerId, { callback, delay }); return timerId; },
-    clearTimeout: (id) => timers.delete(id), setInterval() {},
+    clearTimeout: (id) => timers.delete(id),
+    setInterval: (callback, delay) => { intervals.set(++timerId, { callback, delay }); return timerId; },
+    clearInterval: (id) => intervals.delete(id), now: () => clock.now,
     fetch: async (path) => {
       if (path === '/api/bootstrap') return response(structuredClone(data));
       throw new Error('Offline');
@@ -105,7 +111,7 @@ async function harness(disk = storage(), initialData = {}) {
   const app = createApp({ ...env, fetch: (...args) => env.fetch(...args) });
   await app.load();
   readPreviousButton(form, nodes['#app'].innerHTML);
-  return { env, nodes, form, forms, list, addSetButton, disk, timers, app };
+  return { env, nodes, form, forms, list, addSetButton, disk, timers, intervals, clock, app };
 }
 
 function historyDOM(app) {
@@ -656,4 +662,63 @@ test('Add set waits when the set above cannot reach the server', async () => {
   assert.equal(app.forms.length, 1);
   assert.match(app.nodes['#toast'].textContent, /Set 1 must reach the server before adding another set/);
   assert.equal(app.addSetButton.disabled, false);
+});
+
+test('the workout header shows elapsed time and ticks without re-rendering the set forms', async () => {
+  const app = await harness();
+  assert.match(app.nodes['#app'].innerHTML, /Started 12:00[\s\S]*id="workout-elapsed"[^>]*>25 min</);
+  assert.equal(app.nodes['#app'].innerHTML.match(/Finish workout/g).length, 1, 'only the Finish workout button below the exercises');
+  app.form.elements.weight.value = '40';
+  app.form.elements.weight.focus();
+  const html = app.nodes['#app'].innerHTML;
+  app.clock.now = Date.parse('2026-09-22T11:07:30Z');
+  for (const { callback } of app.intervals.values()) callback();
+  assert.equal(app.nodes['#workout-elapsed'].textContent, '1 h 07 min');
+  assert.equal(app.nodes['#app'].innerHTML, html);
+  assert.equal(app.form.elements.weight.value, '40');
+  assert.equal(app.form.elements.weight.focused, true);
+});
+
+test('the elapsed time stops ticking once the workout is finished', async () => {
+  const app = await harness();
+  const tickers = () => [...app.intervals.values()].filter(({ callback }) => {
+    app.nodes['#workout-elapsed'].textContent = '';
+    callback();
+    return app.nodes['#workout-elapsed'].textContent !== '';
+  }).length;
+  await app.app.load();
+  assert.equal(tickers(), 1);
+  app.env.fetch = async (path) => response(path === '/api/bootstrap' ? { gyms: [], active_workout: null, workout_exercises: [] } : { ok: true });
+  await app.nodes['#finish'].events.click();
+  assert.match(app.nodes['#app'].innerHTML, /No active workout/);
+  assert.equal(app.intervals.size, 1, 'only the pending-set retry interval remains');
+  assert.equal(tickers(), 0);
+});
+
+test('a workout started more than 3 hours ago offers Finish it, which uses the normal finish flow', async () => {
+  const fresh = await harness(storage(), {}, { now: Date.parse('2026-09-22T12:59:00Z') });
+  assert.doesNotMatch(fresh.nodes['#app'].innerHTML, /stale-banner/);
+  const app = await harness(storage(), {}, { now: Date.parse('2026-09-22T13:01:00Z') });
+  assert.match(app.nodes['#app'].innerHTML,
+    /id="stale-banner"[\s\S]*started 3 h 01 min ago[\s\S]*id="stale-finish"[^>]*>Finish it<[\s\S]*id="stale-keep"[^>]*>Keep going</);
+  const requests = [];
+  app.env.fetch = async (path, options) => {
+    requests.push(`${options?.method ?? 'GET'} ${path}`);
+    return response(path === '/api/bootstrap' ? { gyms: [], active_workout: null, workout_exercises: [] } : { ok: true });
+  };
+  await app.nodes['#stale-finish'].events.click();
+  assert.ok(requests.includes('POST /api/workouts/1/complete'), requests.join());
+  assert.match(app.nodes['#app'].innerHTML, /No active workout/);
+  assert.match(app.nodes['#toast'].textContent, /Workout finished/);
+});
+
+test('Keep going hides the stale workout banner for that workout, also after reopening', async () => {
+  const late = { now: Date.parse('2026-09-22T16:00:00Z') };
+  const app = await harness(storage(), {}, late);
+  app.nodes['#stale-keep'].events.click();
+  assert.equal(app.nodes['#stale-banner'].hidden, true);
+  const reopened = await harness(app.disk, {}, late);
+  assert.doesNotMatch(reopened.nodes['#app'].innerHTML, /stale-banner/);
+  const nextWorkout = await harness(app.disk, { active_workout: { id: 2, gym_id: 1, gym_name: 'Home', started_at: '2026-09-22 10:00:00' } }, late);
+  assert.match(nextWorkout.nodes['#app'].innerHTML, /id="stale-banner"/);
 });

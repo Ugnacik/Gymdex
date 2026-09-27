@@ -28,7 +28,7 @@ export function localMidnightUtc(value, addDays = 0) {
   return midnight.toISOString();
 }
 
-export function createApp({ window, document, navigator, fetch, setTimeout, clearTimeout, setInterval }) {
+export function createApp({ window, document, navigator, fetch, setTimeout, clearTimeout, setInterval, clearInterval, now = () => Date.now() }) {
 
 const drafts = new DraftStore(() => window.localStorage);
 const app = document.querySelector("#app");
@@ -46,7 +46,11 @@ const state = {
   editor: null,
   restTimer: null,
   restEnabled: savedRest.enabled,
+  elapsedTimer: null,
+  staleDismissed: null,
 };
+const STALE_WORKOUT_MINUTES = 3 * 60;
+const STALE_DISMISSED_KEY = "gymdex:stale-dismissed:v1";
 
 state.restTimer = new RestTimer({ durationSeconds: savedRest.duration, schedule: setTimeout, clear: clearTimeout, onChange: renderRestTimerState });
 
@@ -173,6 +177,7 @@ function renderHeader(status = "Ready") {
 }
 
 function renderStart() {
+  stopWorkoutElapsed();
   const gyms = state.data.gyms;
   app.innerHTML = `
     <main class="shell">
@@ -226,13 +231,18 @@ async function startWorkout() {
 function renderWorkout() {
   const workout = state.data.active_workout;
   const entries = state.data.workout_exercises;
+  const stale = elapsedMinutes(workout) > STALE_WORKOUT_MINUTES && !staleWorkoutDismissed(workout.id);
   app.innerHTML = `
     <main class="shell workout-shell">
       ${renderHeader("Workout active")}
       <section class="workout-heading">
-        <div><h1>${escapeHtml(workout.gym_name)}</h1><p>Started ${escapeHtml(formatLocalTime(workout.started_at))}</p></div>
-        <button class="text-button" data-finish-workout>Finish workout</button>
+        <div><h1>${escapeHtml(workout.gym_name)}</h1><p>Started ${escapeHtml(formatLocalTime(workout.started_at))} · <span id="workout-elapsed" aria-label="Elapsed">${formatElapsed(elapsedMinutes(workout))}</span></p></div>
       </section>
+      ${stale ? `<section class="stale-banner" id="stale-banner" aria-labelledby="stale-title">
+        <h2 id="stale-title">Still training?</h2>
+        <p>This workout started ${formatElapsed(elapsedMinutes(workout))} ago.</p>
+        <div class="stale-actions"><button type="button" class="primary" id="stale-finish">Finish it</button><button type="button" class="secondary" id="stale-keep">Keep going</button></div>
+      </section>` : ""}
       ${renderRestTimer()}
       <div class="section-title"><h2>Exercises</h2><span>${entries.length}</span></div>
       <section class="exercise-list">
@@ -265,7 +275,47 @@ function renderWorkout() {
       label: button.dataset.progressLabel,
     },
   )));
+  if (stale) {
+    document.querySelector("#stale-finish").addEventListener("click", finishWorkout);
+    document.querySelector("#stale-keep").addEventListener("click", () => {
+      dismissStaleWorkout(workout.id);
+      document.querySelector("#stale-banner").hidden = true;
+    });
+  }
   bindRestTimer();
+  // Only the elapsed text changes each tick, so typing and focus in the set forms are kept.
+  state.elapsedTimer ??= setInterval(updateWorkoutElapsed, 30000);
+}
+
+function elapsedMinutes(workout) {
+  return Math.max(0, Math.floor((now() - parseServerTime(workout.started_at)) / 60000));
+}
+
+function formatElapsed(minutes) {
+  return minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, "0")} min`;
+}
+
+// "Keep going" is remembered for the active workout so reopening the app does not ask again.
+function staleWorkoutDismissed(workoutId) {
+  try { return state.staleDismissed === workoutId || window.localStorage.getItem(STALE_DISMISSED_KEY) === String(workoutId); }
+  catch { return false; }
+}
+
+function dismissStaleWorkout(workoutId) {
+  state.staleDismissed = workoutId;
+  try { window.localStorage.setItem(STALE_DISMISSED_KEY, String(workoutId)); } catch { /* Dismissed for this page only. */ }
+}
+
+function updateWorkoutElapsed() {
+  const workout = state.data?.active_workout;
+  const elapsed = document.querySelector("#workout-elapsed");
+  if (workout && elapsed) elapsed.textContent = formatElapsed(elapsedMinutes(workout));
+  else stopWorkoutElapsed();
+}
+
+function stopWorkoutElapsed() {
+  if (state.elapsedTimer !== null) clearInterval(state.elapsedTimer);
+  state.elapsedTimer = null;
 }
 
 function renderRestTimer() {

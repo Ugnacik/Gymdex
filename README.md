@@ -6,7 +6,8 @@ stay private inside a Tailscale network.
 Gymdex supports:
 
 - creating gyms;
-- starting and finishing one active workout;
+- starting and finishing one active workout, with its elapsed time shown and a
+  reminder to finish it after 3 hours;
 - adding recent gym-specific exercise configurations in one tap;
 - searching a starter exercise catalog of common movements;
 - remembering equipment and machine details separately for each gym;
@@ -122,10 +123,17 @@ changes reach the server. Local drafts are a recovery aid, not a database backup
 
 Exercise names include the variation throughout the catalog, recent choices,
 and workout, for example Bench Press and Incline Bench Press.
-Finish workout is available above and below the exercise list. Cancel workout
+The workout header shows the start time and how long the workout has been
+running; the elapsed time updates every 30 seconds while the page is open.
+Finish workout is below the exercise list. Cancel workout
 asks for confirmation, then discards the active workout and all its exercises
 and sets, including unsaved edits. Saved gym equipment configurations and
 completed workouts are kept.
+
+If the active workout started more than 3 hours ago, a "Still training?" banner
+appears when the workout opens. **Finish it** uses the normal Finish workout
+flow. **Keep going** hides the banner for that workout; this browser remembers
+the choice, so reopening the app does not ask again.
 
 Last workout values come from the most recent completed workout with the same
 gym, exercise variation, equipment, manufacturer, and machine label. If that
