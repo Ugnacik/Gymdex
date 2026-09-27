@@ -11,7 +11,8 @@ Gymdex supports:
 - searching a starter exercise catalog of common movements;
 - remembering equipment and machine details separately for each gym;
 - logging sets with optional weight, repetitions or duration, and completion;
-- showing completed sets from the last matching workout;
+- showing completed sets from the last matching workout and copying one in a tap;
+- prefilling each added set from the set above it;
 - browsing completed workouts by gym and date;
 - creating exercise variations with custom tracking and equipment choices;
 - repeating a completed workout with fresh, empty set slots;
@@ -93,8 +94,10 @@ counterweight as a positive amount and Gymdex stores it as a negative value.
 Checking Done beside the inputs saves the set as completed right away.
 Valid edits, including unfinished sets, save automatically after a short typing
 pause, and pressing Enter in a field saves immediately. Add set creates another
-row, and the × in a set's corner deletes it after confirmation. Sets can be
-edited while the workout is active.
+row that copies the weight and reps or seconds of the set above it, saved but
+not completed; Gymdex saves any edit to the set above first. The × in a set's
+corner deletes it after confirmation. Sets can be edited while the workout is
+active.
 
 Outstanding set edits must reach the server before adding another exercise or
 finishing the workout. Every input change also saves a draft on the current
@@ -127,8 +130,9 @@ completed workouts are kept.
 Last workout values come from the most recent completed workout with the same
 gym, exercise variation, equipment, manufacturer, and machine label. If that
 combination occurred more than once, its last occurrence supplies the reference.
-Only completed sets are shown, in order; reference values do not fill in or
-complete the new workout's sets.
+Only completed sets are shown, in order. Tap a set's "Last workout" line to
+copy those values into the set and save them like any other edit; this does not
+mark the set completed.
 
 ## Run locally
 

@@ -32,6 +32,28 @@ function node() {
   };
 }
 
+function setForm(setId, position) {
+  const formNodes = { fieldset: node(), '.set-status': node(), '.remove-set': node(), '.set-retry': Object.assign(node(), { hidden: true }),
+    legend: node(), '.fill-previous': node() };
+  formNodes.legend.textContent = `Set ${position}`;
+  const form = Object.assign(node(), {
+    isConnected: true, dataset: { setId: String(setId), entryId: '3' },
+    elements: { weight: Object.assign(node(), { value: '' }), result: { value: '', required: false },
+      completed: Object.assign(node(), { checked: false }) },
+    querySelector: (selector) => formNodes[selector],
+    checkValidity: () => !form.elements.result.required || form.elements.result.value !== '',
+    reportValidity: () => form.checkValidity(), scrollIntoView() {},
+    requestSubmit: () => form.events.submit({ preventDefault() {} }),
+  });
+  return form;
+}
+
+// Like a browser, expose the rendered Last workout button's data attributes as its dataset.
+function readPreviousButton(form, html) {
+  const match = html.match(/data-previous-weight="([^"]*)" data-previous-result="([^"]*)"/);
+  if (match) form.querySelector('.fill-previous').dataset = { previousWeight: match[1], previousResult: match[2] };
+}
+
 async function harness(disk = storage(), initialData = {}) {
   const nodes = Object.fromEntries(['#app', '#toast', '#sync-status', '#picker-results', 'main',
     '#open-picker', '#open-history', '#open-progress', '#cancel-workout', '#finish', '#add-gym-form', '#start-workout', '#create-exercise',
@@ -39,17 +61,21 @@ async function harness(disk = storage(), initialData = {}) {
     .map((key) => [key, node()]));
   const timers = new Map();
   let timerId = 0;
-  const formNodes = { fieldset: node(), '.set-status': node(), '.remove-set': node(), '.set-retry': Object.assign(node(), { hidden: true }), legend: node() };
-  formNodes.legend.textContent = 'Set 1';
-  const form = Object.assign(node(), {
-    isConnected: true, dataset: { setId: '2', entryId: '3' },
-    elements: { weight: { value: '' }, result: { value: '', required: false },
-      completed: Object.assign(node(), { checked: false }) },
-    querySelector: (selector) => formNodes[selector],
-    checkValidity: () => !form.elements.result.required || form.elements.result.value !== '',
-    reportValidity: () => form.checkValidity(), scrollIntoView() {},
-    requestSubmit: () => form.events.submit({ preventDefault() {} }),
-  });
+  const forms = [];
+  const form = setForm(2, 1);
+  forms.push(form);
+  const list = { insertAdjacentHTML(_, html) {
+    this.html = html;
+    const [, id, position] = html.match(/data-set-id="(\d+)"[\s\S]*?<legend>Set (\d+)/);
+    const added = setForm(Number(id), Number(position));
+    added.elements.weight.value = html.match(/name="weight"[^>]*value="([^"]*)"/)[1];
+    added.elements.result.value = html.match(/name="result"[^>]*value="([^"]*)"/)[1];
+    readPreviousButton(added, html);
+    forms.push(added);
+    this.lastElementChild = added;
+  } };
+  const entryNode = { querySelector: (selector) => selector === '.sets-list' ? list : null };
+  const addSetButton = Object.assign(node(), { dataset: { addSet: '3' }, closest: () => entryNode });
   const data = { gyms: [], active_workout: { id: 1, gym_id: 1, gym_name: 'Home', started_at: '2026-09-22 10:00:00' },
     workout_exercises: [{ id: 3, exercise_name: 'Bench Press', variation_name: 'Standard', equipment: 'Barbell',
       previous_sets: [], sets: [{ id: 2, position: 1, weight: null, result: null, completed: false }] }], ...initialData };
@@ -59,10 +85,11 @@ async function harness(disk = storage(), initialData = {}) {
     document: {
       visibilityState: 'visible', addEventListener() {},
       querySelector: (selector) => selector === '.set-form[data-dirty="true"]'
-        ? (form.dataset.dirty ? form : null) : nodes[selector] ?? null,
+        ? forms.find((item) => item.isConnected && item.dataset.dirty) ?? null : nodes[selector] ?? null,
       querySelectorAll: (selector) => {
-        if (selector === '.set-form') return form.isConnected ? [form] : [];
-        if (selector === '.set-form[data-dirty="true"]') return form.isConnected && form.dataset.dirty ? [form] : [];
+        if (selector === '.set-form') return forms.filter((item) => item.isConnected);
+        if (selector === '.set-form[data-dirty="true"]') return forms.filter((item) => item.isConnected && item.dataset.dirty);
+        if (selector === '[data-add-set]') return form.isConnected ? [addSetButton] : [];
         if (selector === '[data-finish-workout]') return [nodes['#finish']];
         if (selector === '[data-finish-workout], #cancel-workout') return [nodes['#finish'], nodes['#cancel-workout']];
         return [];
@@ -77,7 +104,8 @@ async function harness(disk = storage(), initialData = {}) {
   };
   const app = createApp({ ...env, fetch: (...args) => env.fetch(...args) });
   await app.load();
-  return { env, nodes, form, disk, timers, app };
+  readPreviousButton(form, nodes['#app'].innerHTML);
+  return { env, nodes, form, forms, list, addSetButton, disk, timers, app };
 }
 
 function historyDOM(app) {
@@ -571,4 +599,61 @@ test('Add exercise follows the exercise list and precedes Finish and Cancel with
     assert.doesNotMatch(html, /bottom-action/);
     if (empty) assert.match(html, /No exercises yet[\s\S]*?<\/section>\s*<button class="primary accent add-exercise" id="open-picker">/);
   }
+});
+
+test('Add set first saves the set above, then shows its copied values as an unfinished set', async () => {
+  const app = await harness();
+  const requests = [];
+  app.env.fetch = async (path, options) => {
+    requests.push(`${options.method} ${path}`);
+    if (path === '/api/sets/2') return response({ id: 2, position: 1, weight: 60, result: 8, completed: false });
+    return response({ id: 5, position: 2, weight: 60, result: 8, completed: false }, 201);
+  };
+  app.form.elements.weight.value = '60';
+  app.form.elements.result.value = '8';
+  app.form.events.input();
+  await app.addSetButton.events.click();
+  assert.deepEqual(requests, ['PUT /api/sets/2', 'POST /api/workout-exercises/3/sets']);
+  const added = app.forms.at(-1);
+  assert.equal(added.dataset.setId, '5');
+  assert.equal(added.elements.weight.value, '60');
+  assert.equal(added.elements.result.value, '8');
+  assert.doesNotMatch(app.list.html, /is-complete|checked/);
+  assert.equal(added.elements.weight.focused, true);
+});
+
+test('tapping Last workout fills the set and saves it without completing it', async () => {
+  const entry = (assisted, previous) => ({ workout_exercises: [{ id: 3, exercise_name: 'Bench Press', variation_name: 'Standard', equipment: 'Barbell',
+    assisted, tracking_type: 'repetitions', previous_sets: [previous], sets: [{ id: 2, position: 1, weight: null, result: null, completed: false }] }] });
+  for (const [assisted, previous, shown, saved] of [
+    [0, { weight: 50, result: 10 }, '50', 50],
+    [1, { weight: -25, result: 8 }, '25', -25],
+    [0, { weight: -10, result: 6 }, '10', -10],
+    [0, { weight: null, result: 12 }, '', null],
+  ]) {
+    const app = await harness(storage(), entry(assisted, previous));
+    assert.match(app.nodes['#app'].innerHTML, /<button type="button" class="previous-set fill-previous"[^>]*aria-label="Fill Bench Press, set 1 from last workout: [^"]+">Last workout: /);
+    const bodies = [];
+    app.env.fetch = async (path, options) => { bodies.push(JSON.parse(options.body)); return response({ id: 2, position: 1, weight: saved, result: previous.result, completed: false }); };
+    app.form.querySelector('.fill-previous').events.click();
+    await settle();
+    assert.equal(app.form.elements.weight.value, shown);
+    assert.equal(app.form.elements.result.value, String(previous.result));
+    assert.deepEqual(bodies, [{ weight: saved, result: previous.result, completed: false }]);
+  }
+  const none = await harness();
+  assert.match(none.nodes['#app'].innerHTML, /<p class="previous-set">Last workout: No completed set<\/p>/);
+});
+
+test('Add set waits when the set above cannot reach the server', async () => {
+  const app = await harness();
+  const requests = [];
+  app.env.fetch = async (path) => { requests.push(path); throw new Error('Offline'); };
+  app.form.elements.result.value = '8';
+  app.form.events.input();
+  await app.addSetButton.events.click();
+  assert.deepEqual(requests, ['/api/sets/2']);
+  assert.equal(app.forms.length, 1);
+  assert.match(app.nodes['#toast'].textContent, /Set 1 must reach the server before adding another set/);
+  assert.equal(app.addSetButton.disabled, false);
 });

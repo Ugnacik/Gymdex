@@ -704,13 +704,18 @@ def require_active_exercise(connection: sqlite3.Connection, exercise_id: int) ->
 
 
 def add_set(connection: sqlite3.Connection, exercise_id: int) -> dict[str, Any]:
+    """Append a set that copies the weight and result of the set above, not completed."""
     with connection:
         connection.execute("BEGIN IMMEDIATE")
         require_active_exercise(connection, exercise_id)
+        above = connection.execute(
+            """SELECT position, weight, result FROM workout_sets
+               WHERE workout_exercise_id = ? ORDER BY position DESC LIMIT 1""",
+            (exercise_id,),
+        ).fetchone()
         cursor = connection.execute(
-            """INSERT INTO workout_sets(workout_exercise_id, position)
-               SELECT ?, COALESCE(MAX(position), 0) + 1 FROM workout_sets WHERE workout_exercise_id = ?""",
-            (exercise_id, exercise_id),
+            "INSERT INTO workout_sets(workout_exercise_id, position, weight, result) VALUES (?, ?, ?, ?)",
+            (exercise_id, above["position"] + 1, above["weight"], above["result"]) if above else (exercise_id, 1, None, None),
         )
         return dict(connection.execute("SELECT id, position, weight, result, completed FROM workout_sets WHERE id = ?", (cursor.lastrowid,)).fetchone())
 
