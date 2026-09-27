@@ -118,11 +118,13 @@ complete the new workout's sets.
 Gymdex has no third-party runtime dependencies. It needs Python 3.11 or newer.
 
 ```bash
-python3 -m gymdex.server --port 8080
+./run.sh
 ```
 
 Open <http://127.0.0.1:8080>. The SQLite database is created at
 `data/gymdex.sqlite3` by default. Override it with `GYMDEX_DB_PATH`.
+Keep the terminal open while using the app. Press Ctrl+C in that terminal to
+stop the server.
 
 Restart a running server after updating the Python code. Database migrations
 run automatically at startup and preserve existing workouts. Exercises recorded
