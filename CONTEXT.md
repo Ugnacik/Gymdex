@@ -9,8 +9,12 @@ A named family of related physical movements, such as Bench Press or Front Lever
 _Avoid_: Movement, base exercise
 
 **Exercise Variation**:
-A performable form of an Exercise with one fixed Tracking Type and its own Muscle Groups, such as Close-Grip Bench Press or Front Lever Hold.
+A performable form of an Exercise with one fixed Tracking Type, its own Muscle Groups, and whether it is Assisted, such as Close-Grip Bench Press, Front Lever Hold, or Assisted Pull-up.
 _Avoid_: Exercise type
+
+**Assisted**:
+A fixed property of an Exercise Variation whose recorded Weight is a machine counterweight that reduces the load, such as Assisted Pull-up or Assisted Dip. The user enters a positive "Assist kg" amount, and every Weight for the Variation is stored as a negative value.
+_Avoid_: Assistance toggle, assisted set
 
 **Equipment**:
 A single apparatus classification selected for a Workout Exercise, such as Barbell, Dumbbell, Machine, or Rope. Each Exercise offers only its relevant Equipment values, and Equipment does not list every physical component required to perform the movement.
@@ -53,4 +57,4 @@ _Avoid_: Count
 The length of a Set whose Tracking Type is Duration, recorded in seconds.
 
 **Weight**:
-The optional load recorded for a Set in kilograms, in addition to its repetitions or duration. Positive values may represent added resistance and negative values may represent assistance.
+The optional load recorded for a Set in kilograms, in addition to its repetitions or duration. Positive values represent added resistance. Negative values represent assistance: they are recorded for Assisted Variations, and Sets recorded before assistance became a Variation property may also be negative. Negative values are displayed as "N kg assistance".

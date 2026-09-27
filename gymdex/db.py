@@ -84,6 +84,9 @@ CATALOG = (
     ("Biceps Curl", "Standing", "repetitions", ("Dumbbell", "Barbell", "Cable")),
     ("Triceps Pushdown", "Standard", "repetitions", ("Cable", "Rope")),
     ("Plank", "Front Plank", "duration", ("Bodyweight",)),
+    # Assisted variations record the machine counterweight as negative weight.
+    ("Pull-up", "Assisted", "repetitions", ("Machine",), True),
+    ("Dip", "Assisted", "repetitions", ("Machine",), True),
 )
 
 
@@ -99,7 +102,7 @@ def connect(path: str | Path) -> sqlite3.Connection:
 def initialize(connection: sqlite3.Connection) -> None:
     connection.executescript(SCHEMA)
     migrate(connection)
-    for exercise_name, variation_name, tracking_type, equipment_values in CATALOG:
+    for exercise_name, variation_name, tracking_type, equipment_values, *assisted in CATALOG:
         connection.execute(
             "INSERT OR IGNORE INTO exercises(name) VALUES (?)", (exercise_name,)
         )
@@ -108,8 +111,8 @@ def initialize(connection: sqlite3.Connection) -> None:
         ).fetchone()["id"]
         connection.execute(
             """INSERT OR IGNORE INTO exercise_variations
-               (exercise_id, name, tracking_type) VALUES (?, ?, ?)""",
-            (exercise_id, variation_name, tracking_type),
+               (exercise_id, name, tracking_type, assisted) VALUES (?, ?, ?, ?)""",
+            (exercise_id, variation_name, tracking_type, int(any(assisted))),
         )
         variation_id = connection.execute(
             """SELECT id FROM exercise_variations
@@ -150,6 +153,16 @@ def migrate(connection: sqlite3.Connection) -> None:
                 UNIQUE(workout_exercise_id, position)
             )""")
             connection.execute("PRAGMA user_version = 1")
+    if version < 2:
+        with connection:
+            connection.execute("BEGIN IMMEDIATE")
+            columns = {row["name"] for row in connection.execute("PRAGMA table_info(exercise_variations)")}
+            if "assisted" not in columns:
+                connection.execute(
+                    """ALTER TABLE exercise_variations ADD COLUMN
+                       assisted INTEGER NOT NULL DEFAULT 0 CHECK (assisted IN (0, 1))"""
+                )
+            connection.execute("PRAGMA user_version = 2")
 
 
 def rows(cursor: sqlite3.Cursor) -> list[dict[str, Any]]:
@@ -173,7 +186,9 @@ def bootstrap(connection: sqlite3.Connection) -> dict[str, Any]:
                           variation_name_snapshot AS variation_name,
                           equipment_snapshot AS equipment,
                           manufacturer_snapshot AS manufacturer,
-                          label_snapshot AS label
+                          label_snapshot AS label,
+                          (SELECT assisted FROM exercise_variations
+                           WHERE id = workout_exercises.variation_id) AS assisted
                    FROM workout_exercises WHERE workout_id = ? ORDER BY position""",
                 (active_workout["id"],),
             )
@@ -204,7 +219,7 @@ def bootstrap(connection: sqlite3.Connection) -> dict[str, Any]:
 def catalog_for_gym(connection: sqlite3.Connection, gym_id: int) -> dict[str, Any]:
     catalog_rows = connection.execute(
         """SELECT v.id, e.name AS exercise_name, v.name AS variation_name,
-                  v.tracking_type,
+                  v.tracking_type, v.assisted,
                   (SELECT GROUP_CONCAT(ordered.equipment, '|')
                    FROM (SELECT equipment FROM variation_equipment
                          WHERE variation_id = v.id ORDER BY position) AS ordered) AS equipment
@@ -292,7 +307,9 @@ def completed_workout(connection: sqlite3.Connection, workout_id: int) -> dict[s
         """SELECT id, variation_id, position, exercise_name_snapshot AS exercise_name,
                   variation_name_snapshot AS variation_name, equipment_snapshot AS equipment,
                   manufacturer_snapshot AS manufacturer, label_snapshot AS label,
-                  tracking_type_snapshot AS tracking_type
+                  tracking_type_snapshot AS tracking_type,
+                  (SELECT assisted FROM exercise_variations
+                   WHERE id = workout_exercises.variation_id) AS assisted
            FROM workout_exercises WHERE workout_id = ? ORDER BY position""", (workout_id,),
     ))
     for entry in entries:
@@ -317,6 +334,7 @@ def create_exercise(
     variation_name: str,
     tracking_type: str,
     equipment: list[str],
+    assisted: bool = False,
 ) -> dict[str, Any]:
     """Add a variation to a new or existing exercise in one transaction."""
     if not isinstance(name, str) or not isinstance(variation_name, str):
@@ -329,6 +347,8 @@ def create_exercise(
         raise ValueError("Variation name must be 80 characters or fewer.")
     if tracking_type not in ("repetitions", "duration"):
         raise ValueError("Tracking type must be repetitions or duration.")
+    if type(assisted) is not bool:
+        raise ValueError("Assisted must be true or false.")
     if not isinstance(equipment, list) or not 1 <= len(equipment) <= 20:
         raise ValueError("Choose 1 to 20 equipment options.")
     clean_equipment = []
@@ -355,9 +375,9 @@ def create_exercise(
         ).fetchone():
             raise RuntimeError("That exercise variation already exists.")
         cursor = connection.execute(
-            """INSERT INTO exercise_variations(exercise_id, name, tracking_type)
-               VALUES (?, ?, ?)""",
-            (exercise["id"], variation_name, tracking_type),
+            """INSERT INTO exercise_variations(exercise_id, name, tracking_type, assisted)
+               VALUES (?, ?, ?, ?)""",
+            (exercise["id"], variation_name, tracking_type, int(assisted)),
         )
         for position, option in enumerate(clean_equipment):
             connection.execute(
@@ -370,6 +390,7 @@ def create_exercise(
         "exercise_name": exercise["name"],
         "variation_name": variation_name,
         "tracking_type": tracking_type,
+        "assisted": int(assisted),
         "equipment": clean_equipment,
     }
 
@@ -672,6 +693,21 @@ def validate_set_values(payload: dict) -> tuple[int | float | None, int | None, 
     return weight, result, completed
 
 
+def variation_assisted(connection: sqlite3.Connection, set_id: int) -> bool:
+    row = connection.execute(
+        """SELECT v.assisted FROM workout_sets s
+           JOIN workout_exercises e ON e.id = s.workout_exercise_id
+           JOIN exercise_variations v ON v.id = e.variation_id
+           WHERE s.id = ?""", (set_id,),
+    ).fetchone()
+    return bool(row and row["assisted"])
+
+
+def assisted_weight(weight: int | float | None, assisted: bool) -> int | float | None:
+    """Assisted variations always store their counterweight as a negative weight."""
+    return -abs(weight) if assisted and weight else weight
+
+
 def update_set(connection: sqlite3.Connection, set_id: int, payload: dict) -> dict[str, Any]:
     weight, result, completed = validate_set_values(payload)
     with connection:
@@ -680,6 +716,7 @@ def update_set(connection: sqlite3.Connection, set_id: int, payload: dict) -> di
         if not item:
             raise LookupError("Set not found.")
         require_active_exercise(connection, item["workout_exercise_id"])
+        weight = assisted_weight(weight, variation_assisted(connection, set_id))
         connection.execute("UPDATE workout_sets SET weight = ?, result = ?, completed = ? WHERE id = ?", (weight, result, completed, set_id))
         return dict(connection.execute("SELECT id, position, weight, result, completed FROM workout_sets WHERE id = ?", (set_id,)).fetchone())
 
@@ -701,6 +738,7 @@ def correct_completed_set(
             (set_id, workout_id),
         ).fetchone():
             raise LookupError("Completed workout set not found.")
+        weight = assisted_weight(weight, variation_assisted(connection, set_id))
         connection.execute(
             """UPDATE workout_sets SET weight = ?, result = ?, completed = ?
                WHERE id = ?""",

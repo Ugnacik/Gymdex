@@ -114,6 +114,7 @@ class GymdexHandler(BaseHTTPRequestHandler):
                     text_field(payload, "variation_name"),
                     text_field(payload, "tracking_type"),
                     payload.get("equipment"),
+                    payload.get("assisted", False),
                 ),
                 status=HTTPStatus.CREATED,
             )

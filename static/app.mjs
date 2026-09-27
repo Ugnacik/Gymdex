@@ -214,7 +214,7 @@ function renderWorkout() {
           <article class="exercise-entry" data-entry-id="${entry.id}">
             <div class="history-exercise-heading"><h3>${escapeHtml(exerciseDisplayName(entry))}</h3><button type="button" class="text-button" data-active-progress="${entry.variation_id}" data-progress-equipment="${escapeHtml(entry.equipment)}" data-progress-manufacturer="${escapeHtml(entry.manufacturer || "")}" data-progress-label="${escapeHtml(entry.label || "")}">View progress</button></div>
             <p class="meta">${escapeHtml(configurationLabel(entry))}</p>
-            <p class="set-hint">${entry.tracking_type === "duration" ? "Duration in seconds" : "Repetitions"}. Weight is optional. Select Assistance for assisted weight.</p>
+            <p class="set-hint">${entry.tracking_type === "duration" ? "Duration in seconds" : "Repetitions"}. ${entry.assisted ? "Assist kg is the counterweight and is optional." : "Weight is optional."}</p>
             <div class="sets-list">${entry.sets.map((set, index) => renderSet(entry, set, index)).join("")}</div>
             <button class="secondary add-set" data-add-set="${entry.id}">Add set</button>
           </article>`).join("") : `<div class="empty"><h3>No exercises yet</h3><p>Add a recent choice in one tap, or search the catalog.</p></div>`}
@@ -319,14 +319,14 @@ function renderHistoryDetail(data, canRepeat) {
         ${entry.sets.length ? `<ol class="history-sets">${entry.sets.map((set, index) => {
           const weight = set.weight === null ? "No weight recorded" : `${Math.abs(set.weight)} kg${set.weight < 0 ? " assistance" : ""}`;
           const result = set.result === null ? "No result recorded" : `${set.result} ${entry.tracking_type === "duration" ? "seconds" : "reps"}`;
+          const assisted = Boolean(entry.assisted) || set.weight < 0;
           return `<li><span>Set ${index + 1}: ${escapeHtml(result)} · ${escapeHtml(weight)}</span><span class="meta">${set.completed ? "Completed" : "Not completed"}</span>
             ${set.id ? `<button type="button" class="text-button history-edit-toggle" data-edit-set="${set.id}">Edit set ${index + 1}</button>
-              <form class="history-set-form" data-history-set="${set.id}" hidden>
+              <form class="history-set-form" data-history-set="${set.id}" data-assisted="${assisted}" hidden>
                 <div class="set-inputs">
-                  <label>kg <input name="weight" type="number" inputmode="decimal" step="any" min="0" max="100000" value="${set.weight === null ? "" : Math.abs(set.weight)}" /></label>
+                  <label>${assisted ? "Assist kg" : "kg"} <input name="weight" type="number" inputmode="decimal" step="any" min="0" max="100000" value="${set.weight === null ? "" : Math.abs(set.weight)}" /></label>
                   <label>${entry.tracking_type === "duration" ? "Seconds" : "Reps"} <input name="result" type="number" inputmode="numeric" min="1" max="1000000" step="1" value="${set.result ?? ""}" ${set.completed ? "required" : ""} /></label>
                 </div>
-                <label class="assistance-option"><input name="assistance" type="checkbox" ${set.weight < 0 ? "checked" : ""} /> Assistance</label>
                 <label class="set-complete"><input name="completed" type="checkbox" ${set.completed ? "checked" : ""} /> Set completed</label>
                 <div class="history-edit-actions"><button type="submit" class="secondary">Save correction</button><button type="button" class="text-button" data-cancel-edit>Cancel</button></div>
                 <p class="set-status" role="status"></p>
@@ -730,6 +730,7 @@ function renderCustomExerciseForm(query = "") {
       <label class="field">Track by<select name="tracking_type"><option value="repetitions">Repetitions</option><option value="duration">Duration in seconds</option></select></label>
       <label class="field">Equipment options<input name="equipment" maxlength="1639" placeholder="e.g. Machine, Plate-loaded machine" required /></label>
       <p class="field-help">Separate equipment options with commas. You can choose one for each gym machine when logging.</p>
+      <label class="assistance-option"><input name="assisted" type="checkbox" /> Assisted (weight is counterweight)</label>
       <button class="primary accent" type="submit">Create exercise</button>
     </form>`;
   sheet.querySelector("#back-to-picker").addEventListener("click", () => renderPicker(query));
@@ -748,7 +749,7 @@ function renderCustomExerciseForm(query = "") {
     try {
       const created = await api("/api/exercises", { method: "POST", body: JSON.stringify({
         name: values.get("name"), variation_name: values.get("variation_name"),
-        tracking_type: values.get("tracking_type"), equipment,
+        tracking_type: values.get("tracking_type"), equipment, assisted: values.get("assisted") === "on",
       }) });
       state.picker.catalog.push(created);
       chooseExercise(created.id);
@@ -825,20 +826,21 @@ function renderSet(entry, set, index) {
   const previous = entry.previous_sets[index];
   const unit = entry.tracking_type === "duration" ? "sec" : "reps";
   const name = `${exerciseDisplayName(entry)}, set ${set.position}`;
+  // Negative weights recorded before assistance moved to the variation stay assisted.
+  const assisted = Boolean(entry.assisted) || set.weight < 0 || state.editor?.status(set.id)?.values?.assistance === true;
   const previousText = previous
-    ? `${previous.weight === null ? "" : `${previous.weight} kg × `}${previous.result} ${unit}`
+    ? `${previous.weight === null ? "" : `${Math.abs(previous.weight)} kg${previous.weight < 0 ? " assistance" : ""} × `}${previous.result} ${unit}`
     : "No completed set";
-  return `<form class="set-form${set.completed ? " is-complete" : ""}" data-set-id="${set.id}" data-entry-id="${entry.id}">
+  return `<form class="set-form${set.completed ? " is-complete" : ""}" data-set-id="${set.id}" data-entry-id="${entry.id}" data-assisted="${assisted}">
     <fieldset>
       <legend>Set ${set.position}</legend>
       <button type="button" class="remove-set" aria-label="Remove ${escapeHtml(name)}"><span aria-hidden="true">×</span></button>
       <p class="previous-set">Last workout: ${escapeHtml(previousText)}</p>
       <div class="set-inputs">
-        <label>kg <input name="weight" type="number" inputmode="decimal" step="any" min="0" max="100000" aria-label="${escapeHtml(name)} weight in kilograms" value="${set.weight === null ? "" : Math.abs(set.weight)}" /></label>
+        <label>${assisted ? "Assist kg" : "kg"} <input name="weight" type="number" inputmode="decimal" step="any" min="0" max="100000" aria-label="${escapeHtml(name)} ${assisted ? "assistance" : "weight"} in kilograms" value="${set.weight === null ? "" : Math.abs(set.weight)}" /></label>
         <label>${unit === "sec" ? "Seconds" : "Reps"} <input name="result" type="number" inputmode="numeric" min="1" max="1000000" step="1" aria-label="${escapeHtml(name)} ${unit}" value="${set.result ?? ""}" ${set.completed ? "required" : ""} /></label>
         <label class="set-complete">Done <input name="completed" type="checkbox" aria-label="Mark ${escapeHtml(name)} completed and save" ${set.completed ? "checked" : ""} /></label>
       </div>
-      <label class="assistance-option"><input name="assistance" type="checkbox" ${set.weight < 0 ? "checked" : ""} /> Assistance</label>
       <div class="set-actions">
         <span class="set-status" role="status">${set.completed ? "Completed" : "Saved"}</span>
         <button type="button" class="text-button set-retry" hidden>Retry</button>
@@ -852,7 +854,7 @@ function setValues(form) {
     weight: form.elements.weight.value,
     result: form.elements.result.value,
     completed: form.elements.completed.checked,
-    assistance: form.elements.assistance.checked,
+    assistance: form.dataset.assisted === "true",
   };
 }
 
@@ -862,7 +864,6 @@ function bindSet(form) {
     form.elements.weight.value = draft.weight;
     form.elements.result.value = draft.result;
     form.elements.completed.checked = draft.completed;
-    form.elements.assistance.checked = draft.assistance;
   }
   form.elements.result.required = form.elements.completed.checked;
   form.addEventListener("input", () => {

@@ -51,6 +51,7 @@ mixed. These two best values can come from different sets in the same workout.
 During a workout, open Add exercise and choose **Create custom exercise**.
 Enter an exercise name, optional variation name, tracking type, and one or more
 comma-separated equipment choices. An empty variation name becomes Standard.
+Check Assisted when the variation's weight is a machine counterweight.
 Using an existing exercise name adds another variation. The resulting catalog
 entry is available at every gym; machine details are still recorded for the
 gym when you add it to a workout. Created variations cannot yet be renamed or
@@ -67,8 +68,9 @@ the page closes. The timer does not send notifications when the app is closed.
 ## Log sets
 
 Each newly added exercise starts with one empty set. Enter kilograms and reps,
-or seconds for duration exercises. Weight is optional. Enter a positive amount
-and check Assistance for assisted weight; Gymdex stores it as a negative value.
+or seconds for duration exercises. Weight is optional. Assisted variations,
+such as Assisted Pull-up, label the weight Assist kg: enter the machine's
+counterweight as a positive amount and Gymdex stores it as a negative value.
 Checking Done beside the inputs saves the set as completed right away.
 Valid edits, including unfinished sets, save automatically after a short typing
 pause, and pressing Enter in a field saves immediately. Add set creates another
@@ -142,8 +144,9 @@ node tests/rest-timer.test.mjs
 
 For a phone smoke test, open Gymdex online, add an exercise and a few sets, then
 disconnect the phone. Edit an existing set and reload. Confirm the values are
-restored, reconnect, and wait for the saved-to-server status. Check Assistance,
-editing the middle of an exercise search, and scrolling with the keyboard open.
+restored, reconnect, and wait for the saved-to-server status. Check Assist kg
+on an assisted variation, editing the middle of an exercise search, and
+scrolling with the keyboard open.
 When changing cached app assets, also bump the cache version in `static/sw.js`
 so a newly installed worker refreshes the offline copy. Close existing app tabs
 and reopen to activate a waiting worker update.

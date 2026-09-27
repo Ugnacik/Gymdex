@@ -40,7 +40,7 @@ async function harness(disk = storage(), initialData = {}) {
   const form = Object.assign(node(), {
     isConnected: true, dataset: { setId: '2', entryId: '3' },
     elements: { weight: { value: '' }, result: { value: '', required: false },
-      assistance: { checked: false }, completed: Object.assign(node(), { checked: false }) },
+      completed: Object.assign(node(), { checked: false }) },
     querySelector: (selector) => formNodes[selector],
     checkValidity: () => !form.elements.result.required || form.elements.result.value !== '',
     reportValidity: () => form.checkValidity(), scrollIntoView() {},
@@ -92,12 +92,44 @@ test('input events persist drafts and a new app restores them', async () => {
   const app = await harness();
   app.form.elements.weight.value = '12.5';
   app.form.elements.result.value = '8';
-  app.form.elements.assistance.checked = true;
   app.form.events.input();
   const second = await harness(app.disk);
   assert.equal(second.form.elements.weight.value, '12.5');
-  assert.equal(second.form.elements.assistance.checked, true);
+  assert.equal(new DraftStore(() => second.disk).get(1, 2).assistance, false);
   assert.equal(second.form.dataset.dirty, 'true');
+});
+
+test('assisted variations label the weight Assist kg and save it as negative', async () => {
+  const assistedEntry = { id: 3, variation_id: 18, exercise_name: 'Pull-up', variation_name: 'Assisted', equipment: 'Machine', assisted: 1,
+    tracking_type: 'repetitions', previous_sets: [{ weight: -25, result: 8 }], sets: [{ id: 2, position: 1, weight: null, result: null, completed: false }] };
+  const app = await harness(storage(), { workout_exercises: [assistedEntry] });
+  const html = app.nodes['#app'].innerHTML;
+  assert.match(html, /data-assisted="true"/);
+  assert.match(html, /Assist kg <input name="weight"[^>]*aria-label="Assisted Pull-up, set 1 assistance in kilograms"/);
+  assert.match(html, /Last workout: 25 kg assistance × 8 reps/);
+  assert.match(html, /Assist kg is the counterweight/);
+  assert.doesNotMatch(html, /name="assistance"|Select Assistance/);
+  const bodies = [];
+  app.env.fetch = async (path, options) => { bodies.push(JSON.parse(options.body)); return response({ id: 2, position: 1, weight: -20, result: 8, completed: true }); };
+  app.form.dataset.assisted = 'true';
+  app.form.elements.weight.value = '20';
+  app.form.elements.result.value = '8';
+  app.form.elements.completed.checked = true;
+  app.form.elements.completed.events.change();
+  await settle();
+  assert.deepEqual(bodies, [{ weight: -20, result: 8, completed: true }]);
+});
+
+test('earlier negative sets and restored assistance drafts stay assisted on unassisted variations', async () => {
+  const legacy = await harness(storage(), { workout_exercises: [{ id: 3, exercise_name: 'Bench Press', variation_name: 'Standard', equipment: 'Barbell', assisted: 0,
+    previous_sets: [], sets: [{ id: 2, position: 1, weight: -10, result: 5, completed: true }] }] });
+  assert.match(legacy.nodes['#app'].innerHTML, /data-assisted="true"[\s\S]*Assist kg <input name="weight"[^>]*value="10"/);
+  const disk = storage();
+  new DraftStore(() => disk).put(1, 2, { weight: '7.5', result: '', completed: false, assistance: true });
+  const restored = await harness(disk);
+  assert.match(restored.nodes['#app'].innerHTML, /data-assisted="true"/);
+  const plain = await harness();
+  assert.match(plain.nodes['#app'].innerHTML, /data-assisted="false"[\s\S]*>kg <input name="weight"/);
 });
 
 test('finish and cancel keep an acknowledged terminal state when bootstrap fails', async () => {
@@ -293,6 +325,7 @@ test('custom exercise creation offers the new variation for the active workout',
   await app.nodes['#open-picker'].events.click();
   app.nodes['#create-exercise'].events.click();
   assert.match(sheet.innerHTML, /Create custom exercise/);
+  assert.match(sheet.innerHTML, /<input name="assisted" type="checkbox" \/> Assisted \(weight is counterweight\)/);
   const originalFormData = globalThis.FormData;
   globalThis.FormData = class { constructor() { return new Map([
     ['name', 'Leg Press'], ['variation_name', 'Single Leg'], ['tracking_type', 'repetitions'], ['equipment', 'Machine'],
@@ -300,7 +333,7 @@ test('custom exercise creation offers the new variation for the active workout',
   try { await customForm.events.submit({ preventDefault() {}, currentTarget: customForm }); }
   finally { globalThis.FormData = originalFormData; }
   assert.equal(requests[1][0], '/api/exercises');
-  assert.deepEqual(JSON.parse(requests[1][1].body), { name: 'Leg Press', variation_name: 'Single Leg', tracking_type: 'repetitions', equipment: ['Machine'] });
+  assert.deepEqual(JSON.parse(requests[1][1].body), { name: 'Leg Press', variation_name: 'Single Leg', tracking_type: 'repetitions', equipment: ['Machine'], assisted: false });
   assert.match(sheet.innerHTML, /Single Leg Leg Press/);
   assert.match(sheet.innerHTML, /data-equipment="Machine"/);
 });
@@ -386,8 +419,8 @@ test('correcting a completed set refreshes active references and the history cou
   const status = node();
   const submit = node();
   const form = Object.assign(node(), {
-    dataset: { historySet: '44' },
-    elements: { weight: { value: '75' }, result: { value: '10', required: false }, assistance: { checked: true }, completed: { checked: true } },
+    dataset: { historySet: '44', assisted: 'true' },
+    elements: { weight: { value: '75' }, result: { value: '10', required: false }, completed: { checked: true } },
     closest: () => form, reportValidity: () => true,
     querySelector: (selector) => selector === '.set-status' ? status : submit,
   });

@@ -294,8 +294,8 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .set-complete input { width: 24px; height: 24px; min-height: 24px; padding: 0; accent-color: var(--accent); cursor: pointer; }
 .set-inputs .set-complete { grid-template-rows: auto 48px; justify-items: center; min-width: 48px; margin: 0; }
 .set-inputs .set-complete input { width: 28px; height: 28px; min-height: 28px; align-self: center; padding: 0; accent-color: var(--accent); cursor: pointer; }
-.assistance-option { display: flex; align-items: center; gap: 10px; min-height: 44px; margin-top: 4px; font-size: 0.85rem; }
-.assistance-option input { width: 24px; height: 24px; min-height: 24px; padding: 0; accent-color: var(--accent); }
+.assistance-option { display: flex; align-items: center; gap: 10px; min-height: 44px; margin-bottom: 14px; font-size: 0.9rem; cursor: pointer; }
+.assistance-option input { width: 24px; height: 24px; min-height: 24px; padding: 0; accent-color: var(--accent); cursor: pointer; }
 .set-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; margin-top: 4px; }
 .set-actions .text-button { padding: 0 6px; min-height: 44px; font-size: 0.85rem; }
 .set-status { margin-left: auto; font-size: 0.75rem; color: var(--muted); }

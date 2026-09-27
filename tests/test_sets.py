@@ -118,6 +118,7 @@ class SetTests(unittest.TestCase):
     def test_migration_preserves_existing_workout_and_is_repeatable(self):
         self.connection.execute('DROP TABLE workout_sets')
         self.connection.execute('ALTER TABLE workout_exercises DROP COLUMN tracking_type_snapshot')
+        self.connection.execute('ALTER TABLE exercise_variations DROP COLUMN assisted')
         self.connection.execute('PRAGMA user_version = 0')
         self.connection.commit()
         db.initialize(self.connection)
@@ -127,6 +128,64 @@ class SetTests(unittest.TestCase):
         self.assertEqual(entry['tracking_type'], 'repetitions')
         self.assertEqual(entry['sets'], [])
         self.assertEqual(db.add_set(self.connection, entry['id'])['position'], 1)
+
+    def test_version_one_database_gains_assisted_variations_and_keeps_negative_sets(self):
+        legacy = self.first_set()
+        self.save(legacy, weight=-12.5)
+        self.connection.execute('ALTER TABLE exercise_variations DROP COLUMN assisted')
+        self.connection.execute("DELETE FROM variation_equipment WHERE variation_id IN (SELECT id FROM exercise_variations WHERE name = 'Assisted')")
+        self.connection.execute("DELETE FROM exercise_variations WHERE name = 'Assisted'")
+        self.connection.execute('PRAGMA user_version = 1')
+        self.connection.commit()
+        db.initialize(self.connection)
+        db.initialize(self.connection)
+        self.assertEqual(self.connection.execute('PRAGMA user_version').fetchone()[0], 2)
+        catalog = db.catalog_for_gym(self.connection, self.gym['id'])['catalog']
+        self.assertEqual({(v['exercise_name'], v['variation_name']) for v in catalog if v['assisted']},
+                         {('Pull-up', 'Assisted'), ('Dip', 'Assisted')})
+        entry = db.bootstrap(self.connection)['workout_exercises'][0]
+        self.assertEqual(entry['assisted'], 0)
+        self.assertEqual(entry['sets'][0]['weight'], -12.5)
+
+    def test_assisted_variation_stores_counterweight_as_negative_weight(self):
+        catalog = db.catalog_for_gym(self.connection, self.gym['id'])['catalog']
+        pull_up = next(v for v in catalog if v['exercise_name'] == 'Pull-up' and v['variation_name'] == 'Assisted')
+        self.assertEqual(pull_up['assisted'], 1)
+        self.assertEqual(self.press['assisted'], 0)
+        entry = self.add_exercise(pull_up, 'Machine')
+        item = self.first_set(entry)
+        self.save(item, weight=20)
+        self.assertEqual(self.first_set(entry)['weight'], -20)
+        self.save(item, weight=-15.5)
+        self.assertEqual(self.first_set(entry)['weight'], -15.5)
+        self.save(item, weight=None)
+        self.assertIsNone(self.first_set(entry)['weight'])
+        self.save(self.first_set(), weight=20)
+        self.assertEqual(self.first_set()['weight'], 20)
+        entries = db.bootstrap(self.connection)['workout_exercises']
+        self.assertEqual([e['assisted'] for e in entries], [0, 1])
+        self.save(item, weight=25)
+        db.complete_workout(self.connection, self.workout['id'])
+        detail = db.completed_workout(self.connection, self.workout['id'])
+        self.assertEqual(detail['workout_exercises'][1]['assisted'], 1)
+        corrected = db.correct_completed_set(self.connection, self.workout['id'], item['id'],
+                                             dict(weight=30, result=8, completed=True))
+        self.assertEqual(corrected['weight'], -30)
+
+    def test_custom_exercise_can_be_assisted(self):
+        status, created = self.request('POST', '/api/exercises', dict(
+            name='Chin-up', variation_name='Assisted', tracking_type='repetitions',
+            equipment=['Machine'], assisted=True))
+        self.assertEqual(status, 201)
+        self.assertEqual(created['assisted'], 1)
+        status, plain = self.request('POST', '/api/exercises', dict(
+            name='Chin-up', variation_name='', tracking_type='repetitions', equipment=['Bodyweight']))
+        self.assertEqual((status, plain['assisted']), (201, 0))
+        status, body = self.request('POST', '/api/exercises', dict(
+            name='Chin-up', variation_name='Band', tracking_type='repetitions',
+            equipment=['Band'], assisted='yes'))
+        self.assertEqual(status, 400)
+        self.assertIn('Assisted', body['error'])
 
     def request(self, method, path, payload=None):
         handler = object.__new__(GymdexHandler)
