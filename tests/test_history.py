@@ -61,23 +61,31 @@ class HistoryTests(unittest.TestCase):
         self.assertIsNone(second['next_offset'])
         self.assertEqual(db.workout_history(self.connection, offset='40')['workouts'], [])
 
-    def test_gym_and_inclusive_start_date_filters(self):
-        self.workout(started='2026-09-20 23:59:59')
-        first = self.workout(started='2026-09-21 00:00:00')
-        last = self.workout(started='2026-09-22 23:59:59')
-        self.workout(started='2026-09-23 00:00:00')
+    def test_gym_and_start_time_filters_use_utc_instant_bounds(self):
+        # A phone at UTC+2 asks for its local 21-22 September: 20 Sep 22:00 UTC to 22 Sep 22:00 UTC.
+        self.workout(started='2026-09-20 21:59:59')
+        first = self.workout(started='2026-09-20 22:00:00')
+        last = self.workout(started='2026-09-22 21:59:59')
+        self.workout(started='2026-09-22 22:00:00')
         self.workout(gym=self.other, started='2026-09-22 10:00:00')
-        status, page = self.request(f'/api/history?gym_id={self.gym["id"]}&start=2026-09-21&end=2026-09-22')
+        status, page = self.request(f'/api/history?gym_id={self.gym["id"]}'
+                                    '&start=2026-09-20T22:00:00.000Z&end=2026-09-22T22:00:00.000Z')
         self.assertEqual(status, 200)
         self.assertEqual([w['id'] for w in page['workouts']], [last['id'], first['id']])
-        self.assertEqual(len(db.workout_history(self.connection, start='2026-09-23')['workouts']), 1)
-        self.assertEqual(len(db.workout_history(self.connection, end='2026-09-20')['workouts']), 1)
+        self.assertEqual(len(db.workout_history(self.connection, start='2026-09-22T22:00:00Z')['workouts']), 1)
+        self.assertEqual(len(db.workout_history(self.connection, end='2026-09-20T22:00:00Z')['workouts']), 1)
+        # Offsets are converted to UTC: the same bounds written as local midnights at UTC+2.
+        status, page = self.request(f'/api/history?gym_id={self.gym["id"]}'
+                                    '&start=2026-09-21T00:00:00%2B02:00&end=2026-09-23T00:00:00%2B02:00')
+        self.assertEqual([w['id'] for w in page['workouts']], [last['id'], first['id']])
 
     def test_invalid_filters_and_ids_return_errors(self):
         for query in ('gym_id=no', 'gym_id=-1', 'gym_id=999999999999999999999',
                       'offset=-1', 'offset=1.5', 'offset=1000001',
-                      'start=2026-02-30', 'start=20260922', 'end=bad',
-                      'start=2026-09-22&end=2026-09-21', 'end=9999-12-31'):
+                      'start=2026-02-30T00:00:00Z', 'start=2026-09-22', 'start=2026-09-22T00:00:00',
+                      'end=bad', 'end=9999-12-31T23:00:00-05:00',
+                      'start=2026-09-22T00:00:00Z&end=2026-09-21T00:00:00Z',
+                      'start=2026-09-22T00:00:00Z&end=2026-09-22T00:00:00Z'):
             with self.subTest(query=query):
                 self.assertEqual(self.request('/api/history?' + query)[0], 400)
         self.assertEqual(self.request('/api/history/invalid')[0], 400)

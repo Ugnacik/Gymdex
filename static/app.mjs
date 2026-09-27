@@ -2,6 +2,32 @@ import { DraftStore, setPayload } from "./drafts.mjs";
 import { WorkoutEditor } from "./workout-editor.mjs";
 import { RestTimer } from "./rest-timer.mjs";
 
+// The server stores times as SQLite CURRENT_TIMESTAMP values in UTC ("YYYY-MM-DD HH:MM:SS").
+// Gymdex shows them in the device's time zone.
+export function parseServerTime(value) {
+  return new Date(value.includes("T") ? value : `${value.replace(" ", "T")}Z`);
+}
+
+export function formatLocalTime(value) {
+  return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(parseServerTime(value));
+}
+
+export function formatLocalDateTime(value) {
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(parseServerTime(value));
+}
+
+// Returns the UTC instant of local midnight at the start of a YYYY-MM-DD date,
+// shifted by whole days, or the value unchanged when it is not such a date.
+export function localMidnightUtc(value, addDays = 0) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return value;
+  const midnight = new Date(0);
+  // setFullYear keeps years below 100 literal, unlike the Date constructor.
+  midnight.setFullYear(Number(match[1]), Number(match[2]) - 1, Number(match[3]) + addDays);
+  midnight.setHours(0, 0, 0, 0);
+  return midnight.toISOString();
+}
+
 export function createApp({ window, document, navigator, fetch, setTimeout, clearTimeout, setInterval }) {
 
 const drafts = new DraftStore(() => window.localStorage);
@@ -204,7 +230,7 @@ function renderWorkout() {
     <main class="shell workout-shell">
       ${renderHeader("Workout active")}
       <section class="workout-heading">
-        <div><h1>${escapeHtml(workout.gym_name)}</h1><p>Started ${escapeHtml(formatTime(workout.started_at))}</p></div>
+        <div><h1>${escapeHtml(workout.gym_name)}</h1><p>Started ${escapeHtml(formatLocalTime(workout.started_at))}</p></div>
         <button class="text-button" data-finish-workout>Finish workout</button>
       </section>
       ${renderRestTimer()}
@@ -296,21 +322,10 @@ function bindRestTimer() {
   renderRestTimerState();
 }
 
-function formatTime(value) {
-  const normalized = value.includes("T") ? value : `${value.replace(" ", "T")}Z`;
-  return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(normalized));
-}
-
-function historyDate(value) {
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium", timeStyle: "short", timeZone: "UTC",
-  }).format(new Date(`${value.replace(" ", "T")}Z`));
-}
-
 function renderHistoryDetail(data, canRepeat) {
   const { workout, workout_exercises: entries } = data;
   return `<h3>${escapeHtml(workout.gym_name)}</h3>
-    <p>Started ${escapeHtml(historyDate(workout.started_at))}<br>Finished ${escapeHtml(historyDate(workout.completed_at))}<br>Times shown in UTC.</p>
+    <p>Started ${escapeHtml(formatLocalDateTime(workout.started_at))}<br>Finished ${escapeHtml(formatLocalDateTime(workout.completed_at))}</p>
     ${canRepeat ? `<button class="secondary history-repeat" type="button" data-repeat-workout="${workout.id}">Repeat this workout</button>` : `<p class="history-notice">Finish the active workout before repeating this one.</p>`}
     <div class="exercise-list">${entries.length ? entries.map((entry) => `
       <article class="exercise-entry">
@@ -348,7 +363,7 @@ function openHistory() {
       <form id="history-filters" class="history-filters">
         <label class="field">Gym<select name="gym_id"><option value="">All gyms</option>${state.data.gyms.map((gym) => `<option value="${gym.id}">${escapeHtml(gym.name)}</option>`).join("")}</select></label>
         <div class="history-dates"><label class="field">From<input type="date" name="start"></label><label class="field">To<input type="date" name="end"></label></div>
-        <p>Filter by workout start date. Dates and times are shown in UTC.</p>
+        <p>Filter by the day each workout started.</p>
         <button class="secondary" type="submit">Apply filters</button>
       </form>
       <p id="history-message" role="status"></p>
@@ -489,7 +504,7 @@ function openHistory() {
       nextOffset = data.next_offset;
       message.textContent = data.workouts.length ? "Completed workouts, newest first." : "No completed workouts match these filters.";
       results.innerHTML = data.workouts.map((workout) => `<button class="recent-card" data-history-id="${workout.id}">
-        <strong>${escapeHtml(workout.gym_name)}</strong><span>${escapeHtml(historyDate(workout.started_at))}</span>
+        <strong>${escapeHtml(workout.gym_name)}</strong><span>${escapeHtml(formatLocalDateTime(workout.started_at))}</span>
         <span>${workout.exercise_count} exercise${workout.exercise_count === 1 ? "" : "s"} · ${workout.completed_set_count} completed set${workout.completed_set_count === 1 ? "" : "s"}</span></button>`).join("");
       results.querySelectorAll("[data-history-id]").forEach((button) => button.addEventListener("click", () => showDetail(button)));
       previous.disabled = offset === 0;
@@ -500,7 +515,10 @@ function openHistory() {
   }
   filters.addEventListener("submit", (event) => {
     event.preventDefault();
-    query = new URLSearchParams(new FormData(filters));
+    // From and To are whole local days: send the UTC instants of their bounding midnights.
+    const dayOffsets = { start: 0, end: 1 };
+    query = new URLSearchParams([...new FormData(filters)].map(([name, value]) =>
+      [name, value && name in dayOffsets ? localMidnightUtc(value, dayOffsets[name]) : value]));
     loadPage(0);
   });
   previous.addEventListener("click", () => loadPage(Math.max(0, offset - 20)));
@@ -541,7 +559,7 @@ function renderProgressData(data, metric) {
     ${points.length ? `<label class="field progress-metric">Chart<select id="progress-metric"><option value="best_result" ${metric === "best_result" ? "selected" : ""}>Best ${unit}</option><option value="best_weight" ${metric === "best_weight" ? "selected" : ""}>Best weight</option></select></label>
       ${progressChart(points, metric, unit)}
       <div class="progress-table-wrap"><table class="progress-table"><caption class="visually-hidden">Completed workout progress</caption><thead><tr><th scope="col">Workout</th><th scope="col">Best ${unit}</th><th scope="col">Best weight</th><th scope="col">Sets</th></tr></thead><tbody>
-      ${points.map((point) => `<tr><th scope="row">${escapeHtml(historyDate(point.completed_at))}</th><td>${point.best_result ?? "—"}</td><td>${point.best_weight === null ? "—" : `${escapeHtml(Math.abs(point.best_weight))} kg${point.best_weight < 0 ? " assistance" : ""}`}</td><td>${point.completed_sets}</td></tr>`).join("")}
+      ${points.map((point) => `<tr><th scope="row">${escapeHtml(formatLocalDateTime(point.completed_at))}</th><td>${point.best_result ?? "—"}</td><td>${point.best_weight === null ? "—" : `${escapeHtml(Math.abs(point.best_weight))} kg${point.best_weight < 0 ? " assistance" : ""}`}</td><td>${point.completed_sets}</td></tr>`).join("")}
       </tbody></table></div>` : `<div class="empty"><h3>No completed sets yet</h3><p>Complete a set in a workout to see progress here.</p></div>`}`;
 }
 

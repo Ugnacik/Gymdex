@@ -3,6 +3,10 @@ import { test } from 'node:test';
 import { createApp } from '../static/app.mjs';
 import { DraftStore } from '../static/drafts.mjs';
 
+// Pin the device time zone so local-time assertions do not depend on the test machine.
+// Central European Summer Time is UTC+2 until 25 October 2026, then UTC+1.
+process.env.TZ = 'Europe/Prague';
+
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 const response = (body, status = 200) => ({ ok: status < 400, status, json: async () => body });
 function deferred() {
@@ -189,13 +193,60 @@ test('history paginates and filters without replacing the active form or draft',
   try { nodes['#history-filters'].events.submit({ preventDefault() {} }); }
   finally { globalThis.FormData = originalFormData; }
   await settle();
-  assert.equal(urls[2], '/api/history?gym_id=2&start=2026-09-21&end=2026-09-22&offset=0');
+  // Local 21-22 September become the UTC instants of the phone's midnights.
+  assert.equal(urls[2], '/api/history?gym_id=2&start=2026-09-20T22%3A00%3A00.000Z&end=2026-09-22T22%3A00%3A00.000Z&offset=0');
   assert.match(nodes['#history-message'].textContent, /No completed workouts/);
   nodes['#close-history'].events.click();
   assert.equal(dialog.removed, true);
   assert.equal(app.form.elements.result.value, '9');
   assert.equal(new DraftStore(() => app.disk).get(1, 2).result, '9');
   assert.ok(urls.every((url) => url.startsWith('/api/history?')));
+});
+
+test('history and the active workout show times in the device time zone', async () => {
+  const app = await harness();
+  // The harness workout started 2026-09-22 10:00 UTC, which is 12:00 in Prague.
+  assert.match(app.nodes['#app'].innerHTML, /Started 12:00/);
+  const { dialog, nodes } = historyDOM(app);
+  // 23:30 UTC on 21 September is already 01:30 on 22 September in Prague.
+  const workout = { id: 5, gym_id: 1, gym_name: 'Home', started_at: '2026-09-21 23:30:00', completed_at: '2026-09-22 10:00:00' };
+  app.env.fetch = async (url) => response(url.includes('?')
+    ? { workouts: [{ ...workout, exercise_count: 0, completed_set_count: 0 }], next_offset: null }
+    : { workout, workout_exercises: [] });
+  app.nodes['#open-history'].events.click();
+  await settle();
+  const listed = nodes['#history-results'].innerHTML;
+  assert.match(listed, /22[^<]*1:30/);
+  assert.doesNotMatch(listed, /11:30|23:30/);
+  await nodes['#history-results'].buttons[0].events.click();
+  const detail = nodes['#history-detail'].innerHTML;
+  assert.match(detail, /Started [^<]*1:30[\s\S]*Finished [^<]*12:00/);
+  assert.doesNotMatch(detail, /10:00|UTC/);
+  assert.doesNotMatch(dialog.innerHTML, /UTC/);
+});
+
+test('history date filters cover whole local days across a daylight saving change', async () => {
+  const app = await harness();
+  const { nodes } = historyDOM(app);
+  const urls = [];
+  app.env.fetch = async (url) => { urls.push(url); return response({ workouts: [], next_offset: null }); };
+  app.nodes['#open-history'].events.click();
+  await settle();
+  const originalFormData = globalThis.FormData;
+  const submit = async (entries) => {
+    globalThis.FormData = class { constructor() { return entries; } };
+    try { nodes['#history-filters'].events.submit({ preventDefault() {} }); }
+    finally { globalThis.FormData = originalFormData; }
+    await settle();
+    return new URLSearchParams(urls.at(-1).split('?')[1]);
+  };
+  // 25 October 2026 is 25 hours long in Prague: clocks go back from UTC+2 to UTC+1.
+  let params = await submit([['gym_id', ''], ['start', '2026-10-25'], ['end', '2026-10-25']]);
+  assert.equal(params.get('start'), '2026-10-24T22:00:00.000Z');
+  assert.equal(params.get('end'), '2026-10-25T23:00:00.000Z');
+  params = await submit([['gym_id', ''], ['start', ''], ['end', '2026-12-31']]);
+  assert.equal(params.get('start'), '');
+  assert.equal(params.get('end'), '2026-12-31T23:00:00.000Z');
 });
 
 test('history shows errors and ignores stale responses after filtering or closing', async () => {
