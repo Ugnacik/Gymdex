@@ -150,6 +150,8 @@ async function load() {
   try {
     state.data = await api("/api/bootstrap");
     drafts.snapshot(state.data);
+    // A gym archived or deleted in Manage can no longer be selected.
+    if (!state.data.gyms.some((gym) => gym.id === state.selectedGymId)) state.selectedGymId = null;
     if (!state.selectedGymId && state.data.gyms.length === 1) {
       state.selectedGymId = state.data.gyms[0].id;
     }
@@ -174,8 +176,17 @@ function render() {
   updateSyncStatus();
 }
 
+// Archived gyms stay selectable where recorded workouts are browsed: history and progress.
+function recordedGyms() {
+  return [...state.data.gyms, ...(state.data.archived_gyms ?? []).map((gym) => ({ ...gym, archived: true }))];
+}
+
+function gymOptions(selectedId = null) {
+  return recordedGyms().map((gym) => `<option value="${gym.id}"${Number(selectedId) === gym.id ? " selected" : ""}>${escapeHtml(gym.name)}${gym.archived ? " (archived)" : ""}</option>`).join("");
+}
+
 function renderHeader(status = "Ready") {
-  return `<header class="app-header"><div class="brand">Gymdex</div><nav aria-label="App views"><button class="text-button" id="open-progress" ${state.data.gyms.length ? "" : "disabled"}>Progress</button><button class="text-button" id="open-history">History</button></nav><div class="status${state.data.active_workout ? " status-active" : ""}">${escapeHtml(status)}</div></header><p id="sync-status" class="sync-status" role="status"></p>`;
+  return `<header class="app-header"><div class="brand">Gymdex</div><nav aria-label="App views"><button class="text-button" id="open-progress" ${recordedGyms().length ? "" : "disabled"}>Progress</button><button class="text-button" id="open-history">History</button></nav><div class="status${state.data.active_workout ? " status-active" : ""}">${escapeHtml(status)}</div></header><p id="sync-status" class="sync-status" role="status"></p>`;
 }
 
 function renderStart() {
@@ -188,7 +199,7 @@ function renderStart() {
         <h1>Start where you train.</h1>
         <p>Choose your gym to find your machines and recent exercises.</p>
       </section>
-      <div class="section-title"><h2>Your gyms</h2><span>${gyms.length}</span></div>
+      <div class="section-title"><h2>Your gyms</h2><button type="button" class="text-button manage-open" id="open-manage">Manage</button></div>
       <div class="gym-list" id="gym-list">
         ${gyms.map((gym) => `<button class="gym-card" data-gym-id="${gym.id}" aria-pressed="${state.selectedGymId === gym.id}"><span>${escapeHtml(gym.name)}</span><span aria-hidden="true">${state.selectedGymId === gym.id ? "Selected" : "Select"}</span></button>`).join("")}
       </div>
@@ -211,6 +222,7 @@ function renderStart() {
   document.querySelector("#start-workout").addEventListener("click", startWorkout);
   document.querySelector("#open-history").addEventListener("click", openHistory);
   document.querySelector("#open-progress").addEventListener("click", () => openProgress());
+  document.querySelector("#open-manage").addEventListener("click", openManage);
 }
 
 async function createGym(event) {
@@ -463,7 +475,8 @@ function renderHistoryDetail(data, canRepeat) {
   return `<h3>${escapeHtml(workout.gym_name)}</h3>
     <p>Started ${escapeHtml(formatLocalDateTime(workout.started_at))}<br>Finished ${escapeHtml(formatLocalDateTime(workout.completed_at))}</p>
     ${renderHistoryNote("workout", workout.note, "workout note")}
-    ${canRepeat ? `<button class="secondary history-repeat" type="button" data-repeat-workout="${workout.id}">Repeat this workout</button>` : `<p class="history-notice">Finish the active workout before repeating this one.</p>`}
+    ${workout.gym_archived ? `<p class="history-notice">Restore ${escapeHtml(workout.gym_name)} in Manage to repeat this workout.</p>`
+      : canRepeat ? `<button class="secondary history-repeat" type="button" data-repeat-workout="${workout.id}">Repeat this workout</button>` : `<p class="history-notice">Finish the active workout before repeating this one.</p>`}
     <div class="exercise-list">${entries.length ? entries.map((entry) => `
       <article class="exercise-entry">
         <div class="history-exercise-heading"><h3>${escapeHtml(exerciseDisplayName(entry))}</h3>${entry.variation_id ? `<button type="button" class="text-button" data-progress-variation="${entry.variation_id}" data-progress-equipment="${escapeHtml(entry.equipment)}" data-progress-manufacturer="${escapeHtml(entry.manufacturer || "")}" data-progress-label="${escapeHtml(entry.label || "")}">View progress</button>` : ""}</div>
@@ -520,7 +533,7 @@ function openHistory() {
     <div class="sheet-header"><h2 id="history-title">Workout history</h2><button class="text-button" id="close-history" autofocus>Close</button></div>
     <div id="history-list-view">
       <form id="history-filters" class="history-filters">
-        <label class="field">Gym<select name="gym_id"><option value="">All gyms</option>${state.data.gyms.map((gym) => `<option value="${gym.id}">${escapeHtml(gym.name)}</option>`).join("")}</select></label>
+        <label class="field">Gym<select name="gym_id"><option value="">All gyms</option>${gymOptions()}</select></label>
         <div class="history-dates"><label class="field">From<input type="date" name="start"></label><label class="field">To<input type="date" name="end"></label></div>
         <p>Filter by the day each workout started.</p>
         <button class="secondary" type="submit">Apply filters</button>
@@ -822,7 +835,8 @@ function renderProgressData(data, metric) {
 }
 
 async function openProgress(initialVariationId = null, initialGymId = null, initialConfig = null) {
-  if (document.querySelector("#progress") || state.data.gyms.length === 0) return;
+  const gyms = recordedGyms();
+  if (document.querySelector("#progress") || gyms.length === 0) return;
   const dialog = document.createElement("dialog");
   dialog.id = "progress";
   dialog.className = "history-dialog progress-dialog";
@@ -830,7 +844,7 @@ async function openProgress(initialVariationId = null, initialGymId = null, init
   dialog.innerHTML = `<div class="sheet-header"><h2 id="progress-title">Exercise progress</h2><button class="text-button" id="close-progress" autofocus>Close</button></div>
     <form id="progress-filters" class="history-filters">
       <label class="field">Exercise<select name="variation_id" id="progress-exercise" required></select></label>
-      <label class="field">Gym<select name="gym_id"><option value="">All gyms</option>${state.data.gyms.map((gym) => `<option value="${gym.id}" ${Number(initialGymId) === gym.id ? "selected" : ""}>${escapeHtml(gym.name)}</option>`).join("")}</select></label>
+      <label class="field">Gym<select name="gym_id"><option value="">All gyms</option>${gymOptions(initialGymId)}</select></label>
       <button type="submit" class="secondary">Show progress</button>
     </form>
     <div id="progress-config" class="progress-config" ${initialConfig ? "" : "hidden"}><span>Showing this machine configuration</span><button type="button" class="text-button" id="progress-all-configs">Show all equipment</button></div>
@@ -883,7 +897,7 @@ async function openProgress(initialVariationId = null, initialGymId = null, init
   });
   dialog.showModal();
   try {
-    const catalog = await api(`/api/catalog?gym_id=${state.data.gyms[0].id}`);
+    const catalog = await api(`/api/catalog?gym_id=${gyms[0].id}`);
     if (!dialog.open) return;
     exercise.innerHTML = catalog.catalog.map((item) => `<option value="${item.id}" ${item.id === initialVariationId ? "selected" : ""}>${escapeHtml(exerciseDisplayName(item))}</option>`).join("");
     if (!catalog.catalog.length) {
@@ -892,6 +906,194 @@ async function openProgress(initialVariationId = null, initialGymId = null, init
     }
     await loadProgress();
   } catch (error) { if (dialog.open) message.textContent = error.message; }
+}
+
+// Manage renames, removes and restores the items new workouts are built from. Removing
+// deletes a never-used item and archives a used one; the server decides which.
+// A row's data-manage-* attributes hold "kind:id", and MANAGE_PATHS maps each kind to its API path.
+const MANAGE_PATHS = { gym: "gyms", configuration: "configurations", exercise: "exercises", variation: "variations" };
+
+function manageItems(overview, kind) {
+  if (kind === "gym") return overview.gyms;
+  if (kind === "configuration") return overview.configurations;
+  if (kind === "exercise") return overview.exercises;
+  if (kind === "variation") return overview.exercises.flatMap((exercise) =>
+    exercise.variations.map((variation) => ({ ...variation, exercise_name: exercise.name, variation_name: variation.name })));
+  return [];
+}
+
+function manageItemName(kind, item) {
+  return kind === "configuration" || kind === "variation" ? exerciseDisplayName(item) : item.name;
+}
+
+function renderManageRow(kind, item, { name = manageItemName(kind, item), detail = "", rename = false, remove = true } = {}) {
+  const key = `${kind}:${item.id}`;
+  const label = escapeHtml(name);
+  const removeLabel = item.used ? "Archive" : "Delete";
+  const actions = item.archived
+    ? `<button type="button" class="text-button" data-manage-restore="${key}" aria-label="Restore ${label}">Restore</button>`
+    : `${rename ? `<button type="button" class="text-button" data-manage-rename="${key}" aria-label="Rename ${label}">Rename</button>` : ""}${remove ? `<button type="button" class="text-button manage-remove" data-manage-remove="${key}" aria-label="${removeLabel} ${label}">${removeLabel}</button>` : ""}`;
+  return `<li class="manage-row">
+    <div class="manage-row-text"><span class="manage-name">${label}</span>${detail ? `<span class="meta">${escapeHtml(detail)}</span>` : ""}</div>
+    ${actions ? `<div class="manage-actions">${actions}</div>` : ""}
+    ${rename && !item.archived ? `<form class="manage-rename-form" data-manage-rename-form="${key}" hidden>
+      <label class="field">New name<input name="name" maxlength="80" value="${label}" required autocomplete="off" /></label>
+      <div class="history-edit-actions"><button type="submit" class="secondary">Save name</button><button type="button" class="text-button" data-manage-cancel>Cancel</button></div>
+      <p class="set-status" role="status"></p>
+    </form>` : ""}
+  </li>`;
+}
+
+function renderManageSection(section, title, count, body, open) {
+  return `<details class="manage-section" data-section="${section}"${open.has(section) ? " open" : ""}>
+    <summary><h3>${title}</h3><span>${count}</span></summary>${body}</details>`;
+}
+
+function renderManageArchived(section, rows, open) {
+  if (!rows.length) return "";
+  return `<details class="manage-archived" data-section="${section}-archived"${open.has(`${section}-archived`) ? " open" : ""}>
+    <summary>Archived (${rows.length})</summary><ul class="manage-list">${rows.join("")}</ul></details>`;
+}
+
+// Groups items under headings, keeping the server's order.
+function renderManageGroups(items, heading, row) {
+  const groups = new Map();
+  for (const item of items) {
+    const title = heading(item);
+    groups.set(title, [...(groups.get(title) ?? []), item]);
+  }
+  return [...groups].map(([title, members]) => `<h4 class="manage-group">${escapeHtml(title)}</h4><ul class="manage-list">${members.map(row).join("")}</ul>`).join("");
+}
+
+function renderManage(overview, open) {
+  const gyms = overview.gyms.filter((gym) => !gym.archived);
+  const archivedGyms = overview.gyms.filter((gym) => gym.archived);
+  const configurations = overview.configurations.filter((item) => !item.archived);
+  const variations = manageItems(overview, "variation");
+  return [
+    renderManageSection("gyms", "Gyms", gyms.length, `
+      <p class="manage-help">Delete removes a gym with no workouts. Archive hides a gym with workouts from the start screen; its workouts stay in history and progress.</p>
+      ${gyms.length ? `<ul class="manage-list">${gyms.map((gym) => renderManageRow("gym", gym, { rename: true })).join("")}</ul>` : `<p>No gyms to manage.</p>`}
+      ${renderManageArchived("gyms", archivedGyms.map((gym) => renderManageRow("gym", gym)), open)}`, open),
+    renderManageSection("configurations", "Exercise Configurations", configurations.length, `
+      <p class="manage-help">Saved for a gym when you add an exercise there, and offered under Recent.</p>
+      ${configurations.length ? renderManageGroups(configurations, (item) => `${item.gym_name}${item.gym_archived ? " (archived)" : ""}`,
+        (item) => renderManageRow("configuration", item, { detail: configurationLabel(item), remove: false }))
+        : `<p>No exercise configurations yet. Add an exercise to a workout to save one.</p>`}`, open),
+    renderManageSection("exercises", "Custom exercises", variations.length, variations.length
+      ? renderManageGroups(variations, (item) => item.exercise_name,
+        (item) => renderManageRow("variation", item, { name: item.name, remove: false,
+          detail: [item.tracking_type === "duration" ? "Duration" : "Repetitions", ...item.equipment.map((equipment) => equipment.name)].join(" · ") }))
+      : `<p>No custom exercises yet. Create one with Create custom exercise when adding an exercise to a workout.</p>`, open),
+  ].join("");
+}
+
+function openManage() {
+  if (document.querySelector("#manage")) return;
+  const dialog = document.createElement("dialog");
+  dialog.id = "manage";
+  dialog.className = "history-dialog manage-dialog";
+  dialog.setAttribute("aria-labelledby", "manage-title");
+  dialog.innerHTML = `<div class="sheet-header"><h2 id="manage-title">Manage</h2><button class="text-button" id="close-manage" autofocus>Close</button></div>
+    <p id="manage-message" role="status">Loading…</p>
+    <div id="manage-content" tabindex="-1"></div>`;
+  document.body.append(dialog);
+  const find = (selector) => dialog.querySelector(selector);
+  const message = find("#manage-message");
+  const content = find("#manage-content");
+  // Re-rendering keeps each section open or closed as the user left it.
+  const open = new Set(["gyms"]);
+  let overview = null;
+  let request = 0;
+  dialog.addEventListener("close", () => {
+    request++;
+    dialog.remove();
+    document.querySelector("#open-manage")?.focus();
+  });
+  find("#close-manage").addEventListener("click", () => dialog.close());
+  content.addEventListener("toggle", (event) => {
+    const section = event.target.dataset?.section;
+    if (section && event.target.open) open.add(section);
+    else if (section) open.delete(section);
+  }, true);
+  async function refresh() {
+    const version = ++request;
+    try {
+      const data = await api("/api/manage");
+      if (version !== request) return;
+      overview = data;
+      message.textContent = "";
+      content.innerHTML = renderManage(overview, open);
+    } catch (error) {
+      if (version === request) message.textContent = `${error.message} Manage requires a connection. Close it and open it again to retry.`;
+    }
+  }
+  // A change shows in Manage and on the start screen beneath it.
+  async function changed(notice) {
+    showToast(notice);
+    await refresh();
+    await load();
+    content.focus();
+  }
+  const itemFor = (key) => {
+    const [kind, id] = key.split(":");
+    const item = overview && manageItems(overview, kind).find((entry) => entry.id === Number(id));
+    return item && { kind, item, name: manageItemName(kind, item), path: `/api/manage/${MANAGE_PATHS[kind]}/${Number(id)}` };
+  };
+  content.addEventListener("click", async (event) => {
+    const target = event.target;
+    const rename = target.closest?.("[data-manage-rename]");
+    if (rename) {
+      const form = content.querySelector(`[data-manage-rename-form="${rename.dataset.manageRename}"]`);
+      form.hidden = !form.hidden;
+      if (form.hidden) form.reset();
+      else form.elements.name.focus();
+      return;
+    }
+    const cancel = target.closest?.("[data-manage-cancel]");
+    if (cancel) {
+      const form = cancel.closest("form");
+      form.reset();
+      form.hidden = true;
+      return;
+    }
+    const remove = target.closest?.("[data-manage-remove]");
+    const restore = target.closest?.("[data-manage-restore]");
+    const selected = remove ? itemFor(remove.dataset.manageRemove) : restore ? itemFor(restore.dataset.manageRestore) : null;
+    if (!selected) return;
+    const { item, name, path } = selected;
+    const button = remove || restore;
+    if (remove && !window.confirm(item.used
+      ? `Archive ${name}? It is used in recorded workouts, so it stays in history and progress but is no longer offered for new workouts. You can restore it here.`
+      : `Delete ${name}? It has never been used in a workout, so it is removed permanently.`)) return;
+    button.disabled = true;
+    try {
+      if (remove) {
+        const { outcome } = await api(path, { method: "DELETE" });
+        await changed(`${name} ${outcome}.`);
+      } else {
+        await api(`${path}/restore`, { method: "POST", body: "{}" });
+        await changed(`${name} restored.`);
+      }
+    } catch (error) { button.disabled = false; showToast(error.message); }
+  });
+  content.addEventListener("submit", async (event) => {
+    const form = event.target.closest?.("[data-manage-rename-form]");
+    if (!form) return;
+    event.preventDefault();
+    const selected = itemFor(form.dataset.manageRenameForm);
+    if (!selected) return;
+    const status = form.querySelector(".set-status");
+    const button = form.querySelector('[type="submit"]');
+    button.disabled = true;
+    status.textContent = "Saving name…";
+    try {
+      const saved = await api(selected.path, { method: "PUT", body: JSON.stringify({ name: form.elements.name.value }) });
+      await changed(`Renamed to ${saved.name}.`);
+    } catch (error) { status.textContent = error.message; button.disabled = false; }
+  });
+  dialog.showModal();
+  return refresh();
 }
 
 function resetEditor() {

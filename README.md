@@ -5,7 +5,7 @@ stay private inside a Tailscale network.
 
 Gymdex supports:
 
-- creating gyms;
+- creating, renaming, archiving, and deleting gyms;
 - starting and finishing one active workout, with its elapsed time shown and a
   reminder to finish it after 3 hours;
 - adding recent gym-specific exercise configurations in one tap;
@@ -58,7 +58,8 @@ saving an empty box removes the note.
 With no active workout, **Repeat this workout** starts a new workout at the same
 gym. It copies the exercise configurations and number of set slots, but clears
 all results, weights, and completion marks, and it does not copy notes. The
-source stays in history.
+source stays in history. A workout at an archived gym cannot be repeated until
+the gym is restored in [Manage](#manage-gyms-and-exercises).
 
 Use **Progress** to choose an exercise and optional gym. The chart and table
 show the best completed result and best weight for each workout. From a workout
@@ -92,6 +93,34 @@ Using an existing exercise name adds another variation. The resulting catalog
 entry is available at every gym; machine details are still recorded for the
 gym when you add it to a workout. Created variations cannot yet be renamed or
 deleted in the app.
+
+## Manage gyms and exercises
+
+On the start screen, **Manage** beside Your gyms opens three sections: Gyms,
+Exercise Configurations, and Custom exercises. Manage is not available during a
+workout, so nothing in the workout you are recording changes underneath you.
+
+**Rename** changes a gym's name everywhere, including completed workouts in
+history and progress. Gym names must be unique regardless of capitalization,
+archived gyms included, and cannot be blank.
+
+The remove button says what it will do, and asks before doing it:
+
+- **Delete** appears for a gym that has never had a workout. It removes the gym
+  and its saved exercise configurations permanently.
+- **Archive** appears for a gym with workouts. An archived gym disappears from
+  the start screen, and new workouts cannot be started or repeated there. Its
+  workouts stay in history, progress, and the CSV export, and the gym filters in
+  history and progress still offer it, marked "(archived)". The active workout's
+  gym cannot be archived: finish or cancel the workout first.
+
+Archived gyms are listed under **Archived** at the end of the Gyms section, and
+**Restore** brings one back everywhere. A new gym cannot reuse an archived gym's
+name; restore the archived gym instead.
+
+Exercise Configurations lists the equipment and machine details saved for each
+gym, and Custom exercises lists the variations you created with their
+equipment. Both lists are read-only for now.
 
 ## Rest timer
 

@@ -57,7 +57,7 @@ function readPreviousButton(form, html) {
 // The harness workout started 2026-09-22 10:00 UTC; by default the clock reads 25 minutes later.
 async function harness(disk = storage(), initialData = {}, { now = Date.parse('2026-09-22T10:25:00Z') } = {}) {
   const nodes = Object.fromEntries(['#app', '#toast', '#sync-status', '#picker-results', 'main',
-    '#open-picker', '#open-history', '#open-progress', '#cancel-workout', '#finish', '#add-gym-form', '#start-workout', '#create-exercise',
+    '#open-picker', '#open-history', '#open-progress', '#open-manage', '#cancel-workout', '#finish', '#add-gym-form', '#start-workout', '#create-exercise',
     '#rest-enabled', '#rest-controls', '#rest-duration', '#rest-clock', '#rest-status', '#rest-start', '#rest-pause', '#rest-stop',
     '#workout-elapsed', '#stale-banner', '#stale-finish', '#stale-keep']
     .map((key) => [key, node()]));
@@ -1047,4 +1047,138 @@ test('deleting a completed workout needs the typed word DELETE and returns to th
   // The active workout and its unsaved draft survive the refresh.
   assert.match(app.nodes['#app'].innerHTML, /Workout active/);
   assert.equal(app.form.elements.result.value, '9');
+});
+
+const reply = (status, body) => ({ reply: true, status, body });
+const manageOverview = (gyms, extra = {}) => ({ gyms, configurations: [], exercises: [], ...extra });
+
+// Opens Manage from the start screen. Each route is a body, a reply(), or a function returning either.
+async function openManage(app, routes) {
+  const nodes = {};
+  const dialog = node();
+  dialog.querySelector = (selector) => nodes[selector] ??= node();
+  dialog.showModal = () => { dialog.open = true; };
+  dialog.remove = () => { dialog.removed = true; delete app.nodes['#manage']; };
+  dialog.close = () => { dialog.open = false; dialog.events.close(); };
+  app.env.document.createElement = () => dialog;
+  app.env.document.body = { append: () => { app.nodes['#manage'] = dialog; } };
+  const requests = [];
+  app.env.fetch = async (url, options = {}) => {
+    const key = `${options.method ?? 'GET'} ${url}`;
+    requests.push([key, options.body && JSON.parse(options.body)]);
+    if (!(key in routes)) throw new Error(`Unexpected request ${key}`);
+    const route = typeof routes[key] === 'function' ? routes[key]() : routes[key];
+    return route?.reply ? response(route.body, route.status) : response(structuredClone(route));
+  };
+  await app.nodes['#open-manage'].events.click();
+  await settle();
+  const content = nodes['#manage-content'];
+  const click = (selector, dataset) => content.events.click({
+    target: { closest: (wanted) => wanted === selector ? Object.assign(node(), { dataset }) : null },
+  });
+  return { dialog, nodes, content, requests, click };
+}
+
+const startData = (gyms, archived = []) => ({ gyms, archived_gyms: archived, active_workout: null, workout_exercises: [] });
+const home = { id: 1, name: 'Home' };
+const annex = { id: 2, name: 'Annex <b>' };
+
+test('Manage is on the start screen but not during a workout', async () => {
+  const active = await harness();
+  assert.doesNotMatch(active.nodes['#app'].innerHTML, /open-manage|>Manage</);
+  const start = await harness(storage(), startData([home]));
+  assert.match(start.nodes['#app'].innerHTML, /<div class="section-title"><h2>Your gyms<\/h2><button type="button" class="text-button manage-open" id="open-manage">Manage<\/button><\/div>/);
+});
+
+test('Manage lists gyms with Delete or Archive, and archiving hides the gym from the start screen', async () => {
+  const app = await harness(storage(), startData([home, annex]));
+  let archived = false;
+  const questions = [];
+  app.env.window.confirm = (question) => { questions.push(question); return questions.length > 1; };
+  const { content, requests, click, nodes } = await openManage(app, {
+    'GET /api/manage': () => manageOverview([
+      { ...annex, archived, used: true }, { ...home, archived: false, used: false },
+    ], { configurations: [{ id: 5, gym_id: 1, gym_name: 'Home', gym_archived: false, variation_id: 11, exercise_name: 'Bench Press',
+      variation_name: 'Incline', equipment: 'Machine', manufacturer: 'Technogym', label: 'Press 1', archived: false, used: true }] }),
+    'DELETE /api/manage/gyms/2': () => { archived = true; return { outcome: 'archived' }; },
+    'GET /api/bootstrap': () => startData([home], [annex]),
+  });
+  assert.equal(nodes['#manage-message'].textContent, '');
+  let html = content.innerHTML;
+  assert.match(html, /<details class="manage-section" data-section="gyms" open>/);
+  assert.match(html, /Exercise Configurations/);
+  assert.match(html, /Incline Bench Press[\s\S]*Machine · Technogym · Press 1/);
+  assert.match(html, /Custom exercises[\s\S]*No custom exercises yet/);
+  assert.match(html, /Annex &lt;b&gt;[\s\S]*data-manage-remove="gym:2"[^>]*>Archive<\/button>/);
+  assert.match(html, /data-manage-remove="gym:1"[^>]*>Delete<\/button>/);
+  assert.doesNotMatch(html, /<b>/);
+  await click('[data-manage-remove]', { manageRemove: 'gym:2' });
+  assert.match(questions[0], /^Archive Annex <b>\? /);
+  assert.ok(!requests.some(([key]) => key.startsWith('DELETE')));
+  await click('[data-manage-remove]', { manageRemove: 'gym:2' });
+  assert.ok(requests.some(([key]) => key === 'DELETE /api/manage/gyms/2'));
+  assert.equal(app.nodes['#toast'].textContent, 'Annex <b> archived.');
+  assert.doesNotMatch(app.nodes['#app'].innerHTML, /data-gym-id="2"/);
+  assert.match(app.nodes['#app'].innerHTML, /data-gym-id="1"/);
+  html = content.innerHTML;
+  assert.match(html, /Archived \(1\)[\s\S]*Annex &lt;b&gt;[\s\S]*data-manage-restore="gym:2"[^>]*>Restore<\/button>/);
+});
+
+test('a rename conflict shows the server error beside the new name', async () => {
+  const app = await harness(storage(), startData([home, annex]));
+  const { content, requests, click } = await openManage(app, {
+    'GET /api/manage': manageOverview([{ ...annex, archived: false, used: false }, { ...home, archived: false, used: true }]),
+    'PUT /api/manage/gyms/2': reply(409, { error: 'A gym named Home already exists.' }),
+  });
+  assert.match(content.innerHTML, /<form class="manage-rename-form" data-manage-rename-form="gym:2" hidden>[\s\S]*<input name="name" maxlength="80" value="Annex &lt;b&gt;"/);
+  const status = node();
+  const save = node();
+  const form = Object.assign(node(), { hidden: true, dataset: { manageRenameForm: 'gym:2' },
+    elements: { name: Object.assign(node(), { value: 'Annex <b>' }) },
+    closest: (selector) => selector === '[data-manage-rename-form]' ? form : null,
+    querySelector: (selector) => ({ '.set-status': status, '[type="submit"]': save })[selector] ?? node() });
+  content.querySelector = (selector) => selector === '[data-manage-rename-form="gym:2"]' ? form : node();
+  await click('[data-manage-rename]', { manageRename: 'gym:2' });
+  assert.equal(form.hidden, false);
+  assert.equal(form.elements.name.focused, true);
+  form.elements.name.value = 'home';
+  await content.events.submit({ target: form, preventDefault() {} });
+  assert.deepEqual(requests.at(-1), ['PUT /api/manage/gyms/2', { name: 'home' }]);
+  assert.equal(status.textContent, 'A gym named Home already exists.');
+  assert.equal(form.hidden, false);
+  assert.equal(save.disabled, false);
+});
+
+test('renaming and restoring a gym refresh Manage and the start screen', async () => {
+  const app = await harness(storage(), startData([home], [annex]));
+  let gyms = [{ ...annex, archived: true, used: true }, { ...home, archived: false, used: true }];
+  const { content, requests, click } = await openManage(app, {
+    'GET /api/manage': () => manageOverview(gyms),
+    'PUT /api/manage/gyms/1': () => { gyms = [gyms[0], { ...home, name: 'City Gym', archived: false, used: true }]; return gyms[1]; },
+    'POST /api/manage/gyms/2/restore': () => { gyms = [{ ...annex, archived: false, used: true }, gyms[1]]; return gyms[0]; },
+    'GET /api/bootstrap': () => startData(gyms.filter((gym) => !gym.archived).map(({ id, name }) => ({ id, name }))),
+  });
+  assert.match(content.innerHTML, /Archived \(1\)/);
+  const form = Object.assign(node(), { dataset: { manageRenameForm: 'gym:1' }, elements: { name: Object.assign(node(), { value: ' City Gym ' }) },
+    closest: (selector) => selector === '[data-manage-rename-form]' ? form : null, querySelector: () => node() });
+  await content.events.submit({ target: form, preventDefault() {} });
+  assert.deepEqual(requests.find(([key]) => key.startsWith('PUT')), ['PUT /api/manage/gyms/1', { name: ' City Gym ' }]);
+  assert.equal(app.nodes['#toast'].textContent, 'Renamed to City Gym.');
+  assert.match(app.nodes['#app'].innerHTML, /City Gym/);
+  await click('[data-manage-restore]', { manageRestore: 'gym:2' });
+  assert.ok(requests.some(([key]) => key === 'POST /api/manage/gyms/2/restore'));
+  assert.equal(app.nodes['#toast'].textContent, 'Annex <b> restored.');
+  assert.match(app.nodes['#app'].innerHTML, /data-gym-id="2"/);
+  assert.doesNotMatch(content.innerHTML, /Archived \(/);
+});
+
+test('history offers archived gyms as filters and hides Repeat for a workout at one', async () => {
+  const app = await harness(storage(), startData([home], [annex]));
+  const detail = completedDetail();
+  detail.workout = { ...detail.workout, gym_id: 2, gym_name: 'Annex <b>', gym_archived: true };
+  const { dialog, nodes } = await openHistoryDetail(app, detail, {});
+  assert.match(dialog.innerHTML, /<option value="1">Home<\/option><option value="2">Annex &lt;b&gt; \(archived\)<\/option>/);
+  const html = nodes['#history-detail'].innerHTML;
+  assert.doesNotMatch(html, /data-repeat-workout/);
+  assert.match(html, /Restore Annex &lt;b&gt; in Manage to repeat this workout\./);
 });

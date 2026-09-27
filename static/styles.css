@@ -386,3 +386,32 @@ button:disabled, fieldset:disabled { cursor: wait; opacity: 0.7; }
 @media (max-width: 380px) {
   .exercise-entry { padding: 14px; }
 }
+
+/* Manage: gyms, Exercise Configurations and custom exercises, reachable from the start screen. */
+.section-title .manage-open { min-height: 44px; margin-right: -10px; padding: 0 10px; }
+.manage-section { margin-top: 12px; border-top: 1px solid var(--line); }
+.manage-section > summary, .manage-archived > summary { display: flex; align-items: center; gap: 10px; min-height: 52px; cursor: pointer; list-style: none; }
+.manage-section > summary::-webkit-details-marker, .manage-archived > summary::-webkit-details-marker { display: none; }
+.manage-section > summary::before, .manage-archived > summary::before { content: "+"; flex-shrink: 0; width: 1em; color: var(--accent); font-weight: 650; text-align: center; }
+.manage-section[open] > summary::before, .manage-archived[open] > summary::before { content: "−"; }
+.manage-section > summary h3 { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.manage-section > summary span { margin-left: auto; color: var(--muted); font-size: 0.85rem; }
+.manage-archived { margin: 8px 0 12px; }
+.manage-archived > summary { min-height: 44px; color: var(--accent); font-size: 0.9rem; font-weight: 650; }
+.manage-help { font-size: 0.85rem; }
+.manage-group { margin: 16px 0 4px; color: var(--muted); font-size: 0.85rem; font-weight: 650; overflow-wrap: anywhere; }
+.manage-list { display: grid; margin: 0 0 12px; padding: 0; list-style: none; }
+.manage-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 8px; min-height: 52px; padding: 6px 0; border-top: 1px solid var(--line); }
+.manage-row-text { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.manage-name { font-weight: 650; }
+.manage-row .meta { color: var(--muted); font-size: 0.85rem; }
+.manage-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; }
+.manage-actions .text-button { min-height: 44px; padding: 0 8px; font-size: 0.9rem; }
+.manage-remove { color: var(--danger); }
+.manage-rename-form { grid-column: 1 / -1; display: grid; gap: 8px; margin: 4px 0 8px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-control); }
+.manage-rename-form[hidden] { display: none; }
+.manage-rename-form .field { margin-bottom: 0; }
+.manage-rename-form input { min-width: 0; }
+.manage-rename-form .set-status { margin: 0; }
+#manage-message:empty { display: none; }
+#manage-content:focus { outline: none; }

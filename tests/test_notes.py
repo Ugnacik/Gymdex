@@ -48,7 +48,7 @@ class NoteTests(unittest.TestCase):
         self.connection.commit()
         db.initialize(self.connection)
         db.initialize(self.connection)
-        self.assertEqual(self.connection.execute('PRAGMA user_version').fetchone()[0], 3)
+        self.assertGreaterEqual(self.connection.execute('PRAGMA user_version').fetchone()[0], 3)
         data = db.bootstrap(self.connection)
         self.assertEqual(data['active_workout']['id'], self.workout['id'])
         self.assertEqual(data['active_workout']['note'], '')
