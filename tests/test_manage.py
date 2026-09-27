@@ -174,5 +174,141 @@ class ManageOverviewTests(unittest.TestCase):
         self.assertEqual((light['name'], light['used']), ('Light', False))
 
 
+class ManageConfigurationTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.connection = db.connect(Path(self.directory.name) / 'configurations.sqlite3')
+        db.initialize(self.connection)
+        self.home = db.create_gym(self.connection, 'Home')
+        catalog = db.catalog_for_gym(self.connection, self.home['id'])['catalog']
+        self.press = next(v for v in catalog if (v['exercise_name'], v['variation_name']) == ('Bench Press', 'Standard'))
+
+    def tearDown(self):
+        self.connection.close()
+        self.directory.cleanup()
+
+    def recent(self):
+        return [(item['variation_name'], item['equipment'], item['manufacturer'], item['label'])
+                for item in db.catalog_for_gym(self.connection, self.home['id'])['recent']]
+
+    def configuration_id(self, equipment='Barbell', manufacturer='', label=''):
+        return next(item['id'] for item in db.manage_overview(self.connection)['configurations']
+                    if (item['equipment'], item['manufacturer'], item['label']) == (equipment, manufacturer, label))
+
+    def test_a_never_used_configuration_is_deleted(self):
+        workout = db.start_workout(self.connection, self.home['id'])
+        db.add_workout_exercise(self.connection, workout['id'], self.press['id'], 'Barbell', 'Eleiko', 'Rack 2')
+        db.cancel_workout(self.connection, workout['id'])
+        configuration_id = self.configuration_id('Barbell', 'Eleiko', 'Rack 2')
+
+        self.assertEqual(db.remove_item(self.connection, 'configuration', configuration_id), {'outcome': 'deleted'})
+
+        self.assertEqual(db.manage_overview(self.connection)['configurations'], [])
+        self.assertEqual(self.recent(), [])
+
+    def completed_workout_with(self, *labels):
+        workout = db.start_workout(self.connection, self.home['id'])
+        for label in labels:
+            entry = db.add_workout_exercise(self.connection, workout['id'], self.press['id'], 'Barbell', '', label)
+            slot = db.sets_for_exercise(self.connection, entry['id'])[0]
+            db.update_set(self.connection, slot['id'], {'weight': 60, 'result': 5, 'completed': True})
+        db.complete_workout(self.connection, workout['id'])
+        return workout
+
+    def test_a_used_configuration_is_archived_and_makes_room_in_recent(self):
+        labels = [f'Rack {number}' for number in range(1, 10)]
+        workout = self.completed_workout_with(*labels)
+        self.assertEqual(len(self.recent()), 8)
+        shown = {item[3] for item in self.recent()}
+        archived_label = sorted(shown)[0]
+        hidden_label = next(label for label in labels if label not in shown)
+
+        outcome = db.remove_item(self.connection, 'configuration', self.configuration_id(label=archived_label))
+
+        self.assertEqual(outcome, {'outcome': 'archived'})
+        labels_offered = {item[3] for item in self.recent()}
+        self.assertNotIn(archived_label, labels_offered)
+        self.assertIn(hidden_label, labels_offered)
+        self.assertEqual(len(labels_offered), 8)
+        configuration = next(item for item in db.manage_overview(self.connection)['configurations']
+                             if item['label'] == archived_label)
+        self.assertEqual((configuration['archived'], configuration['used']), (True, True))
+        # History and "Last workout" keep the archived configuration.
+        detail = db.completed_workout(self.connection, workout['id'])
+        self.assertIn(archived_label, [entry['label'] for entry in detail['workout_exercises']])
+
+    def archive_variation(self, variation_id):
+        """Archive a used custom Variation through Manage once that kind lands (T10c)."""
+        if 'variation' in db.MANAGED_KINDS:
+            self.assertEqual(db.remove_item(self.connection, 'variation', variation_id), {'outcome': 'archived'})
+        else:
+            with self.connection:
+                self.connection.execute(
+                    "UPDATE exercise_variations SET archived_at = CURRENT_TIMESTAMP WHERE id = ?", (variation_id,)
+                )
+
+    def test_configurations_of_an_archived_variation_leave_recent(self):
+        sled = db.create_exercise(self.connection, 'Sled Push', 'Heavy', 'duration', ['Sled'])
+        workout = db.start_workout(self.connection, self.home['id'])
+        db.add_workout_exercise(self.connection, workout['id'], sled['id'], 'Sled')
+        db.add_workout_exercise(self.connection, workout['id'], self.press['id'], 'Barbell')
+        db.complete_workout(self.connection, workout['id'])
+
+        self.archive_variation(sled['id'])
+
+        self.assertEqual(self.recent(), [('Standard', 'Barbell', '', '')])
+        # Manage says why the configuration is no longer offered.
+        sled_configuration = next(item for item in db.manage_overview(self.connection)['configurations']
+                                  if item['variation_id'] == sled['id'])
+        self.assertEqual((sled_configuration['archived'], sled_configuration['variation_archived']), (False, True))
+
+    def test_restoring_a_configuration_offers_it_under_recent_again(self):
+        self.completed_workout_with('Rack 1')
+        configuration_id = self.configuration_id(label='Rack 1')
+        db.remove_item(self.connection, 'configuration', configuration_id)
+
+        restored = db.restore_item(self.connection, 'configuration', configuration_id)
+
+        self.assertEqual((restored['id'], restored['label'], restored['archived'], restored['used']),
+                         (configuration_id, 'Rack 1', False, True))
+        self.assertEqual(self.recent(), [('Standard', 'Barbell', '', 'Rack 1')])
+
+    def test_picking_the_combination_of_an_archived_configuration_restores_it(self):
+        self.completed_workout_with('Rack 1')
+        configuration_id = self.configuration_id(label='Rack 1')
+        db.remove_item(self.connection, 'configuration', configuration_id)
+        workout = db.start_workout(self.connection, self.home['id'])
+
+        db.add_workout_exercise(self.connection, workout['id'], self.press['id'], 'Barbell', '', ' Rack  1 ')
+
+        configuration = next(item for item in db.manage_overview(self.connection)['configurations']
+                             if item['id'] == configuration_id)
+        self.assertFalse(configuration['archived'])
+        self.assertEqual(self.recent(), [('Standard', 'Barbell', '', 'Rack 1')])
+
+    def test_repeat_skips_archived_configurations_and_variations_and_counts_them(self):
+        sled = db.create_exercise(self.connection, 'Sled Push', 'Heavy', 'duration', ['Sled'])
+        workout = db.start_workout(self.connection, self.home['id'])
+        db.add_workout_exercise(self.connection, workout['id'], self.press['id'], 'Barbell', '', 'Rack 1')
+        db.add_workout_exercise(self.connection, workout['id'], sled['id'], 'Sled')
+        db.add_workout_exercise(self.connection, workout['id'], self.press['id'], 'Barbell', '', 'Rack 2')
+        db.complete_workout(self.connection, workout['id'])
+        db.remove_item(self.connection, 'configuration', self.configuration_id(label='Rack 1'))
+        self.archive_variation(sled['id'])
+
+        repeated = db.repeat_workout(self.connection, workout['id'])
+
+        self.assertEqual(repeated['skipped'], 2)
+        entries = db.bootstrap(self.connection)['workout_exercises']
+        self.assertEqual([(entry['position'], entry['label']) for entry in entries], [(1, 'Rack 2')])
+
+    def test_repeat_without_archived_items_skips_nothing(self):
+        workout = self.completed_workout_with('Rack 1', 'Rack 2')
+        repeated = db.repeat_workout(self.connection, workout['id'])
+        self.assertEqual(repeated['skipped'], 0)
+        self.assertEqual([entry['label'] for entry in db.bootstrap(self.connection)['workout_exercises']],
+                         ['Rack 1', 'Rack 2'])
+
+
 if __name__ == '__main__':
     unittest.main()

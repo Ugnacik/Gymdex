@@ -603,14 +603,16 @@ function openHistory() {
     if (repeat) {
       repeat.disabled = true;
       try {
-        const repeated = await api(`/api/history/${repeat.dataset.repeatWorkout}/repeat`, { method: "POST", body: "{}" });
+        const { skipped = 0, ...repeated } = await api(`/api/history/${repeat.dataset.repeatWorkout}/repeat`, { method: "POST", body: "{}" });
         state.data.active_workout = repeated;
         state.data.workout_exercises = [];
         state.selectedGymId = repeated.gym_id;
         drafts.snapshot(state.data);
         dialog.close();
         await load();
-        showToast("Workout repeated. Sets are ready to log.");
+        // Repeat leaves out Workout Exercises whose Variation or Exercise Configuration is archived.
+        const skippedNote = skipped ? ` ${skipped} archived exercise${skipped === 1 ? "" : "s"} skipped.` : "";
+        showToast(`Workout repeated. Sets are ready to log.${skippedNote}`);
       } catch (error) { repeat.disabled = false; showToast(error.message); }
       return;
     }
@@ -969,6 +971,9 @@ function renderManage(overview, open) {
   const gyms = overview.gyms.filter((gym) => !gym.archived);
   const archivedGyms = overview.gyms.filter((gym) => gym.archived);
   const configurations = overview.configurations.filter((item) => !item.archived);
+  const archivedConfigurations = overview.configurations.filter((item) => item.archived);
+  const configurationDetail = (item) => item.variation_archived
+    ? `${configurationLabel(item)} · Recent hides it while ${exerciseDisplayName(item)} is archived` : configurationLabel(item);
   const variations = manageItems(overview, "variation");
   return [
     renderManageSection("gyms", "Gyms", gyms.length, `
@@ -976,10 +981,12 @@ function renderManage(overview, open) {
       ${gyms.length ? `<ul class="manage-list">${gyms.map((gym) => renderManageRow("gym", gym, { rename: true })).join("")}</ul>` : `<p>No gyms to manage.</p>`}
       ${renderManageArchived("gyms", archivedGyms.map((gym) => renderManageRow("gym", gym)), open)}`, open),
     renderManageSection("configurations", "Exercise Configurations", configurations.length, `
-      <p class="manage-help">Saved for a gym when you add an exercise there, and offered under Recent.</p>
+      <p class="manage-help">Saved for a gym when you add an exercise there, and offered under Recent. Delete removes one never used in a workout. Archive hides a used one from Recent and Repeat; choosing the same equipment, manufacturer and label again restores it.</p>
       ${configurations.length ? renderManageGroups(configurations, (item) => `${item.gym_name}${item.gym_archived ? " (archived)" : ""}`,
-        (item) => renderManageRow("configuration", item, { detail: configurationLabel(item), remove: false }))
-        : `<p>No exercise configurations yet. Add an exercise to a workout to save one.</p>`}`, open),
+        (item) => renderManageRow("configuration", item, { detail: configurationDetail(item) }))
+        : `<p>No exercise configurations yet. Add an exercise to a workout to save one.</p>`}
+      ${renderManageArchived("configurations", archivedConfigurations.map((item) =>
+        renderManageRow("configuration", item, { detail: `${item.gym_name} · ${configurationLabel(item)}` })), open)}`, open),
     renderManageSection("exercises", "Custom exercises", variations.length, variations.length
       ? renderManageGroups(variations, (item) => item.exercise_name,
         (item) => renderManageRow("variation", item, { name: item.name, remove: false,

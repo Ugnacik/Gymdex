@@ -59,7 +59,9 @@ With no active workout, **Repeat this workout** starts a new workout at the same
 gym. It copies the exercise configurations and number of set slots, but clears
 all results, weights, and completion marks, and it does not copy notes. The
 source stays in history. A workout at an archived gym cannot be repeated until
-the gym is restored in [Manage](#manage-gyms-and-exercises).
+the gym is restored in [Manage](#manage-gyms-and-exercises). Exercises whose
+exercise configuration or custom variation is archived are left out, and the
+confirmation says how many, for example "1 archived exercise skipped".
 
 Use **Progress** to choose an exercise and optional gym. The chart and table
 show the best completed result and best weight for each workout. From a workout
@@ -119,8 +121,23 @@ Archived gyms are listed under **Archived** at the end of the Gyms section, and
 name; restore the archived gym instead.
 
 Exercise Configurations lists the equipment and machine details saved for each
-gym, and Custom exercises lists the variations you created with their
-equipment. Both lists are read-only for now.
+gym, grouped by gym. Its remove button works the same way:
+
+- **Delete** appears for a configuration that no workout uses, for example one
+  added to a workout that was cancelled. It is removed permanently.
+- **Archive** appears for a configuration used in a workout. It disappears from
+  Recent in the picker, which then has room for the next most recent entry, and
+  Repeat this workout leaves it out. History, progress, "Last workout", and the
+  CSV export keep it.
+
+Archived configurations are listed under **Archived** with their gym, and
+**Restore** offers one under Recent again. Choosing the same exercise,
+equipment, manufacturer, and label in the picker also restores it. A
+configuration whose custom variation is archived stays listed but says that
+Recent hides it until the variation is restored.
+
+Custom exercises lists the variations you created with their equipment. This
+list is read-only for now.
 
 ## Rest timer
 

@@ -313,7 +313,7 @@ def catalog_for_gym(connection: sqlite3.Connection, gym_id: int) -> dict[str, An
                JOIN exercise_variations v ON v.id = p.variation_id
                JOIN exercises e ON e.id = v.exercise_id
                LEFT JOIN workout_exercises we ON we.gym_profile_id = p.id
-               WHERE p.gym_id = ?
+               WHERE p.gym_id = ? AND p.archived_at IS NULL AND v.archived_at IS NULL
                GROUP BY p.id
                ORDER BY last_used DESC, use_count DESC, e.name
                LIMIT 8""",
@@ -531,7 +531,10 @@ def start_workout(connection: sqlite3.Connection, gym_id: int) -> dict[str, Any]
 
 
 def repeat_workout(connection: sqlite3.Connection, workout_id: int) -> dict[str, Any]:
-    """Start a new workout with the source configurations and blank set slots."""
+    """Start a new workout with the source configurations and blank set slots.
+
+    Archived Variations and Exercise Configurations are skipped and counted.
+    """
     if not 1 <= workout_id <= 9223372036854775807:
         raise LookupError("Completed workout not found.")
     with connection:
@@ -554,14 +557,21 @@ def repeat_workout(connection: sqlite3.Connection, workout_id: int) -> dict[str,
         )
         new_workout_id = workout_cursor.lastrowid
         source_entries = connection.execute(
-            """SELECT id, variation_id, gym_profile_id, position,
-                      exercise_name_snapshot, variation_name_snapshot,
-                      equipment_snapshot, manufacturer_snapshot, label_snapshot,
-                      tracking_type_snapshot
-               FROM workout_exercises WHERE workout_id = ? ORDER BY position""",
+            """SELECT we.id, we.variation_id, we.gym_profile_id,
+                      we.exercise_name_snapshot, we.variation_name_snapshot,
+                      we.equipment_snapshot, we.manufacturer_snapshot, we.label_snapshot,
+                      we.tracking_type_snapshot,
+                      v.archived_at IS NOT NULL OR p.archived_at IS NOT NULL AS archived
+               FROM workout_exercises we
+               JOIN exercise_variations v ON v.id = we.variation_id
+               LEFT JOIN gym_exercise_profiles p ON p.id = we.gym_profile_id
+               WHERE we.workout_id = ? ORDER BY we.position""",
             (workout_id,),
         ).fetchall()
-        for entry in source_entries:
+        # Archived Variations and Exercise Configurations are not offered for new
+        # Workouts, so Repeat skips them and closes the gaps they leave.
+        kept = [entry for entry in source_entries if not entry["archived"]]
+        for position, entry in enumerate(kept, start=1):
             entry_cursor = connection.execute(
                 """INSERT INTO workout_exercises
                    (workout_id, variation_id, gym_profile_id, position,
@@ -569,23 +579,23 @@ def repeat_workout(connection: sqlite3.Connection, workout_id: int) -> dict[str,
                     equipment_snapshot, manufacturer_snapshot, label_snapshot,
                     tracking_type_snapshot)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (new_workout_id, *(entry[key] for key in (
-                    "variation_id", "gym_profile_id", "position",
+                (new_workout_id, entry["variation_id"], entry["gym_profile_id"], position,
+                 *(entry[key] for key in (
                     "exercise_name_snapshot", "variation_name_snapshot",
                     "equipment_snapshot", "manufacturer_snapshot", "label_snapshot",
                     "tracking_type_snapshot",
-                ))),
+                 ))),
             )
-            positions = [row["position"] for row in connection.execute(
+            slots = [row["position"] for row in connection.execute(
                 """SELECT position FROM workout_sets
                    WHERE workout_exercise_id = ? ORDER BY position""",
                 (entry["id"],),
             )]
-            for position in positions or [1]:
+            for slot in slots or [1]:
                 connection.execute(
                     """INSERT INTO workout_sets(workout_exercise_id, position)
                        VALUES (?, ?)""",
-                    (entry_cursor.lastrowid, position),
+                    (entry_cursor.lastrowid, slot),
                 )
         workout = connection.execute(
             "SELECT id, started_at FROM workouts WHERE id = ?", (new_workout_id,)
@@ -595,6 +605,7 @@ def repeat_workout(connection: sqlite3.Connection, workout_id: int) -> dict[str,
         "started_at": workout["started_at"],
         "gym_id": source["gym_id"],
         "gym_name": source["gym_name"],
+        "skipped": len(source_entries) - len(kept),
     }
 
 
@@ -684,6 +695,10 @@ def add_workout_exercise(
              AND manufacturer = ? AND label = ?""",
         (workout["gym_id"], variation_id, equipment, manufacturer, label),
     ).fetchone()
+    # Choosing an archived Exercise Configuration's combination again restores it.
+    connection.execute(
+        "UPDATE gym_exercise_profiles SET archived_at = NULL WHERE id = ?", (profile["id"],)
+    )
     position = connection.execute(
         "SELECT COALESCE(MAX(position), 0) + 1 AS next FROM workout_exercises WHERE workout_id = ?",
         (workout_id,),
@@ -1124,13 +1139,26 @@ MANAGED_KINDS: dict[str, ManagedKind] = {
         delete=_delete_gym,
         before_archive=_before_gym_archive,
     ),
+    # An Exercise Configuration has no name of its own: manufacturer and label are its identity.
+    "configuration": ManagedKind(
+        table="gym_exercise_profiles",
+        missing="Exercise configuration not found.",
+        used_sql="SELECT 1 FROM workout_exercises WHERE gym_profile_id = ? LIMIT 1",
+        describe=lambda connection, configuration_id: _configuration_rows(connection, configuration_id)[0],
+        delete=lambda connection, configuration_id: connection.execute(
+            "DELETE FROM gym_exercise_profiles WHERE id = ?", (configuration_id,)
+        ),
+    ),
 }
 
 
-def _configuration_rows(connection: sqlite3.Connection) -> list[dict[str, Any]]:
+def _configuration_rows(
+    connection: sqlite3.Connection, configuration_id: int | None = None
+) -> list[dict[str, Any]]:
     items = rows(connection.execute(
         """SELECT p.id, p.gym_id, g.name AS gym_name, g.archived_at IS NOT NULL AS gym_archived,
                   p.variation_id, e.name AS exercise_name, v.name AS variation_name,
+                  v.archived_at IS NOT NULL AS variation_archived,
                   p.equipment, p.manufacturer, p.label,
                   p.archived_at IS NOT NULL AS archived,
                   EXISTS (SELECT 1 FROM workout_exercises WHERE gym_profile_id = p.id) AS used
@@ -1138,9 +1166,11 @@ def _configuration_rows(connection: sqlite3.Connection) -> list[dict[str, Any]]:
            JOIN gyms g ON g.id = p.gym_id
            JOIN exercise_variations v ON v.id = p.variation_id
            JOIN exercises e ON e.id = v.exercise_id
-           ORDER BY g.name, g.id, e.name, v.name, p.equipment, p.manufacturer, p.label"""
+           WHERE ? IS NULL OR p.id = ?
+           ORDER BY g.name, g.id, e.name, v.name, p.equipment, p.manufacturer, p.label""",
+        (configuration_id, configuration_id),
     ))
-    flags = ("gym_archived", "archived", "used")
+    flags = ("gym_archived", "variation_archived", "archived", "used")
     return [{**item, **{flag: bool(item[flag]) for flag in flags}} for item in items]
 
 
