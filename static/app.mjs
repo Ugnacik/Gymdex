@@ -201,7 +201,7 @@ function renderWorkout() {
   const workout = state.data.active_workout;
   const entries = state.data.workout_exercises;
   app.innerHTML = `
-    <main class="shell">
+    <main class="shell workout-shell">
       ${renderHeader("Workout active")}
       <section class="workout-heading">
         <div><h1>${escapeHtml(workout.gym_name)}</h1><p>Started ${escapeHtml(formatTime(workout.started_at))}</p></div>
@@ -219,11 +219,11 @@ function renderWorkout() {
             <button class="secondary add-set" data-add-set="${entry.id}">Add set</button>
           </article>`).join("") : `<div class="empty"><h3>No exercises yet</h3><p>Add a recent choice in one tap, or search the catalog.</p></div>`}
       </section>
+      <button class="primary accent add-exercise" id="open-picker">Add exercise</button>
       <div class="workout-actions">
         <button class="secondary" data-finish-workout>Finish workout</button>
         <button class="text-button cancel-workout" id="cancel-workout">Cancel workout</button>
       </div>
-      <div class="bottom-action"><button class="primary accent" id="open-picker">Add exercise</button></div>
     </main>`;
   document.querySelector("#open-picker").addEventListener("click", openPicker);
   document.querySelector("#open-history").addEventListener("click", openHistory);

@@ -445,3 +445,20 @@ test('pressing Enter in a set input saves immediately', async () => {
   assert.deepEqual(puts, [{ weight: 40, result: 8, completed: false }]);
   app.form.events.keydown({ key: 'Enter', target: { type: 'checkbox', tagName: 'INPUT' }, preventDefault() { assert.fail('checkbox Enter intercepted'); } });
 });
+
+test('Add exercise follows the exercise list and precedes Finish and Cancel without a fixed bar', async () => {
+  const app = await harness();
+  for (const empty of [false, true]) {
+    if (empty) {
+      app.form.isConnected = false;
+      app.env.fetch = async () => response({ gyms: [], active_workout: { id: 1, gym_id: 1, gym_name: 'Home', started_at: '2026-09-22 10:00:00' }, workout_exercises: [] });
+      await app.app.load();
+    }
+    const html = app.nodes['#app'].innerHTML;
+    const order = ['class="exercise-list"', 'id="open-picker"', 'class="secondary" data-finish-workout', 'id="cancel-workout"', '</main>']
+      .map((marker) => html.indexOf(marker));
+    assert.ok(order.every((index, i) => index >= 0 && (i === 0 || index > order[i - 1])), `unexpected order ${order}`);
+    assert.doesNotMatch(html, /bottom-action/);
+    if (empty) assert.match(html, /No exercises yet[\s\S]*?<\/section>\s*<button class="primary accent add-exercise" id="open-picker">/);
+  }
+});
