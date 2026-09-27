@@ -244,6 +244,41 @@ class FeatureTests(unittest.TestCase):
         self.assertEqual([point['workout_id'] for point in progress['points']], [other['id']])
         self.assertNotEqual(other_set['id'], set_item['id'])
 
+    def test_completed_workouts_gain_and_lose_sets_and_can_be_deleted(self):
+        workout, entry, set_item = self.workout_with_set(weight=40, result=8)
+        status, added = self.request('POST', f'/api/history/{workout["id"]}/exercises/{entry["id"]}/sets')
+        self.assertEqual((status, added['position'], added['weight'], added['result'], added['completed']),
+                         (201, 2, 40, 8, 0))
+        self.assertEqual(self.request('PUT', f'/api/history/{workout["id"]}/sets/{added["id"]}', {
+            'weight': 45, 'result': 6, 'completed': True,
+        })[0], 200)
+        points = db.exercise_progress(self.connection, self.press['id'])['points']
+        self.assertEqual((points[0]['best_weight'], points[0]['completed_sets']), (45, 2))
+        self.assertEqual(self.request('DELETE', f'/api/history/{workout["id"]}/sets/{set_item["id"]}'),
+                         (200, {'ok': True}))
+        status, detail = self.request('GET', f'/api/history/{workout["id"]}')
+        self.assertEqual([(s['id'], s['position']) for s in detail['workout_exercises'][0]['sets']],
+                         [(added['id'], 1)])
+        self.assertEqual(self.request('DELETE', f'/api/history/{workout["id"]}'), (200, {'ok': True}))
+        self.assertEqual(self.request('GET', f'/api/history/{workout["id"]}')[0], 404)
+        self.assertEqual(db.exercise_progress(self.connection, self.press['id'])['points'], [])
+
+    def test_history_deletion_routes_refuse_active_workouts_and_bad_ids(self):
+        active = db.start_workout(self.connection, self.gym['id'])
+        entry = db.add_workout_exercise(self.connection, active['id'], self.press['id'], 'Barbell')
+        set_id = db.sets_for_exercise(self.connection, entry['id'])[0]['id']
+        for method, path in (('DELETE', f'/api/history/{active["id"]}'),
+                             ('DELETE', f'/api/history/{active["id"]}/sets/{set_id}'),
+                             ('POST', f'/api/history/{active["id"]}/exercises/{entry["id"]}/sets'),
+                             ('DELETE', '/api/history/99999999999999999999')):
+            with self.subTest(method=method, path=path):
+                self.assertEqual(self.request(method, path)[0], 404)
+        for method, path in (('DELETE', '/api/history/no'), ('DELETE', f'/api/history/{active["id"]}/sets/no'),
+                             ('POST', f'/api/history/{active["id"]}/exercises/no/sets')):
+            with self.subTest(method=method, path=path):
+                self.assertEqual(self.request(method, path)[0], 400)
+        self.assertEqual(db.bootstrap(self.connection)['workout_exercises'][0]['sets'][0]['id'], set_id)
+
     def test_csv_export_route_downloads_without_caching(self):
         self.workout_with_set()
         handler = object.__new__(GymdexHandler)

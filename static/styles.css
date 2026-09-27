@@ -239,8 +239,19 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .history-notice { margin: 8px 0 20px; font-size: 0.85rem; }
 .history-exercise-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .history-exercise-heading h3 { min-width: 0; }
-.history-exercise-heading .text-button { min-height: 40px; padding: 0 8px; font-size: 0.85rem; }
-.history-edit-toggle { justify-self: start; min-height: 40px; padding: 0 8px; font-size: 0.85rem; }
+.history-exercise-heading .text-button { min-height: 44px; padding: 0 8px; font-size: 0.85rem; }
+.history-set-actions { display: flex; flex-wrap: wrap; gap: 4px; margin-left: -8px; }
+.history-set-actions .text-button { min-height: 44px; padding: 0 8px; font-size: 0.85rem; }
+.history-delete-set { color: var(--danger); }
+.history-add-set { width: 100%; min-height: 48px; margin-top: 12px; }
+.history-danger { margin-top: 24px; padding-top: 12px; border-top: 1px solid var(--line); }
+.history-delete-workout { min-height: 48px; padding: 0 8px; color: var(--danger); }
+.history-delete-form { display: grid; gap: 8px; margin-top: 8px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface-raised); }
+.history-delete-form[hidden] { display: none; }
+.history-delete-form p { margin: 0; }
+.history-delete-form .field { margin-bottom: 0; }
+.history-delete-form input { min-width: 0; }
+.history-delete-confirm { color: var(--danger); }
 .history-set-form { display: grid; gap: 8px; margin: 8px 0; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface-raised); }
 .history-set-form[hidden] { display: none; }
 .history-edit-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
