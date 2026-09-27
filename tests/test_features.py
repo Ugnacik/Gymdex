@@ -264,6 +264,30 @@ class FeatureTests(unittest.TestCase):
         self.assertEqual(int(headers['Content-Length']), len(handler.wfile.getvalue()))
         self.assertIn(b'Bench Press', handler.wfile.getvalue())
 
+    def get_static(self, path):
+        handler = object.__new__(GymdexHandler)
+        handler.server = SimpleNamespace(db_path=self.path)
+        handler.path = path
+        handler.wfile = io.BytesIO()
+        headers = {}
+        handler.send_response = lambda status: None
+        handler.send_header = lambda name, value: headers.__setitem__(name, value)
+        handler.end_headers = lambda: None
+        handler.do_GET()
+        return headers, handler.wfile.getvalue()
+
+    def test_app_icons_are_served_as_png_without_charset(self):
+        for path in ('/icon-192.png', '/icon-512.png', '/icon-maskable-512.png',
+                     '/apple-touch-icon.png'):
+            with self.subTest(path=path):
+                headers, body = self.get_static(path)
+                self.assertEqual(headers['Content-Type'], 'image/png')
+                self.assertTrue(body.startswith(b'\x89PNG\r\n\x1a\n'))
+
+    def test_text_assets_keep_utf8_charset(self):
+        headers, _ = self.get_static('/styles.css')
+        self.assertEqual(headers['Content-Type'], 'text/css; charset=utf-8')
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -242,8 +242,10 @@ class GymdexHandler(BaseHTTPRequestHandler):
             path = STATIC / "index.html"
         body = path.read_bytes()
         mime_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        if mime_type.startswith("text/") or mime_type.endswith(("json", "javascript")):
+            mime_type += "; charset=utf-8"
         self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", f"{mime_type}; charset=utf-8")
+        self.send_header("Content-Type", mime_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-cache")
         self.send_header("X-Content-Type-Options", "nosniff")
