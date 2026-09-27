@@ -195,6 +195,38 @@ class SetTests(unittest.TestCase):
         self.add_exercise(self.press, 'Barbell')
         self.assertEqual(db.bootstrap(self.connection)['workout_exercises'][0]['previous_sets'], [])
 
+    def finish_with_completed_sets(self, count, entry=None):
+        entry = entry or self.entry
+        self.save(self.first_set(entry), result=8, weight=40)
+        for result in range(7, 8 - count, -1):
+            self.save(db.add_set(self.connection, entry['id']), result=result, weight=40)
+        db.complete_workout(self.connection, self.workout['id'])
+        self.workout = db.start_workout(self.connection, self.gym['id'])
+
+    def test_added_exercise_gets_one_empty_slot_per_set_of_last_matching_workout(self):
+        self.finish_with_completed_sets(3)
+        entry = self.add_exercise(self.press, 'Barbell')
+        slots = db.sets_for_exercise(self.connection, entry['id'])
+        self.assertEqual([(s['position'], s['weight'], s['result'], s['completed']) for s in slots],
+                         [(1, None, None, 0), (2, None, None, 0), (3, None, None, 0)])
+
+    def test_added_exercise_slots_only_count_the_same_gym_equipment_and_machine(self):
+        self.finish_with_completed_sets(3)
+        self.assertEqual(len(db.sets_for_exercise(self.connection, self.add_exercise(self.press, 'Dumbbell')['id'])), 1)
+        self.assertEqual(len(db.sets_for_exercise(self.connection, self.add_exercise(self.press, 'Barbell', 'Different', 'Machine')['id'])), 1)
+        db.cancel_workout(self.connection, self.workout['id'])
+        other = db.create_gym(self.connection, 'Other gym')
+        self.workout = db.start_workout(self.connection, other['id'])
+        self.assertEqual(len(db.sets_for_exercise(self.connection, self.add_exercise(self.press, 'Barbell')['id'])), 1)
+
+    def test_added_exercise_without_completed_history_gets_one_empty_slot(self):
+        self.save(db.add_set(self.connection, self.entry['id']), result=5, completed=False)
+        db.complete_workout(self.connection, self.workout['id'])
+        self.workout = db.start_workout(self.connection, self.gym['id'])
+        slots = db.sets_for_exercise(self.connection, self.add_exercise(self.press, 'Barbell')['id'])
+        self.assertEqual([(s['weight'], s['result'], s['completed']) for s in slots], [(None, None, 0)])
+        self.assertEqual(len(db.sets_for_exercise(self.connection, self.add_exercise(self.plank, 'Bodyweight')['id'])), 1)
+
     def test_migration_preserves_existing_workout_and_is_repeatable(self):
         self.connection.execute('DROP TABLE workout_sets')
         self.connection.execute('ALTER TABLE workout_exercises DROP COLUMN tracking_type_snapshot')
