@@ -87,6 +87,24 @@ CATALOG = (
     # Assisted variations record the machine counterweight as negative weight.
     ("Pull-up", "Assisted", "repetitions", ("Machine",), True),
     ("Dip", "Assisted", "repetitions", ("Machine",), True),
+    # Bodyweight variations record optional weight as added load.
+    ("Pull-up", "Standard", "repetitions", ("Bodyweight",)),
+    ("Dip", "Standard", "repetitions", ("Bodyweight",)),
+    ("Push-up", "Standard", "repetitions", ("Bodyweight",)),
+    ("Leg Press", "Standard", "repetitions", ("Machine",)),
+    ("Leg Curl", "Seated", "repetitions", ("Machine",)),
+    ("Leg Curl", "Lying", "repetitions", ("Machine",)),
+    ("Leg Extension", "Standard", "repetitions", ("Machine",)),
+    ("Lunge", "Standard", "repetitions", ("Dumbbell", "Barbell", "Bodyweight")),
+    ("Deadlift", "Romanian", "repetitions", ("Barbell", "Dumbbell")),
+    ("Hip Thrust", "Standard", "repetitions", ("Barbell", "Machine")),
+    ("Lateral Raise", "Standard", "repetitions", ("Dumbbell", "Cable", "Machine")),
+    ("Face Pull", "Standard", "repetitions", ("Cable",)),
+    ("Calf Raise", "Standing", "repetitions", ("Machine", "Bodyweight", "Dumbbell")),
+    ("Calf Raise", "Seated", "repetitions", ("Machine",)),
+    ("Chest Fly", "Standard", "repetitions", ("Machine", "Cable", "Dumbbell")),
+    ("Crunch", "Standard", "repetitions", ("Bodyweight", "Cable", "Machine")),
+    ("Leg Raise", "Hanging", "repetitions", ("Bodyweight",)),
 )
 
 
@@ -109,19 +127,22 @@ def initialize(connection: sqlite3.Connection) -> None:
         exercise_id = connection.execute(
             "SELECT id FROM exercises WHERE name = ?", (exercise_name,)
         ).fetchone()["id"]
-        connection.execute(
-            """INSERT OR IGNORE INTO exercise_variations
+        # Seed only missing variations, so existing catalog entries and
+        # user-created variations with the same name keep their equipment.
+        if connection.execute(
+            """SELECT 1 FROM exercise_variations
+               WHERE exercise_id = ? AND name = ? COLLATE NOCASE""",
+            (exercise_id, variation_name),
+        ).fetchone():
+            continue
+        variation_id = connection.execute(
+            """INSERT INTO exercise_variations
                (exercise_id, name, tracking_type, assisted) VALUES (?, ?, ?, ?)""",
             (exercise_id, variation_name, tracking_type, int(any(assisted))),
-        )
-        variation_id = connection.execute(
-            """SELECT id FROM exercise_variations
-               WHERE exercise_id = ? AND name = ?""",
-            (exercise_id, variation_name),
-        ).fetchone()["id"]
+        ).lastrowid
         for position, equipment in enumerate(equipment_values):
             connection.execute(
-                """INSERT OR IGNORE INTO variation_equipment
+                """INSERT INTO variation_equipment
                    (variation_id, equipment, position) VALUES (?, ?, ?)""",
                 (variation_id, equipment, position),
             )

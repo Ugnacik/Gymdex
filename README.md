@@ -8,7 +8,7 @@ Gymdex supports:
 - creating gyms;
 - starting and finishing one active workout;
 - adding recent gym-specific exercise configurations in one tap;
-- searching a small starter exercise catalog;
+- searching a starter exercise catalog of common movements;
 - remembering equipment and machine details separately for each gym;
 - logging sets with optional weight, repetitions or duration, and completion;
 - showing completed sets from the last matching workout;
@@ -45,6 +45,20 @@ show the best completed result and best weight for each workout. From a workout
 exercise or history detail, **View progress** starts with its exact gym,
 equipment, manufacturer, and machine label, so different machines are not
 mixed. These two best values can come from different sets in the same workout.
+
+## Exercise catalog
+
+The starter Exercise Catalog covers common gym movements: presses, squats,
+deadlifts including Romanian Deadlift, rows and pulldowns, leg press, leg
+curls and extensions, lunges, hip thrusts, raises, flies, curls, pushdowns,
+face pulls, core work such as Crunch and Hanging Leg Raise, and bodyweight
+Pull-up, Dip, and Push-up alongside their Assisted variations. Each variation
+offers only its relevant equipment. For bodyweight variations, weight is
+optional and records added load, such as a dip belt.
+
+When Gymdex starts, it adds any starter variations missing from an existing
+database. It does not change existing catalog entries, custom variations with
+the same name, or recorded workouts.
 
 ## Custom exercises
 
