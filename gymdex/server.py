@@ -125,6 +125,12 @@ class GymdexHandler(BaseHTTPRequestHandler):
                 lambda connection: db.repeat_workout(connection, int(parts[2])),
                 status=HTTPStatus.CREATED,
             )
+        if (len(parts) == 6 and parts[:2] == ["api", "history"]
+                and parts[3] == "exercises" and parts[5] == "sets"):
+            return self._with_db(
+                lambda connection: db.add_completed_set(connection, int(parts[2]), int(parts[4])),
+                status=HTTPStatus.CREATED,
+            )
         if len(parts) == 4 and parts[:2] == ["api", "workout-exercises"] and parts[3] == "sets":
             return self._with_db(lambda connection: db.add_set(connection, int(parts[2])), status=HTTPStatus.CREATED)
         if len(parts) == 4 and parts[:2] == ["api", "workouts"]:
@@ -181,6 +187,12 @@ class GymdexHandler(BaseHTTPRequestHandler):
             return self._with_db(lambda connection: db.cancel_workout(connection, int(parts[2])))
         if len(parts) == 3 and parts[:2] == ["api", "workout-exercises"]:
             return self._with_db(lambda connection: db.remove_workout_exercise(connection, int(parts[2])))
+        if len(parts) == 3 and parts[:2] == ["api", "history"]:
+            return self._with_db(lambda connection: db.delete_completed_workout(connection, int(parts[2])))
+        if len(parts) == 5 and parts[:2] == ["api", "history"] and parts[3] == "sets":
+            return self._with_db(lambda connection: db.delete_completed_set(
+                connection, int(parts[2]), int(parts[4]),
+            ))
         if len(parts) != 3 or parts[:2] != ["api", "sets"]:
             return self._json_error("Route not found.", HTTPStatus.NOT_FOUND)
         self._with_db(lambda connection: db.delete_set(connection, int(parts[2])))

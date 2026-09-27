@@ -40,7 +40,7 @@ _Avoid_: Training, session
 The single Workout currently being recorded. At most one Active Workout may exist.
 
 **Completed Workout**:
-A finished Workout retained in history. Its recorded details may still be corrected.
+A finished Workout retained in history. Its recorded Sets may still be corrected, added, or deleted, and the whole Completed Workout may be deleted. New Workout Exercises cannot be added to it.
 
 **Workout Exercise**:
 A particular Exercise Variation and one relevant Equipment value recorded at one position within a Workout. The same combination may appear more than once, and each occurrence preserves the details used in that Workout even when the catalog changes later.

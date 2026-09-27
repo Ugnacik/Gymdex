@@ -347,7 +347,7 @@ function renderHistoryDetail(data, canRepeat) {
           const result = set.result === null ? "No result recorded" : `${set.result} ${entry.tracking_type === "duration" ? "seconds" : "reps"}`;
           const assisted = Boolean(entry.assisted) || set.weight < 0;
           return `<li><span>Set ${index + 1}: ${escapeHtml(result)} · ${escapeHtml(weight)}</span><span class="meta">${set.completed ? "Completed" : "Not completed"}</span>
-            ${set.id ? `<button type="button" class="text-button history-edit-toggle" data-edit-set="${set.id}">Edit set ${index + 1}</button>
+            ${set.id ? `<div class="history-set-actions"><button type="button" class="text-button history-edit-toggle" data-edit-set="${set.id}">Edit set ${index + 1}</button><button type="button" class="text-button history-delete-set" data-delete-history-set="${set.id}">Delete set ${index + 1}</button></div>
               <form class="history-set-form" data-history-set="${set.id}" data-assisted="${assisted}" hidden>
                 <div class="set-inputs">
                   <label>${assisted ? "Assist kg" : "kg"} <input name="weight" type="number" inputmode="decimal" step="any" min="0" max="100000" value="${set.weight === null ? "" : Math.abs(set.weight)}" /></label>
@@ -358,7 +358,17 @@ function renderHistoryDetail(data, canRepeat) {
                 <p class="set-status" role="status"></p>
               </form>` : ""}</li>`;
         }).join("")}</ol>` : `<p>No sets recorded.</p>`}
-      </article>`).join("") : `<p>No exercises recorded.</p>`}</div>`;
+        ${entry.id ? `<button type="button" class="secondary history-add-set" data-add-history-set="${entry.id}" aria-label="Add set to ${escapeHtml(exerciseDisplayName(entry))}">Add set</button>` : ""}
+      </article>`).join("") : `<p>No exercises recorded.</p>`}</div>
+    <section class="history-danger">
+      <button type="button" class="text-button history-delete-workout" data-delete-workout-toggle>Delete workout</button>
+      <form class="history-delete-form" data-delete-workout hidden>
+        <p>This permanently removes the workout and all its sets from history, progress, and Last workout.</p>
+        <label class="field">Type DELETE to confirm <input name="confirmation" autocomplete="off" autocapitalize="characters" spellcheck="false" /></label>
+        <div class="history-edit-actions"><button type="submit" class="secondary history-delete-confirm">Delete permanently</button><button type="button" class="text-button" data-cancel-delete-workout>Cancel</button></div>
+        <p class="set-status" role="status"></p>
+      </form>
+    </section>`;
 }
 
 function openHistory() {
@@ -430,6 +440,12 @@ function openHistory() {
       if (version === request) detail.textContent = `${error.message} Return to history and select the workout to retry.`;
     }
   }
+  // A changed Completed Workout alters the list counts and the active workout's Last workout values.
+  async function rerenderChangedDetail() {
+    historyChanged = true;
+    if (state.data.active_workout) await load();
+    detail.innerHTML = renderHistoryDetail(selectedDetail, !state.data.active_workout);
+  }
   detail.addEventListener("click", async (event) => {
     const target = event.target;
     const repeat = target.closest("[data-repeat-workout]");
@@ -457,6 +473,45 @@ function openHistory() {
       });
       return;
     }
+    const addSet = target.closest("[data-add-history-set]");
+    if (addSet) {
+      addSet.disabled = true;
+      try {
+        const entry = selectedDetail.workout_exercises.find((item) => item.id === Number(addSet.dataset.addHistorySet));
+        const added = await api(`/api/history/${selectedDetail.workout.id}/exercises/${entry.id}/sets`, { method: "POST", body: "{}" });
+        entry.sets = [...entry.sets, added];
+        await rerenderChangedDetail();
+        const form = detail.querySelector(`[data-history-set="${added.id}"]`);
+        if (form) { form.hidden = false; form.elements.weight.focus(); }
+        showToast(`Set ${entry.sets.length} added. Correct it and mark it completed.`);
+      } catch (error) { addSet.disabled = false; showToast(error.message); }
+      return;
+    }
+    const deleteSet = target.closest("[data-delete-history-set]");
+    if (deleteSet) {
+      const setId = Number(deleteSet.dataset.deleteHistorySet);
+      const entry = selectedDetail.workout_exercises.find((item) => item.sets.some((set) => set.id === setId));
+      const number = entry.sets.findIndex((set) => set.id === setId) + 1;
+      if (!window.confirm(`Delete set ${number} of ${exerciseDisplayName(entry)} from this completed workout? This cannot be undone.`)) return;
+      deleteSet.disabled = true;
+      try {
+        await api(`/api/history/${selectedDetail.workout.id}/sets/${setId}`, { method: "DELETE" });
+        entry.sets = entry.sets.filter((set) => set.id !== setId).map((set, index) => ({ ...set, position: index + 1 }));
+        await rerenderChangedDetail();
+        detail.focus();
+        showToast(`Set ${number} deleted.`);
+      } catch (error) { deleteSet.disabled = false; showToast(error.message); }
+      return;
+    }
+    const deleteWorkout = target.closest("[data-delete-workout-toggle]") || target.closest("[data-cancel-delete-workout]");
+    if (deleteWorkout) {
+      const form = detail.querySelector("[data-delete-workout]");
+      form.reset();
+      form.querySelector(".set-status").textContent = "";
+      form.hidden = !form.hidden;
+      if (!form.hidden) form.elements.confirmation.focus();
+      return;
+    }
     const toggle = target.closest("[data-edit-set]");
     if (toggle) {
       const form = detail.querySelector(`[data-history-set="${toggle.dataset.editSet}"]`);
@@ -479,6 +534,32 @@ function openHistory() {
     }
   });
   detail.addEventListener("submit", async (event) => {
+    const deleteForm = event.target.closest("[data-delete-workout]");
+    if (deleteForm && selectedDetail) {
+      event.preventDefault();
+      const status = deleteForm.querySelector(".set-status");
+      if (deleteForm.elements.confirmation.value.trim().toUpperCase() !== "DELETE") {
+        status.textContent = "Type DELETE to delete this workout.";
+        deleteForm.elements.confirmation.focus();
+        return;
+      }
+      const button = deleteForm.querySelector('[type="submit"]');
+      button.disabled = true;
+      status.textContent = "Deleting workout…";
+      try {
+        await api(`/api/history/${selectedDetail.workout.id}`, { method: "DELETE" });
+        request++;
+        selectedDetail = null;
+        historyChanged = false;
+        detailView.hidden = true;
+        listView.hidden = false;
+        if (state.data.active_workout) await load();
+        await loadPage(offset);
+        (results.querySelector?.("[data-history-id]") ?? find("#close-history")).focus();
+        showToast("Workout deleted.");
+      } catch (error) { status.textContent = error.message; button.disabled = false; }
+      return;
+    }
     const form = event.target.closest("[data-history-set]");
     if (!form || !selectedDetail) return;
     event.preventDefault();
@@ -494,9 +575,7 @@ function openHistory() {
       });
       const entry = selectedDetail.workout_exercises.find((item) => item.sets.some((set) => set.id === saved.id));
       entry.sets = entry.sets.map((set) => set.id === saved.id ? saved : set);
-      historyChanged = true;
-      if (state.data.active_workout) await load();
-      detail.innerHTML = renderHistoryDetail(selectedDetail, !state.data.active_workout);
+      await rerenderChangedDetail();
       detail.querySelector(`[data-edit-set="${saved.id}"]`)?.focus();
       showToast("Set corrected.");
     } catch (error) { status.textContent = error.message; button.disabled = false; }

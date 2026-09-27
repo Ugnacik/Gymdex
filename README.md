@@ -17,7 +17,7 @@ Gymdex supports:
 - browsing completed workouts by gym and date;
 - creating exercise variations with custom tracking and equipment choices;
 - repeating a completed workout with fresh, empty set slots;
-- correcting sets in completed workouts;
+- correcting, adding, and deleting sets in completed workouts, and deleting a completed workout;
 - viewing exercise progress across completed workouts;
 - using an optional rest timer;
 - exporting workout data as CSV and backing up the SQLite database.
@@ -37,9 +37,15 @@ count toward the completed-set total. Empty completed workouts also appear.
 History requires a connection. Opening it leaves your active
 workout and local drafts intact. Close it to return to your workout.
 Open a completed workout to correct an existing set's weight, reps or duration,
-and completion state. A corrected set immediately affects progress and future
-"Last workout" reference values. Existing sets can be corrected; completed
-workouts cannot gain or lose exercises or sets.
+and completion state. **Add set** appends a set to that exercise, copying the
+weight and reps or duration of the set above, and opens it for correction; it
+is Not completed until you mark it completed and save. **Delete set** removes a
+set after a confirmation, and the remaining sets are renumbered. **Delete
+workout** at the bottom removes the whole completed workout with its exercises
+and sets; type DELETE to confirm. An active workout cannot be deleted from
+history (use Cancel workout instead). Every correction, added or deleted set,
+and deleted workout immediately affects progress and future "Last workout"
+reference values. Adding exercises to a completed workout is not supported.
 
 With no active workout, **Repeat this workout** starts a new workout at the same
 gym. It copies the exercise configurations and number of set slots, but clears

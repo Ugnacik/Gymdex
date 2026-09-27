@@ -775,21 +775,29 @@ def move_workout_exercise(
     ]}
 
 
+def append_set(connection: sqlite3.Connection, exercise_id: int) -> dict[str, Any]:
+    """Append a set that copies the weight and result of the set above, not completed.
+
+    Works for active and completed workouts; the caller owns the transaction.
+    """
+    above = connection.execute(
+        """SELECT position, weight, result FROM workout_sets
+           WHERE workout_exercise_id = ? ORDER BY position DESC LIMIT 1""",
+        (exercise_id,),
+    ).fetchone()
+    cursor = connection.execute(
+        "INSERT INTO workout_sets(workout_exercise_id, position, weight, result) VALUES (?, ?, ?, ?)",
+        (exercise_id, above["position"] + 1, above["weight"], above["result"]) if above else (exercise_id, 1, None, None),
+    )
+    return dict(connection.execute("SELECT id, position, weight, result, completed FROM workout_sets WHERE id = ?", (cursor.lastrowid,)).fetchone())
+
+
 def add_set(connection: sqlite3.Connection, exercise_id: int) -> dict[str, Any]:
-    """Append a set that copies the weight and result of the set above, not completed."""
+    """Append a set to an active Workout Exercise (see append_set)."""
     with connection:
         connection.execute("BEGIN IMMEDIATE")
         require_active_exercise(connection, exercise_id)
-        above = connection.execute(
-            """SELECT position, weight, result FROM workout_sets
-               WHERE workout_exercise_id = ? ORDER BY position DESC LIMIT 1""",
-            (exercise_id,),
-        ).fetchone()
-        cursor = connection.execute(
-            "INSERT INTO workout_sets(workout_exercise_id, position, weight, result) VALUES (?, ?, ?, ?)",
-            (exercise_id, above["position"] + 1, above["weight"], above["result"]) if above else (exercise_id, 1, None, None),
-        )
-        return dict(connection.execute("SELECT id, position, weight, result, completed FROM workout_sets WHERE id = ?", (cursor.lastrowid,)).fetchone())
+        return append_set(connection, exercise_id)
 
 
 def validate_set_values(payload: dict) -> tuple[int | float | None, int | None, bool]:
@@ -860,6 +868,64 @@ def correct_completed_set(
             """SELECT id, position, weight, result, completed
                FROM workout_sets WHERE id = ?""", (set_id,),
         ).fetchone())
+
+
+def _require_completed_id(*ids: int) -> None:
+    if not all(1 <= value <= 9223372036854775807 for value in ids):
+        raise LookupError("Completed workout not found.")
+
+
+def add_completed_set(
+    connection: sqlite3.Connection, workout_id: int, exercise_id: int
+) -> dict[str, Any]:
+    """Append a set to a Workout Exercise of the specified completed workout.
+
+    Like Add set in the active workout, it copies the set above and is not completed.
+    """
+    _require_completed_id(workout_id, exercise_id)
+    with connection:
+        connection.execute("BEGIN IMMEDIATE")
+        if not connection.execute(
+            """SELECT 1 FROM workout_exercises e JOIN workouts w ON w.id = e.workout_id
+               WHERE e.id = ? AND w.id = ? AND w.completed_at IS NOT NULL""",
+            (exercise_id, workout_id),
+        ).fetchone():
+            raise LookupError("Completed workout exercise not found.")
+        return append_set(connection, exercise_id)
+
+
+def delete_completed_set(
+    connection: sqlite3.Connection, workout_id: int, set_id: int
+) -> dict[str, bool]:
+    """Delete a set of the specified completed workout and renumber the remaining sets."""
+    _require_completed_id(workout_id, set_id)
+    with connection:
+        connection.execute("BEGIN IMMEDIATE")
+        item = connection.execute(
+            """SELECT s.workout_exercise_id FROM workout_sets s
+               JOIN workout_exercises e ON e.id = s.workout_exercise_id
+               JOIN workouts w ON w.id = e.workout_id
+               WHERE s.id = ? AND w.id = ? AND w.completed_at IS NOT NULL""",
+            (set_id, workout_id),
+        ).fetchone()
+        if not item:
+            raise LookupError("Completed workout set not found.")
+        connection.execute("DELETE FROM workout_sets WHERE id = ?", (set_id,))
+        renumber_positions(connection, "workout_sets", item["workout_exercise_id"])
+    return {"ok": True}
+
+
+def delete_completed_workout(connection: sqlite3.Connection, workout_id: int) -> dict[str, bool]:
+    """Delete a completed workout with its exercises and sets. Active workouts are refused."""
+    _require_completed_id(workout_id)
+    with connection:
+        # Workout Exercises and their sets cascade with the workout, as in cancel_workout.
+        cursor = connection.execute(
+            "DELETE FROM workouts WHERE id = ? AND completed_at IS NOT NULL", (workout_id,),
+        )
+        if not cursor.rowcount:
+            raise LookupError("Completed workout not found.")
+    return {"ok": True}
 
 
 def delete_set(connection: sqlite3.Connection, set_id: int) -> dict[str, bool]:

@@ -526,7 +526,7 @@ test('correcting a completed set refreshes active references and the history cou
   const form = Object.assign(node(), {
     dataset: { historySet: '44', assisted: 'true' },
     elements: { weight: { value: '75' }, result: { value: '10', required: false }, completed: { checked: true } },
-    closest: () => form, reportValidity: () => true,
+    closest: (selector) => selector === '[data-history-set]' ? form : null, reportValidity: () => true,
     querySelector: (selector) => selector === '.set-status' ? status : submit,
   });
   nodes['#history-detail'].querySelector = () => node();
@@ -715,4 +715,116 @@ test('moving an exercise saves set drafts first and re-renders in the new order'
   const html = app.nodes['#app'].innerHTML;
   assert.ok(html.indexOf('data-entry-id="4"') < html.indexOf('data-entry-id="3"'));
   assert.match(html, /data-move-exercise="4" data-move-to="0" aria-label="Move Front Plank up" disabled>/);
+});
+
+// Opens history detail for a Completed Workout with fetch answered by routes ("METHOD url" keys).
+async function openHistoryDetail(app, detail, routes) {
+  const { dialog, nodes } = historyDOM(app);
+  const requests = [];
+  app.env.fetch = async (url, options = {}) => {
+    const key = `${options.method ?? 'GET'} ${url}`;
+    requests.push(key);
+    if (url.startsWith('/api/history?')) return response({ workouts: [{ ...detail.workout, exercise_count: 1, completed_set_count: 1 }], next_offset: null });
+    if (key === `GET /api/history/${detail.workout.id}`) return response(structuredClone(detail));
+    if (key in routes) return response(routes[key]);
+    throw new Error('Unexpected request');
+  };
+  app.nodes['#open-history'].events.click();
+  await settle();
+  await nodes['#history-results'].buttons[0].events.click();
+  const click = (selector, dataset) => nodes['#history-detail'].events.click({
+    target: { closest: (wanted) => wanted === selector ? Object.assign(node(), { dataset }) : null },
+  });
+  return { dialog, nodes, requests, click };
+}
+
+const completedDetail = () => ({
+  workout: { id: 22, gym_id: 1, gym_name: 'Home', started_at: '2026-09-21 10:00:00', completed_at: '2026-09-21 11:00:00' },
+  workout_exercises: [{ id: 33, variation_id: 11, exercise_name: 'Bench Press', variation_name: 'Standard',
+    equipment: 'Barbell', manufacturer: '', label: '', tracking_type: 'repetitions',
+    sets: [{ id: 44, position: 1, weight: 80, result: 8, completed: 1 }] }],
+});
+const refreshedBootstrap = (previousSets) => ({ gyms: [], active_workout: { id: 1, gym_id: 1, gym_name: 'Home', started_at: '2026-09-22 10:00:00' },
+  workout_exercises: [{ id: 3, variation_id: 11, exercise_name: 'Bench Press', variation_name: 'Standard', equipment: 'Barbell',
+    tracking_type: 'repetitions', previous_sets: previousSets, sets: [{ id: 2, position: 1, weight: null, result: null, completed: false }] }] });
+
+test('adding a set to a completed workout copies the set above and opens it for correction', async () => {
+  const app = await harness();
+  const { nodes, requests, click } = await openHistoryDetail(app, completedDetail(), {
+    'POST /api/history/22/exercises/33/sets': { id: 45, position: 2, weight: 80, result: 8, completed: 0 },
+    'GET /api/bootstrap': refreshedBootstrap([{ weight: 70, result: 5 }]),
+  });
+  assert.match(nodes['#history-detail'].innerHTML, /<button type="button" class="secondary history-add-set" data-add-history-set="33" aria-label="Add set to Bench Press">Add set<\/button>/);
+  const added = Object.assign(node(), { hidden: true, elements: { weight: node() } });
+  nodes['#history-detail'].querySelector = (selector) => selector === '[data-history-set="45"]' ? added : node();
+  await click('[data-add-history-set]', { addHistorySet: '33' });
+  assert.ok(requests.includes('POST /api/history/22/exercises/33/sets'));
+  assert.match(nodes['#history-detail'].innerHTML, /Set 2: 8 reps · 80 kg<\/span><span class="meta">Not completed/);
+  assert.equal(added.hidden, false);
+  assert.equal(added.elements.weight.focused, true);
+  // Last workout references in the active workout are refreshed from the server.
+  assert.match(app.nodes['#app'].innerHTML, /Last workout: 70 kg × 5 reps/);
+  assert.equal(app.nodes['#toast'].textContent, 'Set 2 added. Correct it and mark it completed.');
+});
+
+test('deleting a set from a completed workout asks first and renumbers the remaining sets', async () => {
+  const app = await harness();
+  const detail = completedDetail();
+  detail.workout_exercises[0].sets.push({ id: 46, position: 2, weight: 85, result: 6, completed: 1 });
+  const { nodes, requests, click } = await openHistoryDetail(app, detail, {
+    'DELETE /api/history/22/sets/44': { ok: true },
+    'GET /api/bootstrap': refreshedBootstrap([{ weight: 85, result: 6 }]),
+  });
+  assert.match(nodes['#history-detail'].innerHTML, /<button type="button" class="text-button history-delete-set" data-delete-history-set="44">Delete set 1<\/button>/);
+  const questions = [];
+  app.env.window.confirm = (question) => { questions.push(question); return false; };
+  await click('[data-delete-history-set]', { deleteHistorySet: '44' });
+  assert.deepEqual(questions, ['Delete set 1 of Bench Press from this completed workout? This cannot be undone.']);
+  assert.ok(!requests.some((request) => request.startsWith('DELETE')));
+  app.env.window.confirm = () => true;
+  await click('[data-delete-history-set]', { deleteHistorySet: '44' });
+  assert.ok(requests.includes('DELETE /api/history/22/sets/44'));
+  const html = nodes['#history-detail'].innerHTML;
+  assert.match(html, /Set 1: 6 reps · 85 kg/);
+  assert.doesNotMatch(html, /Set 2:|80 kg/);
+  assert.match(app.nodes['#app'].innerHTML, /Last workout: 85 kg × 6 reps/);
+  assert.equal(app.nodes['#toast'].textContent, 'Set 1 deleted.');
+  await nodes['#history-back'].events.click();
+  assert.equal(requests.filter((request) => request.startsWith('GET /api/history?')).length, 2);
+});
+
+test('deleting a completed workout needs the typed word DELETE and returns to the refreshed list', async () => {
+  const app = await harness();
+  app.form.elements.result.value = '9';
+  app.form.events.input();
+  const { nodes, requests, click } = await openHistoryDetail(app, completedDetail(), {
+    'DELETE /api/history/22': { ok: true },
+    'GET /api/bootstrap': refreshedBootstrap([]),
+  });
+  const html = nodes['#history-detail'].innerHTML;
+  assert.match(html, /<button type="button" class="text-button history-delete-workout" data-delete-workout-toggle>Delete workout<\/button>/);
+  assert.match(html, /<form class="history-delete-form" data-delete-workout hidden>[\s\S]*Type DELETE to confirm <input name="confirmation"/);
+  const status = node();
+  const form = Object.assign(node(), { hidden: true, elements: { confirmation: Object.assign(node(), { value: '' }) },
+    closest: (selector) => selector === '[data-delete-workout]' ? form : null,
+    querySelector: (selector) => selector === '.set-status' ? status : node(), reset() { form.elements.confirmation.value = ''; } });
+  nodes['#history-detail'].querySelector = (selector) => selector === '[data-delete-workout]' ? form : node();
+  await click('[data-delete-workout-toggle]', {});
+  assert.equal(form.hidden, false);
+  assert.equal(form.elements.confirmation.focused, true);
+  const submit = () => nodes['#history-detail'].events.submit({ target: form, preventDefault() {} });
+  form.elements.confirmation.value = 'yes';
+  await submit();
+  assert.equal(status.textContent, 'Type DELETE to delete this workout.');
+  assert.ok(!requests.some((request) => request.startsWith('DELETE')));
+  form.elements.confirmation.value = ' delete ';
+  await submit();
+  assert.ok(requests.includes('DELETE /api/history/22'));
+  assert.equal(nodes['#history-detail-view'].hidden, true);
+  assert.equal(nodes['#history-list-view'].hidden, false);
+  assert.equal(requests.filter((request) => request.startsWith('GET /api/history?')).length, 2);
+  assert.equal(app.nodes['#toast'].textContent, 'Workout deleted.');
+  // The active workout and its unsaved draft survive the refresh.
+  assert.match(app.nodes['#app'].innerHTML, /Workout active/);
+  assert.equal(app.form.elements.result.value, '9');
 });
