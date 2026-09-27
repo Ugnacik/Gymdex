@@ -310,6 +310,26 @@ class FeatureTests(unittest.TestCase):
         self.assertEqual(self.request('POST', '/api/workouts', {'gym_id': self.other_gym['id']})[0], 201)
         self.assertEqual(self.request('DELETE', f'/api/manage/gyms/{self.gym["id"]}'), (200, {'outcome': 'deleted'}))
 
+    def test_manage_routes_archive_and_restore_configurations_and_repeat_skips_archived_ones(self):
+        workout, _, _ = self.workout_with_set()
+        configuration = self.request('GET', '/api/manage')[1]['configurations'][0]
+        path = f'/api/manage/configurations/{configuration["id"]}'
+        recent = lambda: self.request('GET', f'/api/catalog?gym_id={self.gym["id"]}')[1]['recent']
+
+        self.assertEqual(self.request('DELETE', path), (200, {'outcome': 'archived'}))
+        self.assertEqual(recent(), [])
+        self.assertEqual(self.request('PUT', path, {'name': 'Rack'})[0], 404)
+        status, repeated = self.request('POST', f'/api/history/{workout["id"]}/repeat')
+        self.assertEqual((status, repeated['skipped']), (201, 1))
+        self.assertEqual(self.request('GET', '/api/bootstrap')[1]['workout_exercises'], [])
+        self.request('DELETE', f'/api/workouts/{repeated["id"]}')
+
+        status, restored = self.request('POST', f'{path}/restore')
+        self.assertEqual((status, restored['id'], restored['archived']), (200, configuration['id'], False))
+        self.assertEqual([item['profile_id'] for item in recent()], [configuration['id']])
+        self.assertEqual(self.request('POST', '/api/manage/configurations/9999/restore'),
+                         (404, {'error': 'Exercise configuration not found.'}))
+
     def test_manage_routes_reject_unknown_items_and_kinds(self):
         for method, path in (('DELETE', '/api/manage/gyms/9999'),
                              ('POST', '/api/manage/gyms/9999/restore'),

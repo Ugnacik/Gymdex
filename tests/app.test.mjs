@@ -561,6 +561,34 @@ test('progress shows a chart and numeric history for an exercise', async () => {
   assert.match(nodes['#progress-results'].innerHTML, /Completed workout progress/);
 });
 
+for (const [skipped, notice] of [[0, 'Workout repeated. Sets are ready to log.'],
+  [1, 'Workout repeated. Sets are ready to log. 1 archived exercise skipped.'],
+  [2, 'Workout repeated. Sets are ready to log. 2 archived exercises skipped.']]) {
+  test(`repeating a workout with ${skipped} archived exercises says so`, async () => {
+    const gym = { id: 1, name: 'Home' };
+    const app = await harness(storage(), { gyms: [gym], active_workout: null, workout_exercises: [] });
+    const { nodes } = historyDOM(app);
+    const workout = { id: 22, gym_id: 1, gym_name: 'Home', started_at: '2026-09-21 10:00:00', completed_at: '2026-09-21 11:00:00' };
+    const active = { id: 23, gym_id: 1, gym_name: 'Home', started_at: '2026-09-24 10:00:00' };
+    app.env.fetch = async (url) => {
+      if (url.startsWith('/api/history?')) return response({ workouts: [{ ...workout, exercise_count: 1, completed_set_count: 3 }], next_offset: null });
+      if (url === '/api/history/22') return response({ workout, workout_exercises: [] });
+      if (url === '/api/history/22/repeat') return response({ ...active, skipped }, 201);
+      // The fake DOM always holds the set form of set 2.
+      if (url === '/api/bootstrap') return response({ gyms: [gym], active_workout: active, workout_exercises: [{
+        id: 3, exercise_name: 'Bench Press', variation_name: 'Standard', equipment: 'Barbell',
+        previous_sets: [], sets: [{ id: 2, position: 1, weight: null, result: null, completed: false }] }] });
+      throw new Error('Unexpected request');
+    };
+    app.nodes['#open-history'].events.click();
+    await settle();
+    await nodes['#history-results'].buttons[0].events.click();
+    const repeat = Object.assign(node(), { dataset: { repeatWorkout: '22' } });
+    await nodes['#history-detail'].events.click({ target: { closest: (selector) => selector === '[data-repeat-workout]' ? repeat : null } });
+    assert.equal(app.nodes['#toast'].textContent, notice);
+  });
+}
+
 test('history repeats a completed workout when no workout is active', async () => {
   const gym = { id: 1, name: 'Home' };
   const app = await harness(storage(), { gyms: [gym], active_workout: null, workout_exercises: [] });
@@ -1181,4 +1209,57 @@ test('history offers archived gyms as filters and hides Repeat for a workout at 
   const html = nodes['#history-detail'].innerHTML;
   assert.doesNotMatch(html, /data-repeat-workout/);
   assert.match(html, /Restore Annex &lt;b&gt; in Manage to repeat this workout\./);
+});
+
+test('Manage archives, deletes and restores Exercise Configurations', async () => {
+  const app = await harness(storage(), startData([home]));
+  const questions = [];
+  app.env.window.confirm = (question) => { questions.push(question); return true; };
+  const configuration = (id, fields) => ({ id, gym_id: 1, gym_name: 'Home', gym_archived: false, variation_id: 11,
+    exercise_name: 'Bench Press', variation_name: 'Incline', variation_archived: false, equipment: 'Machine',
+    manufacturer: '', label: '', archived: false, used: true, ...fields });
+  let configurations = [
+    configuration(5, { label: 'Press <1>' }),
+    configuration(6, { label: 'Press 2', used: false }),
+    configuration(7, { exercise_name: 'Sled Push', variation_name: 'Heavy', variation_archived: true, equipment: 'Sled' }),
+    configuration(8, { label: 'Old', archived: true }),
+  ];
+  const { content, requests, click } = await openManage(app, {
+    'GET /api/manage': () => manageOverview([{ ...home, archived: false, used: true }], { configurations }),
+    'DELETE /api/manage/configurations/5': () => {
+      configurations = configurations.map((item) => item.id === 5 ? { ...item, archived: true } : item);
+      return { outcome: 'archived' };
+    },
+    'DELETE /api/manage/configurations/6': () => {
+      configurations = configurations.filter((item) => item.id !== 6);
+      return { outcome: 'deleted' };
+    },
+    'POST /api/manage/configurations/8/restore': () => {
+      configurations = configurations.map((item) => item.id === 8 ? { ...item, archived: false } : item);
+      return configurations.find((item) => item.id === 8);
+    },
+    'GET /api/bootstrap': () => startData([home]),
+  });
+  let html = content.innerHTML;
+  assert.match(html, /data-section="configurations">\s*<summary><h3>Exercise Configurations<\/h3><span>3<\/span>/);
+  assert.match(html, /Machine · Press &lt;1&gt;[\s\S]*data-manage-remove="configuration:5"[^>]*>Archive<\/button>/);
+  assert.match(html, /data-manage-remove="configuration:6"[^>]*>Delete<\/button>/);
+  assert.match(html, /Sled · Recent hides it while Heavy Sled Push is archived/);
+  assert.match(html, /Archived \(1\)[\s\S]*Home · Machine · Old[\s\S]*data-manage-restore="configuration:8"[^>]*>Restore<\/button>/);
+  assert.doesNotMatch(html, /<1>/);
+
+  await click('[data-manage-remove]', { manageRemove: 'configuration:5' });
+  assert.match(questions[0], /^Archive Incline Bench Press\? It is used in recorded workouts/);
+  assert.equal(app.nodes['#toast'].textContent, 'Incline Bench Press archived.');
+  await click('[data-manage-remove]', { manageRemove: 'configuration:6' });
+  assert.match(questions[1], /^Delete Incline Bench Press\? It has never been used/);
+  assert.equal(app.nodes['#toast'].textContent, 'Incline Bench Press deleted.');
+  html = content.innerHTML;
+  assert.doesNotMatch(html, /configuration:6/);
+  assert.match(html, /Archived \(2\)[\s\S]*data-manage-restore="configuration:5"/);
+
+  await click('[data-manage-restore]', { manageRestore: 'configuration:8' });
+  assert.ok(requests.some(([key]) => key === 'POST /api/manage/configurations/8/restore'));
+  assert.equal(app.nodes['#toast'].textContent, 'Incline Bench Press restored.');
+  assert.match(content.innerHTML, /data-manage-remove="configuration:8"/);
 });
