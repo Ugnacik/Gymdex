@@ -1,0 +1,11 @@
+# Raspberry Pi: runs gymdex-backup.service every night, or at the next boot if missed.
+[Unit]
+Description=Run the Gymdex database backup daily
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+RandomizedDelaySec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

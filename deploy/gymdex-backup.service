@@ -1,0 +1,14 @@
+# Raspberry Pi: daily dated backup, keep 14 days, send the new file with Taildrop.
+# The send target comes from ~/.config/gymdex/backup.env (GYMDEX_BACKUP_TARGET=<device>).
+# Without it, the backup stays local. A failed backup or send is retried hourly.
+[Unit]
+Description=Gymdex daily database backup
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/apps/gymdex
+EnvironmentFile=-%h/.config/gymdex/backup.env
+ExecStart=/usr/bin/python3 -m gymdex.backup daily %h/gymdex-backups --keep 14
+TimeoutStartSec=15min
+Restart=on-failure
+RestartSec=1h
