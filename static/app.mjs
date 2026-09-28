@@ -255,7 +255,7 @@ function renderWorkout() {
       ${stale ? `<section class="stale-banner" id="stale-banner" aria-labelledby="stale-title">
         <h2 id="stale-title">Still training?</h2>
         <p>This workout started ${formatElapsed(elapsedMinutes(workout))} ago.</p>
-        <div class="stale-actions"><button type="button" class="primary" id="stale-finish">Finish it</button><button type="button" class="secondary" id="stale-keep">Keep going</button></div>
+        <div class="stale-actions"><button type="button" class="primary" id="stale-finish" data-finish-workout>Finish it</button><button type="button" class="secondary" id="stale-keep">Keep going</button></div>
       </section>` : ""}
       ${renderRestTimer()}
       <div class="section-title"><h2>Exercises</h2><span>${entries.length}</span></div>
@@ -294,7 +294,6 @@ function renderWorkout() {
     },
   )));
   if (stale) {
-    document.querySelector("#stale-finish").addEventListener("click", finishWorkout);
     document.querySelector("#stale-keep").addEventListener("click", () => {
       dismissStaleWorkout(workout.id);
       document.querySelector("#stale-banner").hidden = true;
@@ -773,6 +772,8 @@ function openHistory() {
     try {
       const data = await api(`/api/history?${params}`);
       if (version !== request) return;
+      // Deleting the last workout on an older page empties it: show the newer page instead.
+      if (!data.workouts.length && pageOffset > 0) return loadPage(Math.max(0, pageOffset - 20));
       offset = pageOffset;
       nextOffset = data.next_offset;
       message.textContent = data.workouts.length ? "Completed workouts, newest first." : "No completed workouts match these filters.";
@@ -899,7 +900,7 @@ async function openProgress(initialVariationId = null, initialGymId = null, init
   });
   dialog.showModal();
   try {
-    // Archived custom exercises stay selectable: their recorded workouts still have progress.
+    // Archived custom variations stay selectable: their recorded workouts still have progress.
     const catalog = await api(`/api/catalog?gym_id=${gyms[0].id}&include_archived=1`);
     if (!dialog.open) return;
     exercise.innerHTML = catalog.catalog.map((item) => `<option value="${item.id}" ${item.id === initialVariationId ? "selected" : ""}>${escapeHtml(exerciseDisplayName(item))}${item.archived ? " (archived)" : ""}</option>`).join("");
@@ -925,11 +926,15 @@ function manageItems(overview, kind) {
   return [];
 }
 
+// Names an item in confirmations, toasts and aria-labels. A configuration adds its equipment
+// details, which tell apart several configurations of one exercise at a gym.
 function manageItemName(kind, item) {
-  return kind === "configuration" || kind === "variation" ? exerciseDisplayName(item) : item.name;
+  if (kind === "configuration") return `${exerciseDisplayName(item)} (${configurationLabel(item)})`;
+  return kind === "variation" ? exerciseDisplayName(item) : item.name;
 }
 
-function renderManageRow(kind, item, { name = manageItemName(kind, item), detail = "", rename = false, remove = true, actions: more = "", editor = "" } = {}) {
+// shown is the visible name when the row's detail line already says the rest of name.
+function renderManageRow(kind, item, { name = manageItemName(kind, item), shown = name, detail = "", rename = false, remove = true, actions: more = "", editor = "" } = {}) {
   const key = `${kind}:${item.id}`;
   const label = escapeHtml(name);
   const removeLabel = item.used ? "Archive" : "Delete";
@@ -937,7 +942,7 @@ function renderManageRow(kind, item, { name = manageItemName(kind, item), detail
     ? `<button type="button" class="text-button" data-manage-restore="${key}" aria-label="Restore ${label}">Restore</button>`
     : `${rename ? `<button type="button" class="text-button" data-manage-rename="${key}" aria-label="Rename ${label}">Rename</button>` : ""}${more}${remove ? `<button type="button" class="text-button manage-remove" data-manage-remove="${key}" aria-label="${removeLabel} ${label}">${removeLabel}</button>` : ""}`;
   return `<li class="manage-row">
-    <div class="manage-row-text"><span class="manage-name">${label}</span>${detail ? `<span class="meta">${escapeHtml(detail)}</span>` : ""}</div>
+    <div class="manage-row-text"><span class="manage-name">${escapeHtml(shown)}</span>${detail ? `<span class="meta">${escapeHtml(detail)}</span>` : ""}</div>
     ${actions ? `<div class="manage-actions">${actions}</div>` : ""}
     ${rename && !item.archived ? `<form class="manage-rename-form" data-manage-rename-form="${key}" hidden>
       <label class="field">New name<input name="name" maxlength="80" value="${label}" required autocomplete="off" /></label>
@@ -963,7 +968,7 @@ function renderEquipmentEditor(variation, open) {
     </form>`;
 }
 
-// Custom exercises grouped by Exercise; archived Variations are listed under Archived.
+// Custom Exercise Variations grouped by Exercise; archived ones are listed under Archived.
 function renderCustomExercises(overview, open) {
   const variations = manageItems(overview, "variation");
   const active = variations.filter((variation) => !variation.archived);
@@ -978,11 +983,11 @@ function renderCustomExercises(overview, open) {
         actions: `<button type="button" class="text-button" data-manage-equipment="variation:${variation.id}" aria-label="Edit equipment of ${escapeHtml(exerciseDisplayName(variation))}">Equipment</button>`,
         editor: renderEquipmentEditor(variation, open) })).join("")}</ul>`;
   }).join("");
-  return renderManageSection("exercises", "Custom exercises", active.length, variations.length ? `
-      <p class="manage-help">Delete removes a variation with no workouts. Archive hides a variation with workouts from the exercise picker; its workouts stay in history and progress.</p>
-      ${groups || "<p>All custom exercises are archived.</p>"}
+  return renderManageSection("exercises", "Custom Exercise Variations", active.length, variations.length ? `
+      <p class="manage-help">Delete removes a variation with no workouts. Archive keeps a variation with workouts in history and progress but stops offering it in the exercise picker.</p>
+      ${groups || "<p>All custom variations are archived.</p>"}
       ${renderManageArchived("exercises", archived.map((variation) => renderManageRow("variation", variation)), open)}`
-    : `<p>No custom exercises yet. Create one with Create custom exercise when adding an exercise to a workout.</p>`, open);
+    : `<p>No custom variations yet. Create one with Create custom exercise when adding an exercise to a workout.</p>`, open);
 }
 
 function renderManageSection(section, title, count, body, open) {
@@ -1015,16 +1020,16 @@ function renderManage(overview, open) {
     ? `${configurationLabel(item)} · Recent hides it while ${exerciseDisplayName(item)} is archived` : configurationLabel(item);
   return [
     renderManageSection("gyms", "Gyms", gyms.length, `
-      <p class="manage-help">Delete removes a gym with no workouts. Archive hides a gym with workouts from the start screen; its workouts stay in history and progress.</p>
+      <p class="manage-help">Delete removes a gym with no workouts. Archive keeps a gym with workouts in history and progress but stops offering it on the start screen.</p>
       ${gyms.length ? `<ul class="manage-list">${gyms.map((gym) => renderManageRow("gym", gym, { rename: true })).join("")}</ul>` : `<p>No gyms to manage.</p>`}
       ${renderManageArchived("gyms", archivedGyms.map((gym) => renderManageRow("gym", gym)), open)}`, open),
     renderManageSection("configurations", "Exercise Configurations", configurations.length, `
-      <p class="manage-help">Saved for a gym when you add an exercise there, and offered under Recent. Delete removes one never used in a workout. Archive hides a used one from Recent and Repeat; choosing the same equipment, manufacturer and label again restores it.</p>
+      <p class="manage-help">Saved for a gym when you add an exercise there, and offered under Recent. Delete removes one never used in a workout. Archive keeps a used one in history but stops offering it under Recent and in Repeat; choosing the same equipment, manufacturer and label again restores it.</p>
       ${configurations.length ? renderManageGroups(configurations, (item) => `${item.gym_name}${item.gym_archived ? " (archived)" : ""}`,
-        (item) => renderManageRow("configuration", item, { detail: configurationDetail(item) }))
+        (item) => renderManageRow("configuration", item, { shown: exerciseDisplayName(item), detail: configurationDetail(item) }))
         : `<p>No exercise configurations yet. Add an exercise to a workout to save one.</p>`}
       ${renderManageArchived("configurations", archivedConfigurations.map((item) =>
-        renderManageRow("configuration", item, { detail: `${item.gym_name} · ${configurationLabel(item)}` })), open)}`, open),
+        renderManageRow("configuration", item, { shown: exerciseDisplayName(item), detail: `${item.gym_name} · ${configurationLabel(item)}` })), open)}`, open),
     renderCustomExercises(overview, open),
   ].join("");
 }
@@ -1538,6 +1543,8 @@ function fillFromPrevious(form, previous) {
     form.dataset.assisted = "true";
     const label = form.elements.weight.labels?.[0]?.firstChild;
     if (label) label.textContent = "Assist kg ";
+    const name = form.elements.weight.getAttribute("aria-label");
+    if (name) form.elements.weight.setAttribute("aria-label", name.replace(/ weight in kilograms$/, " assistance in kilograms"));
   }
   form.elements.weight.value = weight === null ? "" : String(Math.abs(weight));
   form.elements.result.value = previous.previousResult;
@@ -1633,9 +1640,18 @@ async function removeExercise(entryId) {
 async function removeSet(form) {
   if (state.editor.busy) return;
   if (!window.confirm(`Remove set ${form.querySelector("legend").textContent.replace("Set ", "")}?`)) return;
-  const addButton = form.closest(".exercise-entry").querySelector(".add-set");
+  const entryNode = form.closest(".exercise-entry");
+  const addButton = entryNode.querySelector(".add-set");
   if (await state.editor.remove(form.dataset.setId)) {
     form.remove();
+    // The server renumbered the remaining sets: re-render them so their numbers and
+    // Last workout values line up. Their drafts are keyed by set id and restored by bindSet.
+    const entry = state.data.workout_exercises.find((item) => item.id === Number(form.dataset.entryId));
+    const list = entryNode.querySelector(".sets-list");
+    if (entry && list) {
+      list.innerHTML = entry.sets.map((set, index) => renderSet(entry, set, index)).join("");
+      list.querySelectorAll(".set-form").forEach(bindSet);
+    }
     addButton.focus();
     updateSyncStatus();
   }

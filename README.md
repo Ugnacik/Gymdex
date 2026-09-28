@@ -9,7 +9,7 @@ Gymdex supports:
 - starting and finishing one active workout, with its elapsed time shown and a
   reminder to finish it after 3 hours;
 - adding recent gym-specific exercise configurations in one tap;
-- searching a starter exercise catalog of common movements;
+- searching a starter exercise catalog of common exercises;
 - remembering equipment and machine details separately for each gym;
 - logging sets with optional weight, repetitions or duration, and completion;
 - removing and reordering exercises in the active workout;
@@ -45,7 +45,8 @@ weight and reps or duration of the set above, and opens it for correction; it
 is Not completed until you mark it completed and save. **Delete set** removes a
 set after a confirmation, and the remaining sets are renumbered. **Delete
 workout** at the bottom removes the whole completed workout with its exercises
-and sets; type DELETE to confirm. An active workout cannot be deleted from
+and sets; type DELETE to confirm. History then returns to the list, or to the
+newer page if that was the last workout on an older one. An active workout cannot be deleted from
 history (use Cancel workout instead). Every correction, added or deleted set,
 and deleted workout immediately affects progress and future "Last workout"
 reference values. Adding exercises to a completed workout is not supported.
@@ -57,7 +58,9 @@ saving an empty box removes the note.
 
 With no active workout, **Repeat this workout** starts a new workout at the same
 gym. It copies the exercise configurations and number of set slots, but clears
-all results, weights, and completion marks, and it does not copy notes. The
+all results, weights, and completion marks, and it does not copy notes. Exercise
+and variation names are the current ones, so a renamed exercise appears under
+its new name. The
 source stays in history. A workout at an archived gym cannot be repeated until
 the gym is restored in [Manage](#manage-gyms-and-exercises). Exercises whose
 exercise configuration or custom variation is archived are left out, and the
@@ -71,7 +74,7 @@ mixed. These two best values can come from different sets in the same workout.
 
 ## Exercise catalog
 
-The starter Exercise Catalog covers common gym movements: presses, squats,
+The starter Exercise Catalog covers common gym exercises: presses, squats,
 deadlifts including Romanian Deadlift, rows and pulldowns, leg press, leg
 curls and extensions, lunges, hip thrusts, raises, flies, curls, pushdowns,
 face pulls, core work such as Crunch and Hanging Leg Raise, and bodyweight
@@ -81,7 +84,8 @@ optional and records added load, such as a dip belt.
 
 When Gymdex starts, it adds any starter variations missing from an existing
 database. It does not change existing catalog entries, custom variations with
-the same name, or recorded workouts.
+the same name, or recorded workouts. So a later catalog change that adds
+equipment to an existing starter variation reaches only new databases.
 
 ## Custom exercises
 
@@ -99,8 +103,9 @@ created variations in [Manage](#manage-gyms-and-exercises).
 ## Manage gyms and exercises
 
 On the start screen, **Manage** beside Your gyms opens three sections: Gyms,
-Exercise Configurations, and Custom exercises. Manage is not available during a
-workout, so nothing in the workout you are recording changes underneath you.
+Exercise Configurations, and Custom Exercise Variations. Manage is not
+available during a workout, so nothing in the workout you are recording changes
+underneath you.
 
 **Rename** changes a gym's name everywhere, including completed workouts in
 history and progress. Gym names must be unique regardless of capitalization,
@@ -126,7 +131,7 @@ gym, grouped by gym. Its remove button works the same way:
 - **Delete** appears for a configuration that no workout uses, for example one
   added to a workout that was cancelled. It is removed permanently.
 - **Archive** appears for a configuration used in a workout. It disappears from
-  Recent in the picker, which then has room for the next most recent entry, and
+  Recent in the picker, which then has room for the next most recent configuration, and
   Repeat this workout leaves it out. History, progress, "Last workout", and the
   CSV export keep it.
 
@@ -136,13 +141,13 @@ equipment, manufacturer, and label in the picker also restores it. A
 configuration whose custom variation is archived stays listed but says that
 Recent hides it until the variation is restored.
 
-Custom exercises lists the variations you created, grouped by exercise. Starter
+Custom Exercise Variations lists the variations you created, grouped by exercise. Starter
 catalog exercises are not listed and cannot be changed, because Gymdex adds
 missing starter variations back when it starts.
 
 - **Rename** on an exercise or variation changes the name in the exercise
-  picker, Recent, and progress. Completed workouts keep the name they were
-  recorded with. Exercise names must be unique, and a variation name must be
+  picker, Recent, progress, and new workouts, including repeated ones. Completed
+  workouts keep the name they were recorded with. Exercise names must be unique, and a variation name must be
   unique within its exercise, archived variations included, regardless of
   capitalization. An exercise that also has starter variations, such as Bench
   Press with your own Close Grip variation, cannot be renamed; its variations
@@ -156,11 +161,13 @@ missing starter variations back when it starts.
   its equipment and saved configurations, and the exercise too once it has no
   variations left.
 - **Archive** appears for a variation used in a workout. It disappears from the
-  exercise picker, but history, progress, and the CSV export keep it, and
-  Progress still offers it, marked "(archived)".
+  exercise picker and Recent, but history, progress, and the CSV export keep
+  it, and Progress still offers it, marked "(archived)". If another phone still
+  has the picker open, adding the archived variation there is refused with
+  "… is archived. Restore it in Manage to add it."
 
 Archived variations are listed under **Archived** at the end of the Custom
-exercises section, and **Restore** offers one in the picker again. Creating a
+Exercise Variations section, and **Restore** offers one in the picker again. Creating a
 custom exercise with an archived variation's name is refused; restore the
 archived variation instead.
 
@@ -178,7 +185,8 @@ the beep is enabled by checking Done or tapping Start or Resume; a silent switch
 or muted media volume can still mute it. iPhones and iPads do not vibrate
 because Safari has no vibration support. If the countdown ends while the app is
 in the background or the screen is locked, the cue can be late or wait until
-you return to the app.
+you return to the app. When you return more than 30 seconds after the countdown
+ended, the timer shows it finished without the cue.
 
 ## Log sets
 
@@ -194,8 +202,8 @@ Valid edits, including unfinished sets, save automatically after a short typing
 pause, and pressing Enter in a field saves immediately. Add set creates another
 row that copies the weight and reps or seconds of the set above it, saved but
 not completed; Gymdex saves any edit to the set above first. The × in a set's
-corner deletes it after confirmation. Sets can be edited while the workout is
-active.
+corner deletes it after confirmation, and the remaining sets are renumbered, as
+in history. Sets can be edited while the workout is active.
 
 Below each exercise's sets, **Move up** and **Move down** change its place in
 the workout, and **Remove** deletes the exercise with all its sets after
@@ -340,8 +348,11 @@ python3 -m gymdex.backup backup ~/gymdex-backup.sqlite3
 ```
 
 Copy the backup somewhere other than the Pi and verify you can restore it.
-[Daily backups](#daily-backups) does both automatically. To restore, stop the
-Gymdex service first and keep a copy of the current database. Then run:
+[Daily backups](#daily-backups) makes the off-device copy automatically; verify
+a restore by hand now and then (see
+[Verify a restore from a received backup](#verify-a-restore-from-a-received-backup)).
+To restore, stop the Gymdex service first and keep a copy of the current
+database. Then run:
 
 ```bash
 systemctl --user stop gymdex

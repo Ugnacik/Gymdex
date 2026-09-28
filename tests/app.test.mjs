@@ -38,7 +38,9 @@ function setForm(setId, position) {
   formNodes.legend.textContent = `Set ${position}`;
   const form = Object.assign(node(), {
     isConnected: true, dataset: { setId: String(setId), entryId: '3' },
-    elements: { weight: Object.assign(node(), { value: '' }), result: { value: '', required: false },
+    elements: { weight: Object.assign(node(), { value: '', attributes: { 'aria-label': `Bench Press, set ${position} weight in kilograms` },
+      getAttribute(name) { return this.attributes[name]; }, setAttribute(name, value) { this.attributes[name] = value; } }),
+    result: { value: '', required: false },
       completed: Object.assign(node(), { checked: false }) },
     querySelector: (selector) => formNodes[selector],
     checkValidity: () => !form.elements.result.required || form.elements.result.value !== '',
@@ -88,6 +90,13 @@ async function harness(disk = storage(), initialData = {}, { now = Date.parse('2
     }
     return rendered.fields;
   };
+  // Like a browser, the workout's set forms exist only while the rendered workout contains them;
+  // forms appended by Add set live in their exercise's list.
+  const isRendered = (item) => item.isConnected
+    && (item !== form || nodes['#app'].innerHTML.includes(`data-set-id="${item.dataset.setId}"`));
+  // The stale banner's Finish it is a finish button too when the rendered workout marks it as one.
+  const finishButtons = () => [nodes['#finish'],
+    ...(/id="stale-finish" data-finish-workout/.test(nodes['#app'].innerHTML) ? [nodes['#stale-finish']] : [])];
   const entryNode = { querySelector: (selector) => selector === '.sets-list' ? list : null };
   const addSetButton = Object.assign(node(), { dataset: { addSet: '3' }, closest: () => entryNode });
   const data = { gyms: [], active_workout: { id: 1, gym_id: 1, gym_name: 'Home', started_at: '2026-09-22 10:00:00' },
@@ -99,13 +108,13 @@ async function harness(disk = storage(), initialData = {}, { now = Date.parse('2
     document: {
       visibilityState: 'visible', addEventListener() {},
       querySelector: (selector) => selector === '.set-form[data-dirty="true"]'
-        ? forms.find((item) => item.isConnected && item.dataset.dirty) ?? null : nodes[selector] ?? null,
+        ? forms.find((item) => isRendered(item) && item.dataset.dirty) ?? null : nodes[selector] ?? null,
       querySelectorAll: (selector) => {
-        if (selector === '.set-form') return forms.filter((item) => item.isConnected);
-        if (selector === '.set-form[data-dirty="true"]') return forms.filter((item) => item.isConnected && item.dataset.dirty);
+        if (selector === '.set-form') return forms.filter(isRendered);
+        if (selector === '.set-form[data-dirty="true"]') return forms.filter((item) => isRendered(item) && item.dataset.dirty);
         if (selector === '[data-add-set]') return form.isConnected ? [addSetButton] : [];
-        if (selector === '[data-finish-workout]') return [nodes['#finish']];
-        if (selector === '[data-finish-workout], #cancel-workout') return [nodes['#finish'], nodes['#cancel-workout']];
+        if (selector === '[data-finish-workout]') return finishButtons();
+        if (selector === '[data-finish-workout], #cancel-workout') return [...finishButtons(), nodes['#cancel-workout']];
         if (selector === '[data-note-target]') return noteFields(nodes['#app'].innerHTML);
         return [];
       },
@@ -223,7 +232,8 @@ test('history paginates and filters without replacing the active form or draft',
   const urls = [];
   app.env.fetch = async (url) => {
     urls.push(url);
-    return response({ workouts: [], next_offset: urls.length === 1 ? 20 : null });
+    const older = { id: 7, gym_name: 'Home', started_at: '2026-09-01 10:00:00', exercise_count: 1, completed_set_count: 1 };
+    return response({ workouts: url.endsWith('offset=20') ? [older] : [], next_offset: urls.length === 1 ? 20 : null });
   };
   app.nodes['#open-history'].events.click();
   await settle();
@@ -612,6 +622,7 @@ test('history repeats a completed workout when no workout is active', async () =
   assert.equal(requests.find(([url]) => url.endsWith('/repeat'))[1].method, 'POST');
   assert.equal(dialog.removed, true);
   assert.match(app.nodes['#app'].innerHTML, /Workout active/);
+  assert.match(app.nodes['#toast'].textContent, /^Workout repeated\. Sets are ready to log\.$/);
 });
 
 test('correcting a completed set refreshes active references and the history count without losing a draft', async () => {
@@ -755,6 +766,8 @@ test('tapping Last workout fills the set and saves it without completing it', as
     app.form.querySelector('.fill-previous').events.click();
     await settle();
     assert.equal(app.form.elements.weight.value, shown);
+    assert.equal(app.form.elements.weight.getAttribute('aria-label'),
+      `Bench Press, set 1 ${previous.weight < 0 ? 'assistance' : 'weight'} in kilograms`);
     assert.equal(app.form.elements.result.value, String(previous.result));
     assert.deepEqual(bodies, [{ weight: saved, result: previous.result, completed: false }]);
   }
@@ -773,6 +786,32 @@ test('Add set waits when the set above cannot reach the server', async () => {
   assert.equal(app.forms.length, 1);
   assert.match(app.nodes['#toast'].textContent, /Set 1 must reach the server before adding another set/);
   assert.equal(app.addSetButton.disabled, false);
+});
+
+test('removing a set renumbers the remaining sets and pairs them with Last workout again', async () => {
+  const blankSet = (id, position) => ({ id, position, weight: null, result: null, completed: false });
+  const app = await harness(storage(), { workout_exercises: [{ id: 3, exercise_name: 'Bench Press', variation_name: 'Standard', equipment: 'Barbell',
+    tracking_type: 'repetitions', previous_sets: [{ weight: 80, result: 8 }, { weight: 85, result: 6 }, { weight: 90, result: 4 }],
+    sets: [blankSet(2, 1), blankSet(5, 2), blankSet(6, 3)] }] });
+  const questions = [];
+  app.env.window.confirm = (question) => { questions.push(question); return true; };
+  const requests = [];
+  app.env.fetch = async (path, options) => {
+    requests.push(`${options.method} ${path}`);
+    return response({ ok: true, sets: [{ id: 5, position: 1 }, { id: 6, position: 2 }] });
+  };
+  const list = node();
+  const addButton = node();
+  const entryNode = { querySelector: (selector) => ({ '.sets-list': list, '.add-set': addButton })[selector] };
+  Object.assign(app.form, { closest: () => entryNode, remove() { app.form.isConnected = false; } });
+  await app.form.querySelector('.remove-set').events.click();
+  assert.deepEqual(questions, ['Remove set 1?']);
+  assert.deepEqual(requests, ['DELETE /api/sets/2']);
+  const legends = [...list.innerHTML.matchAll(/data-set-id="(\d+)"[\s\S]*?<legend>Set (\d+)<\/legend>/g)].map(([, id, position]) => [id, position]);
+  assert.deepEqual(legends, [['5', '1'], ['6', '2']]);
+  assert.match(list.innerHTML, /aria-label="Remove Bench Press, set 2"/);
+  assert.match(list.innerHTML, /data-set-id="5"[\s\S]*?Last workout: 80 kg × 8 reps[\s\S]*?data-set-id="6"[\s\S]*?Last workout: 85 kg × 6 reps/);
+  assert.equal(addButton.focused, true);
 });
 
 const pressEntry = { id: 3, variation_id: 11, exercise_name: 'Bench Press', variation_name: 'Standard', equipment: 'Barbell',
@@ -876,7 +915,14 @@ test('a workout started more than 3 hours ago offers Finish it, which uses the n
     requests.push(`${options?.method ?? 'GET'} ${path}`);
     return response(path === '/api/bootstrap' ? { gyms: [], active_workout: null, workout_exercises: [] } : { ok: true });
   };
-  await app.nodes['#stale-finish'].events.click();
+  const finishing = deferred();
+  const reply = app.env.fetch;
+  app.env.fetch = async (path, options) => path === '/api/workouts/1/complete' ? finishing.promise.then(() => reply(path, options)) : reply(path, options);
+  const pending = app.nodes['#stale-finish'].events.click();
+  // Like the other finish buttons, Finish it is disabled while the workout finishes.
+  assert.equal(app.nodes['#stale-finish'].disabled, true);
+  finishing.resolve();
+  await pending;
   assert.ok(requests.includes('POST /api/workouts/1/complete'), requests.join());
   assert.match(app.nodes['#app'].innerHTML, /No active workout/);
   assert.match(app.nodes['#toast'].textContent, /Workout finished/);
@@ -1077,6 +1123,39 @@ test('deleting a completed workout needs the typed word DELETE and returns to th
   assert.equal(app.form.elements.result.value, '9');
 });
 
+test('deleting the only workout on an older history page returns to the newer page', async () => {
+  const app = await harness();
+  const { nodes } = historyDOM(app);
+  const detail = completedDetail();
+  const listed = (id) => ({ ...detail.workout, id, exercise_count: 1, completed_set_count: 1 });
+  const newer = Array.from({ length: 20 }, (_, index) => listed(100 + index));
+  let deleted = false;
+  const urls = [];
+  app.env.fetch = async (url, options = {}) => {
+    urls.push(`${options.method ?? 'GET'} ${url}`);
+    if (url === '/api/history?offset=0') return response({ workouts: newer, next_offset: deleted ? null : 20 });
+    if (url === '/api/history?offset=20') return response({ workouts: deleted ? [] : [listed(22)], next_offset: null });
+    if (url === '/api/history/22' && options.method === 'DELETE') { deleted = true; return response({ ok: true }); }
+    if (url === '/api/history/22') return response(structuredClone(detail));
+    if (url === '/api/bootstrap') return response(refreshedBootstrap([]));
+    throw new Error('Unexpected request');
+  };
+  app.nodes['#open-history'].events.click();
+  await settle();
+  nodes['#history-next'].events.click();
+  await settle();
+  await nodes['#history-results'].buttons[0].events.click();
+  const form = Object.assign(node(), { elements: { confirmation: Object.assign(node(), { value: 'DELETE' }) },
+    closest: (selector) => selector === '[data-delete-workout]' ? form : null, querySelector: () => node() });
+  await nodes['#history-detail'].events.submit({ target: form, preventDefault() {} });
+  await settle();
+  assert.equal(urls.at(-1), 'GET /api/history?offset=0');
+  assert.match(nodes['#history-message'].textContent, /Completed workouts, newest first/);
+  assert.equal(nodes['#history-results'].buttons.length, 20);
+  assert.equal(nodes['#history-previous'].disabled, true);
+  assert.equal(app.nodes['#toast'].textContent, 'Workout deleted.');
+});
+
 const reply = (status, body) => ({ reply: true, status, body });
 const manageOverview = (gyms, extra = {}) => ({ gyms, configurations: [], exercises: [], ...extra });
 
@@ -1136,7 +1215,7 @@ test('Manage lists gyms with Delete or Archive, and archiving hides the gym from
   assert.match(html, /<details class="manage-section" data-section="gyms" open>/);
   assert.match(html, /Exercise Configurations/);
   assert.match(html, /Incline Bench Press[\s\S]*Machine · Technogym · Press 1/);
-  assert.match(html, /Custom exercises[\s\S]*No custom exercises yet/);
+  assert.match(html, /Custom Exercise Variations[\s\S]*No custom variations yet/);
   assert.match(html, /Annex &lt;b&gt;[\s\S]*data-manage-remove="gym:2"[^>]*>Archive<\/button>/);
   assert.match(html, /data-manage-remove="gym:1"[^>]*>Delete<\/button>/);
   assert.doesNotMatch(html, /<b>/);
@@ -1247,20 +1326,23 @@ test('Manage archives, deletes and restores Exercise Configurations', async () =
   assert.match(html, /Sled · Recent hides it while Heavy Sled Push is archived/);
   assert.match(html, /Archived \(1\)[\s\S]*Home · Machine · Old[\s\S]*data-manage-restore="configuration:8"[^>]*>Restore<\/button>/);
   assert.doesNotMatch(html, /<1>/);
+  // Several configurations of one exercise at a gym are told apart by their equipment details.
+  assert.match(html, /<span class="manage-name">Incline Bench Press<\/span><span class="meta">Machine · Press &lt;1&gt;<\/span>/);
+  assert.match(html, /aria-label="Archive Incline Bench Press \(Machine · Press &lt;1&gt;\)"/);
 
   await click('[data-manage-remove]', { manageRemove: 'configuration:5' });
-  assert.match(questions[0], /^Archive Incline Bench Press\? It is used in recorded workouts/);
-  assert.equal(app.nodes['#toast'].textContent, 'Incline Bench Press archived.');
+  assert.match(questions[0], /^Archive Incline Bench Press \(Machine · Press <1>\)\? It is used in recorded workouts/);
+  assert.equal(app.nodes['#toast'].textContent, 'Incline Bench Press (Machine · Press <1>) archived.');
   await click('[data-manage-remove]', { manageRemove: 'configuration:6' });
-  assert.match(questions[1], /^Delete Incline Bench Press\? It has never been used/);
-  assert.equal(app.nodes['#toast'].textContent, 'Incline Bench Press deleted.');
+  assert.match(questions[1], /^Delete Incline Bench Press \(Machine · Press 2\)\? It has never been used/);
+  assert.equal(app.nodes['#toast'].textContent, 'Incline Bench Press (Machine · Press 2) deleted.');
   html = content.innerHTML;
   assert.doesNotMatch(html, /configuration:6/);
   assert.match(html, /Archived \(2\)[\s\S]*data-manage-restore="configuration:5"/);
 
   await click('[data-manage-restore]', { manageRestore: 'configuration:8' });
   assert.ok(requests.some(([key]) => key === 'POST /api/manage/configurations/8/restore'));
-  assert.equal(app.nodes['#toast'].textContent, 'Incline Bench Press restored.');
+  assert.equal(app.nodes['#toast'].textContent, 'Incline Bench Press (Machine · Old) restored.');
   assert.match(content.innerHTML, /data-manage-remove="configuration:8"/);
 });
 
@@ -1283,7 +1365,7 @@ test('Manage lists custom exercises with rename, equipment and Delete or Archive
   });
   let html = content.innerHTML;
   assert.doesNotMatch(html, /<[ib]>/);
-  assert.match(html, /<summary><h3>Custom exercises<\/h3><span>2<\/span><\/summary>/);
+  assert.match(html, /<summary><h3>Custom Exercise Variations<\/h3><span>2<\/span><\/summary>/);
   assert.match(html, /data-manage-rename="exercise:3" aria-label="Rename Sled &lt;i&gt;">Rename<\/button>/);
   assert.doesNotMatch(html, /data-manage-rename="exercise:4"/);
   assert.doesNotMatch(html, /data-manage-remove="exercise:/);

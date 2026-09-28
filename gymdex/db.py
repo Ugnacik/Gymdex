@@ -566,18 +566,21 @@ def repeat_workout(connection: sqlite3.Connection, workout_id: int) -> dict[str,
         new_workout_id = workout_cursor.lastrowid
         source_entries = connection.execute(
             """SELECT we.id, we.variation_id, we.gym_profile_id,
-                      we.exercise_name_snapshot, we.variation_name_snapshot,
+                      e.name AS exercise_name, v.name AS variation_name,
                       we.equipment_snapshot, we.manufacturer_snapshot, we.label_snapshot,
-                      we.tracking_type_snapshot,
+                      v.tracking_type,
                       v.archived_at IS NOT NULL OR p.archived_at IS NOT NULL AS archived
                FROM workout_exercises we
                JOIN exercise_variations v ON v.id = we.variation_id
+               JOIN exercises e ON e.id = v.exercise_id
                LEFT JOIN gym_exercise_profiles p ON p.id = we.gym_profile_id
                WHERE we.workout_id = ? ORDER BY we.position""",
             (workout_id,),
         ).fetchall()
         # Archived Variations and Exercise Configurations are not offered for new
-        # Workouts, so Repeat skips them and closes the gaps they leave.
+        # Workouts, so Repeat skips them and closes the gaps they leave. Names come
+        # from the current Exercise and Variation (a Rename applies to new
+        # workouts); equipment, manufacturer and label identify the configuration.
         kept = [entry for entry in source_entries if not entry["archived"]]
         for position, entry in enumerate(kept, start=1):
             entry_cursor = connection.execute(
@@ -589,22 +592,20 @@ def repeat_workout(connection: sqlite3.Connection, workout_id: int) -> dict[str,
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (new_workout_id, entry["variation_id"], entry["gym_profile_id"], position,
                  *(entry[key] for key in (
-                    "exercise_name_snapshot", "variation_name_snapshot",
+                    "exercise_name", "variation_name",
                     "equipment_snapshot", "manufacturer_snapshot", "label_snapshot",
-                    "tracking_type_snapshot",
+                    "tracking_type",
                  ))),
             )
-            slots = [row["position"] for row in connection.execute(
-                """SELECT position FROM workout_sets
-                   WHERE workout_exercise_id = ? ORDER BY position""",
+            slots = connection.execute(
+                "SELECT COUNT(*) FROM workout_sets WHERE workout_exercise_id = ?",
                 (entry["id"],),
-            )]
-            for slot in slots or [1]:
-                connection.execute(
-                    """INSERT INTO workout_sets(workout_exercise_id, position)
-                       VALUES (?, ?)""",
-                    (entry_cursor.lastrowid, slot),
-                )
+            ).fetchone()[0]
+            # Number from 1: older workouts may have gaps left by removed sets.
+            connection.executemany(
+                "INSERT INTO workout_sets(workout_exercise_id, position) VALUES (?, ?)",
+                [(entry_cursor.lastrowid, slot) for slot in range(1, max(slots, 1) + 1)],
+            )
         workout = connection.execute(
             "SELECT id, started_at FROM workouts WHERE id = ?", (new_workout_id,)
         ).fetchone()
@@ -675,13 +676,21 @@ def add_workout_exercise(
     if not workout:
         raise LookupError("Active workout not found.")
     variation = connection.execute(
-        """SELECT v.id, v.tracking_type, v.name AS variation_name, e.name AS exercise_name
+        """SELECT v.id, v.tracking_type, v.name AS variation_name, e.name AS exercise_name,
+                  v.archived_at
            FROM exercise_variations v JOIN exercises e ON e.id = v.exercise_id
            WHERE v.id = ?""",
         (variation_id,),
     ).fetchone()
     if not variation:
         raise LookupError("Exercise variation not found.")
+    # The picker hides archived Variations, but another device may archive one
+    # while this picker is open. Recent goes through here too.
+    if variation["archived_at"]:
+        raise RuntimeError(
+            f"{variation['exercise_name']} {variation['variation_name']} is archived. "
+            "Restore it in Manage to add it."
+        )
     allowed = connection.execute(
         "SELECT 1 FROM variation_equipment WHERE variation_id = ? AND equipment = ?",
         (variation_id, equipment),
@@ -1074,15 +1083,23 @@ def delete_completed_workout(connection: sqlite3.Connection, workout_id: int) ->
     return {"ok": True}
 
 
-def delete_set(connection: sqlite3.Connection, set_id: int) -> dict[str, bool]:
+def delete_set(connection: sqlite3.Connection, set_id: int) -> dict[str, Any]:
+    """Delete an active workout's set, renumber the remaining sets 1..n like history,
+    and return their new positions."""
     with connection:
         connection.execute("BEGIN IMMEDIATE")
         item = connection.execute("SELECT workout_exercise_id FROM workout_sets WHERE id = ?", (set_id,)).fetchone()
         if not item:
             raise LookupError("Set not found.")
-        require_active_exercise(connection, item["workout_exercise_id"])
+        exercise_id = item["workout_exercise_id"]
+        require_active_exercise(connection, exercise_id)
         connection.execute("DELETE FROM workout_sets WHERE id = ?", (set_id,))
-    return {"ok": True}
+        renumber_positions(connection, "workout_sets", exercise_id)
+        sets = rows(connection.execute(
+            "SELECT id, position FROM workout_sets WHERE workout_exercise_id = ? ORDER BY position",
+            (exercise_id,),
+        ))
+    return {"ok": True, "sets": sets}
 
 
 # Manage: rename, remove and restore the items new Workouts are built from. Removing
@@ -1203,8 +1220,8 @@ def _custom_exercise_rows(connection: sqlite3.Connection) -> list[dict[str, Any]
         exercise_id, exercise_name = variation.pop("exercise_id"), variation.pop("exercise_name")
         exercise = exercises.setdefault(exercise_id, {
             "id": exercise_id, "name": exercise_name, "variations": [],
-            # A custom Exercise is archived when all its Variations are, and can be
-            # renamed only when it has no starter catalog Variations.
+            # Manage shows the Exercise as archived when all its custom Variations are
+            # Archived; it can be renamed only when it has no starter catalog Variations.
             "archived": True, "renamable": not _has_starter_variations(connection, exercise_id),
         })
         # An Equipment value is used when a Workout Exercise of this Variation recorded it.
@@ -1328,7 +1345,7 @@ def _rename_exercise(connection: sqlite3.Connection, exercise_id: int, name: obj
     connection.execute("UPDATE exercises SET name = ? WHERE id = ?", (clean_name, exercise_id))
 
 
-# A custom Exercise is not archived itself: it follows its Variations.
+# An Exercise is never Archived itself: Manage shows it archived when all its custom Variations are.
 MANAGED_KINDS["exercise"] = ManagedKind(
     table="exercises",
     missing="Exercise not found.",
@@ -1377,7 +1394,8 @@ def set_variation_equipment(
 
 
 def manage_overview(connection: sqlite3.Connection) -> dict[str, Any]:
-    """Gyms, Exercise Configurations and custom Exercises, each marked archived and used."""
+    """Gyms, Exercise Configurations and Custom Exercise Variations (grouped by Exercise),
+    each marked archived and used."""
     return {
         "gyms": _gym_rows(connection),
         "configurations": _configuration_rows(connection),

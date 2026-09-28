@@ -404,6 +404,23 @@ class ManageCustomExerciseTests(unittest.TestCase):
         exercise, = db.manage_overview(self.connection)['exercises']
         self.assertEqual((exercise['archived'], exercise['variations'][0]['archived']), (True, True))
 
+    def test_an_archived_variation_cannot_be_added_to_a_workout(self):
+        self.completed_workout_with(self.heavy, 'Prowler')
+        configuration_id = db.manage_overview(self.connection)['configurations'][0]['id']
+        db.remove_item(self.connection, 'variation', self.heavy['id'])
+        workout = db.start_workout(self.connection, self.home['id'])
+
+        refused = 'Sled Push Heavy is archived. Restore it in Manage to add it.'
+        with self.assertRaisesRegex(RuntimeError, refused):
+            db.add_workout_exercise(self.connection, workout['id'], self.heavy['id'], 'Prowler')
+        with self.assertRaisesRegex(RuntimeError, refused):
+            db.add_recent_profile(self.connection, workout['id'], configuration_id)
+        self.assertEqual(db.bootstrap(self.connection)['workout_exercises'], [])
+
+        db.restore_item(self.connection, 'variation', self.heavy['id'])
+        added = db.add_recent_profile(self.connection, workout['id'], configuration_id)
+        self.assertEqual((added['variation_name'], added['equipment']), ('Heavy', 'Prowler'))
+
     def test_restoring_a_variation_offers_it_in_the_picker_again(self):
         self.completed_workout_with(self.heavy, 'Prowler')
         db.remove_item(self.connection, 'variation', self.heavy['id'])
@@ -441,6 +458,21 @@ class ManageCustomExerciseTests(unittest.TestCase):
         entry = db.completed_workout(self.connection, workout['id'])['workout_exercises'][0]
         self.assertEqual(entry['exercise_name'], 'Sled Push')
         self.assertEqual(db.rename_item(self.connection, 'exercise', exercise_id, 'sled drive')['name'], 'sled drive')
+
+    def test_repeat_uses_the_current_exercise_and_variation_names(self):
+        workout = self.completed_workout_with(self.heavy, 'Prowler')
+        exercise_id = db.manage_overview(self.connection)['exercises'][0]['id']
+        db.rename_item(self.connection, 'exercise', exercise_id, 'Sled Drive')
+        db.rename_item(self.connection, 'variation', self.heavy['id'], 'Very Heavy')
+
+        db.repeat_workout(self.connection, workout['id'])
+
+        entry, = db.bootstrap(self.connection)['workout_exercises']
+        self.assertEqual((entry['exercise_name'], entry['variation_name'], entry['equipment']),
+                         ('Sled Drive', 'Very Heavy', 'Prowler'))
+        # The completed source workout keeps the names it was recorded with.
+        recorded = db.completed_workout(self.connection, workout['id'])['workout_exercises'][0]
+        self.assertEqual((recorded['exercise_name'], recorded['variation_name']), ('Sled Push', 'Heavy'))
 
     def test_an_exercise_rename_cannot_collide_or_be_blank(self):
         exercise_id = db.manage_overview(self.connection)['exercises'][0]['id']

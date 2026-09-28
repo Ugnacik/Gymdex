@@ -130,7 +130,9 @@ class FeatureTests(unittest.TestCase):
         active = db.bootstrap(self.connection)
         entries = active['workout_exercises']
         self.assertEqual([entry['position'] for entry in entries], [1, 2])
-        self.assertEqual(entries[0]['variation_name'], 'Standard')
+        # A new workout takes the current name; equipment details come from the source.
+        self.assertEqual(entries[0]['variation_name'], 'Renamed')
+        self.assertEqual(entries[0]['equipment'], 'Machine')
         self.assertEqual(entries[0]['manufacturer'], 'Acme')
         self.assertEqual(entries[0]['label'], 'Rack 1')
         self.assertEqual([set_item['position'] for set_item in entries[0]['sets']], [1, 2, 3])
@@ -144,6 +146,17 @@ class FeatureTests(unittest.TestCase):
         self.assertEqual(self.connection.execute(
             'SELECT COUNT(*) FROM workouts WHERE completed_at IS NULL'
         ).fetchone()[0], 1)
+
+    def test_repeat_numbers_set_slots_without_gaps(self):
+        # Sets removed before removal renumbered them left gaps in older workouts.
+        workout, entry, _ = self.workout_with_set()
+        self.connection.execute(
+            'INSERT INTO workout_sets(workout_exercise_id, position) VALUES (?, 3)', (entry['id'],),
+        )
+        self.connection.commit()
+        self.request('POST', f'/api/history/{workout["id"]}/repeat')
+        repeated, = db.bootstrap(self.connection)['workout_exercises']
+        self.assertEqual([item['position'] for item in repeated['sets']], [1, 2])
 
     def test_picker_and_recent_add_empty_slots_for_each_set_of_last_matching_workout(self):
         original = db.start_workout(self.connection, self.gym['id'])
@@ -370,6 +383,19 @@ class FeatureTests(unittest.TestCase):
         }), (409, {'error': 'Sled Drive already has an archived variation named Max. Restore it in Manage.'}))
         self.assertEqual(self.request('POST', f'{variation_path}/restore')[1]['archived'], False)
         self.assertIn(heavy['id'], [item['id'] for item in self.request('GET', catalog_path)[1]['catalog']])
+
+    def test_adding_an_archived_variation_is_refused_on_the_picker_and_recent_routes(self):
+        heavy = db.create_exercise(self.connection, 'Sled Push', 'Heavy', 'duration', ['Sled'])
+        self.workout_with_set(variation=heavy, equipment='Sled')
+        configuration_id = self.request('GET', '/api/manage')[1]['configurations'][0]['id']
+        self.assertEqual(self.request('DELETE', f'/api/manage/variations/{heavy["id"]}'), (200, {'outcome': 'archived'}))
+        workout = db.start_workout(self.connection, self.gym['id'])
+        path = f'/api/workouts/{workout["id"]}/exercises'
+        refused = (409, {'error': 'Sled Push Heavy is archived. Restore it in Manage to add it.'})
+
+        self.assertEqual(self.request('POST', path, {'variation_id': heavy['id'], 'equipment': 'Sled'}), refused)
+        self.assertEqual(self.request('POST', path, {'profile_id': configuration_id}), refused)
+        self.assertEqual(self.request('GET', '/api/bootstrap')[1]['workout_exercises'], [])
 
     def test_manage_routes_refuse_starter_catalog_exercises(self):
         catalog = self.request('GET', f'/api/catalog?gym_id={self.gym["id"]}')[1]['catalog']

@@ -320,9 +320,12 @@ export class WorkoutEditor {
     const removal = (async () => {
       await set.pending;
       try {
-        await this.#request(`/api/sets/${id}`, { method: "DELETE" });
+        const removed = await this.#request(`/api/sets/${id}`, { method: "DELETE" });
         const entry = this.data.workout_exercises.find((entry) => entry.sets.some((item) => item.id === id));
-        entry.sets = entry.sets.filter((item) => item.id !== id);
+        // The server renumbers the remaining sets 1..n; drafts stay keyed by set id.
+        const positions = new Map((removed?.sets ?? []).map((item) => [item.id, item.position]));
+        entry.sets = entry.sets.filter((item) => item.id !== id)
+          .map((item) => ({ ...item, position: positions.get(item.id) ?? item.position }));
         this.#drafts.remove(this.data.active_workout.id, id);
         this.#drafts.snapshot(this.data);
         this.#items.delete(id);
