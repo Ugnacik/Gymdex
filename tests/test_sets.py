@@ -344,6 +344,18 @@ class SetTests(unittest.TestCase):
         self.assertEqual(self.request('DELETE', '/api/workout-exercises/invalid')[0], 400)
         self.assertEqual([e['position'] for e in db.bootstrap(self.connection)['workout_exercises']], [1])
 
+    def test_ids_too_large_for_sqlite_are_not_found(self):
+        huge = '99999999999999999999'
+        for method, path, payload in [('DELETE', f'/api/workout-exercises/{huge}', None),
+                                      ('PUT', f'/api/workout-exercises/{huge}', dict(position=1)),
+                                      ('POST', f'/api/workout-exercises/{huge}/sets', {}),
+                                      ('PUT', f'/api/sets/{huge}', dict(result=8, weight=None, completed=True)),
+                                      ('DELETE', f'/api/sets/{huge}', None)]:
+            with self.subTest(method=method, path=path):
+                status, body = self.request(method, path, payload)
+                self.assertEqual(status, 404)
+                self.assertIn('not found', body['error'])
+
     def test_request_field_types_return_json_client_errors(self):
         for path, payload in [('/api/gyms', {'name': None}),
                               ('/api/workouts', {'gym_id': None})]:

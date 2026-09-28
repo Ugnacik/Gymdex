@@ -244,6 +244,9 @@ class GymdexHandler(BaseHTTPRequestHandler):
             return self._json_error(str(error), HTTPStatus.BAD_REQUEST)
         except LookupError as error:
             return self._json_error(str(error), HTTPStatus.NOT_FOUND)
+        except OverflowError:
+            # An id beyond SQLite's 64-bit INTEGER range cannot name any row.
+            return self._json_error("Item not found.", HTTPStatus.NOT_FOUND)
         except RuntimeError as error:
             return self._json_error(str(error), HTTPStatus.CONFLICT)
         except sqlite3.IntegrityError:
