@@ -92,6 +92,9 @@ async function harness(disk = storage(), initialData = {}, { now = Date.parse('2
   // forms appended by Add set live in their exercise's list.
   const isRendered = (item) => item.isConnected
     && (item !== form || nodes['#app'].innerHTML.includes(`data-set-id="${item.dataset.setId}"`));
+  // The stale banner's Finish it is a finish button too when the rendered workout marks it as one.
+  const finishButtons = () => [nodes['#finish'],
+    ...(/id="stale-finish" data-finish-workout/.test(nodes['#app'].innerHTML) ? [nodes['#stale-finish']] : [])];
   const entryNode = { querySelector: (selector) => selector === '.sets-list' ? list : null };
   const addSetButton = Object.assign(node(), { dataset: { addSet: '3' }, closest: () => entryNode });
   const data = { gyms: [], active_workout: { id: 1, gym_id: 1, gym_name: 'Home', started_at: '2026-09-22 10:00:00' },
@@ -108,8 +111,8 @@ async function harness(disk = storage(), initialData = {}, { now = Date.parse('2
         if (selector === '.set-form') return forms.filter(isRendered);
         if (selector === '.set-form[data-dirty="true"]') return forms.filter((item) => isRendered(item) && item.dataset.dirty);
         if (selector === '[data-add-set]') return form.isConnected ? [addSetButton] : [];
-        if (selector === '[data-finish-workout]') return [nodes['#finish']];
-        if (selector === '[data-finish-workout], #cancel-workout') return [nodes['#finish'], nodes['#cancel-workout']];
+        if (selector === '[data-finish-workout]') return finishButtons();
+        if (selector === '[data-finish-workout], #cancel-workout') return [...finishButtons(), nodes['#cancel-workout']];
         if (selector === '[data-note-target]') return noteFields(nodes['#app'].innerHTML);
         return [];
       },
@@ -908,7 +911,14 @@ test('a workout started more than 3 hours ago offers Finish it, which uses the n
     requests.push(`${options?.method ?? 'GET'} ${path}`);
     return response(path === '/api/bootstrap' ? { gyms: [], active_workout: null, workout_exercises: [] } : { ok: true });
   };
-  await app.nodes['#stale-finish'].events.click();
+  const finishing = deferred();
+  const reply = app.env.fetch;
+  app.env.fetch = async (path, options) => path === '/api/workouts/1/complete' ? finishing.promise.then(() => reply(path, options)) : reply(path, options);
+  const pending = app.nodes['#stale-finish'].events.click();
+  // Like the other finish buttons, Finish it is disabled while the workout finishes.
+  assert.equal(app.nodes['#stale-finish'].disabled, true);
+  finishing.resolve();
+  await pending;
   assert.ok(requests.includes('POST /api/workouts/1/complete'), requests.join());
   assert.match(app.nodes['#app'].innerHTML, /No active workout/);
   assert.match(app.nodes['#toast'].textContent, /Workout finished/);

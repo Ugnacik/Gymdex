@@ -255,7 +255,7 @@ function renderWorkout() {
       ${stale ? `<section class="stale-banner" id="stale-banner" aria-labelledby="stale-title">
         <h2 id="stale-title">Still training?</h2>
         <p>This workout started ${formatElapsed(elapsedMinutes(workout))} ago.</p>
-        <div class="stale-actions"><button type="button" class="primary" id="stale-finish">Finish it</button><button type="button" class="secondary" id="stale-keep">Keep going</button></div>
+        <div class="stale-actions"><button type="button" class="primary" id="stale-finish" data-finish-workout>Finish it</button><button type="button" class="secondary" id="stale-keep">Keep going</button></div>
       </section>` : ""}
       ${renderRestTimer()}
       <div class="section-title"><h2>Exercises</h2><span>${entries.length}</span></div>
@@ -294,7 +294,6 @@ function renderWorkout() {
     },
   )));
   if (stale) {
-    document.querySelector("#stale-finish").addEventListener("click", finishWorkout);
     document.querySelector("#stale-keep").addEventListener("click", () => {
       dismissStaleWorkout(workout.id);
       document.querySelector("#stale-banner").hidden = true;
