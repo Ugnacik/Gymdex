@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { confirmInPage } from '../static/confirm-sheet.mjs';
+import { askTextInPage, confirmInPage } from '../static/confirm-sheet.mjs';
 
 // A minimal DOM: elements keep their children, listeners and focus, and a dialog
 // fires close like a browser's when it is closed with or without a return value.
@@ -14,7 +14,7 @@ function page() {
       remove() { this.parentNode.children = this.parentNode.children.filter((item) => item !== this); this.isConnected = false; },
       setAttribute(name, value) { this.attributes[name] = value; },
       addEventListener(event, callback) { (listeners[event] ??= []).push(callback); },
-      dispatch(event, target = this) { (listeners[event] ?? []).forEach((callback) => callback({ target })); },
+      dispatch(event, target = this) { (listeners[event] ?? []).forEach((callback) => callback({ target, preventDefault() {} })); },
       click() { this.dispatch('click'); },
       focus() { document.activeElement = this; },
       showModal() { this.open = true; this.returnValue = ''; },
@@ -72,4 +72,60 @@ test('the safe button, Escape and a backdrop tap all answer no', async () => {
   dialog.dispatch('click');
   assert.equal(await answer, false);
   assert.equal(sheet(), undefined);
+});
+
+const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+test('the text sheet asks for a name in the page and answers with what the action accepted', async () => {
+  const { document, all, sheet, button, opener } = page();
+  const submitted = [];
+  const answer = askTextInPage(document, 'Save this workout as a routine', {
+    label: 'Routine name', value: 'Home 21 Sep', confirmLabel: 'Save routine',
+    submit: async (text) => { submitted.push(text); if (submitted.length === 1) throw new Error('Home already has a routine named Legs.'); return { id: 4, name: text }; },
+  });
+  const dialog = sheet();
+  assert.equal(dialog.open, true);
+  assert.match(dialog.className, /\bconfirm-sheet\b/);
+  const input = all(dialog).find((item) => item.tagName === 'INPUT');
+  assert.equal(input.value, 'Home 21 Sep');
+  assert.equal(input.maxLength, 80);
+  assert.equal(document.activeElement, input, 'focus starts in the field');
+  assert.ok(all(dialog).some((item) => item.tagName === 'LABEL' && item.textContent === 'Routine name'));
+  assert.deepEqual(all(dialog).filter((item) => item.tagName === 'BUTTON').map((item) => item.textContent), ['Cancel', 'Save routine']);
+  const form = all(dialog).find((item) => item.tagName === 'FORM');
+  const status = all(dialog).find((item) => item.attributes.role === 'status');
+
+  input.value = '   ';
+  form.dispatch('submit');
+  await settle();
+  assert.equal(status.textContent, 'Routine name is required.');
+  assert.deepEqual(submitted, []);
+
+  input.value = '  Legs  ';
+  form.dispatch('submit');
+  await settle();
+  assert.equal(dialog.open, true, 'a refused name keeps the sheet open');
+  assert.equal(status.textContent, 'Home already has a routine named Legs.');
+  assert.equal(button('Save routine').disabled, false);
+
+  input.value = 'Leg day';
+  form.dispatch('submit');
+  assert.deepEqual(await answer, { id: 4, name: 'Leg day' });
+  assert.deepEqual(submitted, ['Legs', 'Leg day']);
+  assert.equal(sheet(), undefined);
+  assert.equal(document.activeElement, opener);
+});
+
+test('Cancel, Escape and a backdrop tap leave the text sheet without an answer', async () => {
+  const { document, sheet, button } = page();
+  const ask = () => askTextInPage(document, 'Rename routine', { label: 'Routine name', confirmLabel: 'Save name', submit: async () => { throw new Error('not called'); } });
+  let answer = ask();
+  button('Cancel').click();
+  assert.equal(await answer, null);
+  answer = ask();
+  sheet().close();
+  assert.equal(await answer, null);
+  answer = ask();
+  sheet().dispatch('click');
+  assert.equal(await answer, null);
 });
