@@ -100,7 +100,7 @@ class CatalogUpgradeTests(unittest.TestCase):
         db.initialize(connection)
         db.initialize(connection)
 
-        self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 4)
+        self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 5)
         for table in ("gyms", "gym_exercise_profiles", "exercise_variations"):
             with self.subTest(table=table):
                 # Nothing is archived after the upgrade.
@@ -126,7 +126,7 @@ class CatalogUpgradeTests(unittest.TestCase):
             "SELECT id FROM exercise_variations WHERE custom = 1"
         )]
         self.assertEqual(custom_ids, [created["id"]])
-        self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 4)
+        self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 5)
         connection.close()
 
 

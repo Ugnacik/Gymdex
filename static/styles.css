@@ -449,3 +449,18 @@ button:disabled, fieldset:disabled { cursor: wait; opacity: 0.7; }
 .equipment-chip-fixed { min-height: 44px; padding-right: 14px; }
 #manage-message:empty { display: none; }
 #manage-content:focus { outline: none; }
+
+/* Routines: the start screen's section and the Routines screen (routines.mjs). */
+.routine-starts .recent-card strong { overflow-wrap: anywhere; }
+.routine-empty { font-size: 0.9rem; }
+.history-save-routine { width: 100%; margin: 0 0 20px; }
+.history-repeat + .history-save-routine, .history-notice + .history-save-routine { margin-top: -12px; }
+.routine-new, .routine-add { width: 100%; margin: 8px 0 16px; }
+.routines-dialog [data-routine-back], .routines-dialog [data-routine-detail] { min-height: 44px; margin-left: -8px; padding: 0 8px; }
+.routine-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 8px; margin: 8px 0; }
+.routine-heading h3 { min-width: 0; margin: 0; font-size: 1.15rem; overflow-wrap: anywhere; }
+.routine-exercises { display: grid; gap: 10px; margin: 0 0 12px; padding: 0; list-style: none; }
+.routine-exercise .history-notice { margin: 8px 0 0; }
+.routine-sets { grid-template-columns: auto minmax(0, 7rem); align-items: center; gap: 12px; margin: 12px 0 0; font-size: 0.9rem; font-weight: 650; }
+#routines-message:empty { display: none; }
+#routines-content:focus { outline: none; }

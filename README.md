@@ -19,6 +19,7 @@ Gymdex supports:
 - browsing completed workouts by gym and date;
 - creating exercise variations with custom tracking and equipment choices;
 - repeating a completed workout with fresh, empty set slots;
+- saving routines, per gym, and starting a workout from one in a tap;
 - correcting sets and notes, and adding and deleting sets, in completed workouts,
   and deleting a completed workout;
 - viewing exercise progress across completed workouts;
@@ -65,6 +66,47 @@ source stays in history. A workout at an archived gym cannot be repeated until
 the gym is restored in [Manage](#manage-gyms-and-exercises). Exercises whose
 exercise configuration or custom variation is archived are left out, and the
 confirmation says how many, for example "1 archived exercise skipped".
+
+**Save as routine**, below Repeat this workout, saves the workout's exercise
+configurations as a [routine](#routines) at its gym. It works while another
+workout is active, but not for a workout at an archived gym. Name the routine
+in the sheet that opens; it suggests the gym and date. Each exercise gets as
+many sets as it had completed sets, at least 1 and at most 20. Exercises whose
+configuration or custom variation is archived are left out, and the message
+says how many.
+
+## Routines
+
+A routine is a saved plan for one gym: an ordered list of exercise
+configurations, each with a number of sets. It does not store weights, reps or
+notes. When a gym is selected on the start screen, its routines appear under
+**Routines** as **Start …** buttons. One tap starts a workout at that gym with
+the routine's exercises, each with that many empty, not completed sets. Last
+workout values appear and can be copied in a tap, exactly as for added
+exercises. **Start workout** still starts an empty workout in one tap. Starting
+a routine needs a connection and no active workout. Exercises whose
+configuration or custom variation is archived are left out, and the message
+says how many. The routines of an archived gym are not offered; restoring the
+gym brings them back.
+
+**Edit** beside Routines opens the Routines screen for the selected gym:
+
+- **New routine** asks for a name, then opens the empty routine.
+- Select a routine to change it. **Add exercise** lists the exercise
+  configurations saved at this gym, most recently used first, with a search
+  box. An added exercise starts with 3 sets. To add an exercise never done at
+  this gym, add it to a workout there once, or save a workout as a routine.
+- **Sets** chooses 1 to 20 sets for an exercise. **Move up** and **Move down**
+  change its place, and the × removes it after a confirmation.
+- **Rename** changes the name. Routine names are unique within a gym,
+  regardless of capitalization.
+- **Delete** removes the routine after a confirmation. Workouts started from it
+  stay in history; they do not refer to the routine.
+
+Every change saves right away and needs a connection. An archived exercise stays
+listed with a note, so restoring it in Manage puts it back into the routine.
+Repeat this workout is unchanged: it copies one completed workout, and set slots
+follow that workout's sets.
 
 Use **Progress** to choose an exercise and optional gym. The chart and table
 show the best completed result and best weight for each workout. From a workout
@@ -141,8 +183,8 @@ archived gyms included, and cannot be blank.
 
 The remove button says what it will do, and asks before doing it:
 
-- **Delete** appears for a gym that has never had a workout. It removes the gym
-  and its saved exercise configurations permanently.
+- **Delete** appears for a gym that has never had a workout. It removes the gym,
+  its saved exercise configurations and its routines permanently.
 - **Archive** appears for a gym with workouts. An archived gym disappears from
   the start screen, and new workouts cannot be started or repeated there. Its
   workouts stay in history, progress, and the CSV export, and the gym filters in
@@ -157,10 +199,11 @@ Exercise Configurations lists the equipment and machine details saved for each
 gym, grouped by gym. Its remove button works the same way:
 
 - **Delete** appears for a configuration that no workout uses, for example one
-  added to a workout that was cancelled. It is removed permanently.
+  added to a workout that was cancelled. It is removed permanently, also from
+  any routine that lists it.
 - **Archive** appears for a configuration used in a workout. It disappears from
   Recent in the picker, which then has room for the next most recent configuration, and
-  Repeat this workout leaves it out. History, progress, "Last workout", and the
+  Repeat this workout and starting a routine leave it out. History, progress, "Last workout", and the
   CSV export keep it.
 
 Archived configurations are listed under **Archived** with their gym, and
@@ -280,12 +323,16 @@ and sets, including unsaved edits. Saved gym equipment configurations and
 completed workouts are kept.
 
 Every confirmation (finishing or canceling a workout, removing a set or
-exercise, deleting a set from history, deleting or archiving in Manage) appears
+exercise, deleting a set from history, deleting or archiving in Manage, and
+removing an exercise from or deleting a routine) appears
 in Gymdex's own sheet rather than the browser's confirmation box, so it also
 works in in-app browsers that suppress that box. The action button names the
 action, for example **Remove** or **Finish**, and is red when it deletes,
 archives or discards something. **Keep** or **Back**, Escape, or a tap outside
 the sheet leaves everything as it was.
+Naming a routine uses the same kind of sheet with a text box instead of the
+browser's prompt. A name the server refuses, such as a duplicate, shows its
+reason in the sheet so it can be corrected.
 
 If the active workout started more than 3 hours ago, a "Still training?" banner
 appears when the workout opens. **Finish it** uses the normal Finish workout
@@ -341,7 +388,8 @@ restored, reconnect, and wait for the saved-to-server status. Check Assist kg
 on an assisted variation, editing the middle of an exercise search, and
 scrolling with the keyboard open. Sheets and dialogs shrink to the part of the
 screen above the keyboard and keep the field you are typing in visible; check
-Equipment options in Create custom exercise and a rename in Manage.
+Equipment options in Create custom exercise, a rename in Manage, and naming a
+routine.
 When changing cached app assets, also bump the cache version in `static/sw.js`
 so a newly installed worker refreshes the offline copy. Close existing app tabs
 and reopen to activate a waiting worker update.
@@ -550,4 +598,5 @@ it on the Pi with `tailscale file get ~/`, and follow the restore steps above.
 Exercise configurations belong to a gym. A configuration can record equipment,
 a manufacturer, and a machine label. When it is added to a workout, Gymdex
 copies those details into the workout record so old workouts do not change when
-the gym configuration is edited later.
+the gym configuration is edited later. A routine refers to a gym's configurations
+and stores only their order and set counts.
