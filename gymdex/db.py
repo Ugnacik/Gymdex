@@ -219,6 +219,31 @@ def migrate(connection: sqlite3.Connection) -> None:
             ]
             connection.executemany("UPDATE exercise_variations SET custom = 1 WHERE id = ?", custom_ids)
             connection.execute("PRAGMA user_version = 4")
+    if version < 5:
+        with connection:
+            connection.execute("BEGIN IMMEDIATE")
+            # A Routine (see CONTEXT.md) belongs to one Gym and lists Exercise Configurations
+            # with a set count. Deleting a never-used Gym or Configuration removes it from
+            # routines; archived ones stay listed and are skipped when a Routine starts.
+            connection.execute("""CREATE TABLE IF NOT EXISTS routines (
+                id INTEGER PRIMARY KEY,
+                gym_id INTEGER NOT NULL REFERENCES gyms(id) ON DELETE CASCADE,
+                name TEXT NOT NULL COLLATE NOCASE,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(gym_id, name)
+            )""")
+            connection.execute("""CREATE TABLE IF NOT EXISTS routine_exercises (
+                id INTEGER PRIMARY KEY,
+                routine_id INTEGER NOT NULL REFERENCES routines(id) ON DELETE CASCADE,
+                position INTEGER NOT NULL CHECK (position > 0),
+                profile_id INTEGER NOT NULL REFERENCES gym_exercise_profiles(id) ON DELETE CASCADE,
+                set_count INTEGER NOT NULL CHECK (set_count BETWEEN 1 AND 20),
+                UNIQUE(routine_id, position)
+            )""")
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS routine_exercises_profile ON routine_exercises(profile_id)"
+            )
+            connection.execute("PRAGMA user_version = 5")
 
 
 def rows(cursor: sqlite3.Cursor) -> list[dict[str, Any]]:
@@ -259,11 +284,19 @@ def bootstrap(connection: sqlite3.Connection) -> dict[str, Any]:
             connection, active_workout["gym_id"], entry["variation_id"], entry["equipment"],
             entry["manufacturer"], entry["label"], entry["tracking_type"],
         )
+    # The start screen offers each unarchived Gym's Routines beside plain Start.
+    routines = rows(connection.execute(
+        """SELECT r.id, r.gym_id, r.name,
+                  (SELECT COUNT(*) FROM routine_exercises WHERE routine_id = r.id) AS exercise_count
+           FROM routines r JOIN gyms g ON g.id = r.gym_id
+           WHERE g.archived_at IS NULL ORDER BY g.name, r.name, r.id"""
+    ))
     return {
         "gyms": gyms,
         "archived_gyms": archived_gyms,
         "active_workout": active_workout,
         "workout_exercises": workout_exercises,
+        "routines": routines,
     }
 
 
@@ -538,6 +571,68 @@ def start_workout(connection: sqlite3.Connection, gym_id: int) -> dict[str, Any]
     }
 
 
+def _open_new_workout(connection: sqlite3.Connection, gym_id: int, gym_name: str,
+                      archived_at: str | None) -> int:
+    """Insert the Active Workout for Repeat or a Routine; the caller owns the transaction."""
+    require_unarchived_gym(gym_name, archived_at)
+    if connection.execute(
+        "SELECT 1 FROM workouts WHERE completed_at IS NULL"
+    ).fetchone():
+        raise RuntimeError("A workout is already active.")
+    return connection.execute("INSERT INTO workouts(gym_id) VALUES (?)", (gym_id,)).lastrowid
+
+
+# Selects a planned Workout Exercise from an Exercise Configuration p, its Variation v and
+# Exercise e, with the current names, and whether it is Archived.
+PLANNED_EXERCISE_COLUMNS = """v.id AS variation_id, e.name AS exercise_name, v.name AS variation_name,
+    v.tracking_type, v.archived_at IS NOT NULL OR p.archived_at IS NOT NULL AS archived"""
+
+
+def _add_planned_exercises(
+    connection: sqlite3.Connection, workout_id: int, planned: list[sqlite3.Row], slots: list[int],
+) -> int:
+    """Add planned Workout Exercises with blank set slots to a new workout.
+
+    Archived Variations and Exercise Configurations are not offered for new Workouts, so
+    they are skipped and the gaps they leave closed. Names come from the current Exercise
+    and Variation (a Rename applies to new workouts). Returns the number skipped.
+    """
+    kept = [(entry, count) for entry, count in zip(planned, slots) if not entry["archived"]]
+    for position, (entry, count) in enumerate(kept, start=1):
+        entry_cursor = connection.execute(
+            """INSERT INTO workout_exercises
+               (workout_id, variation_id, gym_profile_id, position,
+                exercise_name_snapshot, variation_name_snapshot,
+                equipment_snapshot, manufacturer_snapshot, label_snapshot,
+                tracking_type_snapshot)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (workout_id, entry["variation_id"], entry["gym_profile_id"], position,
+             *(entry[key] for key in (
+                "exercise_name", "variation_name", "equipment", "manufacturer", "label",
+                "tracking_type",
+             ))),
+        )
+        connection.executemany(
+            "INSERT INTO workout_sets(workout_exercise_id, position) VALUES (?, ?)",
+            [(entry_cursor.lastrowid, slot) for slot in range(1, max(count, 1) + 1)],
+        )
+    return len(planned) - len(kept)
+
+
+def _new_workout_summary(connection: sqlite3.Connection, workout_id: int, gym_id: int,
+                         gym_name: str, skipped: int) -> dict[str, Any]:
+    workout = connection.execute(
+        "SELECT id, started_at FROM workouts WHERE id = ?", (workout_id,)
+    ).fetchone()
+    return {
+        "id": workout["id"],
+        "started_at": workout["started_at"],
+        "gym_id": gym_id,
+        "gym_name": gym_name,
+        "skipped": skipped,
+    }
+
+
 def repeat_workout(connection: sqlite3.Connection, workout_id: int) -> dict[str, Any]:
     """Start a new workout with the source configurations and blank set slots.
 
@@ -555,67 +650,279 @@ def repeat_workout(connection: sqlite3.Connection, workout_id: int) -> dict[str,
         ).fetchone()
         if not source:
             raise LookupError("Completed workout not found.")
-        require_unarchived_gym(source["gym_name"], source["archived_at"])
-        if connection.execute(
-            "SELECT 1 FROM workouts WHERE completed_at IS NULL"
-        ).fetchone():
-            raise RuntimeError("A workout is already active.")
-        workout_cursor = connection.execute(
-            "INSERT INTO workouts(gym_id) VALUES (?)", (source["gym_id"],)
+        new_workout_id = _open_new_workout(
+            connection, source["gym_id"], source["gym_name"], source["archived_at"],
         )
-        new_workout_id = workout_cursor.lastrowid
-        source_entries = connection.execute(
-            """SELECT we.id, we.variation_id, we.gym_profile_id,
-                      e.name AS exercise_name, v.name AS variation_name,
-                      we.equipment_snapshot, we.manufacturer_snapshot, we.label_snapshot,
+        # Equipment, manufacturer and label identify the configuration.
+        planned = connection.execute(
+            f"""SELECT we.gym_profile_id, we.equipment_snapshot AS equipment,
+                       we.manufacturer_snapshot AS manufacturer, we.label_snapshot AS label,
+                       (SELECT COUNT(*) FROM workout_sets WHERE workout_exercise_id = we.id) AS slots,
+                       {PLANNED_EXERCISE_COLUMNS}
+                FROM workout_exercises we
+                JOIN exercise_variations v ON v.id = we.variation_id
+                JOIN exercises e ON e.id = v.exercise_id
+                LEFT JOIN gym_exercise_profiles p ON p.id = we.gym_profile_id
+                WHERE we.workout_id = ? ORDER BY we.position""",
+            (workout_id,),
+        ).fetchall()
+        # Number from 1: older workouts may have gaps left by removed sets.
+        skipped = _add_planned_exercises(
+            connection, new_workout_id, planned, [entry["slots"] for entry in planned],
+        )
+        return _new_workout_summary(
+            connection, new_workout_id, source["gym_id"], source["gym_name"], skipped,
+        )
+
+
+# Routines: saved plans of Exercise Configurations with a set count, for one Gym (see
+# CONTEXT.md and docs/adr/0002-routines.md). They store no weights or reps: starting one
+# adds blank set slots, and "Last workout" references come from bootstrap as usual.
+
+ROUTINE_MAX_EXERCISES = 50
+ROUTINE_MAX_SETS = 20
+
+
+def clean_routine_name(name: object) -> str:
+    if not isinstance(name, str):
+        raise ValueError("Routine name must be text.")
+    clean_name = " ".join(name.split())
+    if not clean_name:
+        raise ValueError("Routine name is required.")
+    if len(clean_name) > 80:
+        raise ValueError("Routine name must be 80 characters or fewer.")
+    return clean_name
+
+
+def _require_free_routine_name(connection: sqlite3.Connection, gym_id: int, name: str,
+                               routine_id: int | None = None) -> None:
+    """Routine names are unique within a Gym ignoring case; a routine may keep its own name."""
+    taken = connection.execute(
+        """SELECT r.name, g.name AS gym_name FROM routines r JOIN gyms g ON g.id = r.gym_id
+           WHERE r.gym_id = ? AND r.name = ? AND r.id IS NOT ?""",
+        (gym_id, name, routine_id),
+    ).fetchone()
+    if taken:
+        raise RuntimeError(f"{taken['gym_name']} already has a routine named {taken['name']}.")
+
+
+def _routine_rows(connection: sqlite3.Connection, gym_id: int,
+                  routine_id: int | None = None) -> list[dict[str, Any]]:
+    routines = rows(connection.execute(
+        """SELECT id, gym_id, name FROM routines
+           WHERE gym_id = ? AND (? IS NULL OR id = ?) ORDER BY name, id""",
+        (gym_id, routine_id, routine_id),
+    ))
+    for routine in routines:
+        exercises = rows(connection.execute(
+            """SELECT re.id, re.position, re.profile_id, re.set_count,
+                      p.equipment, p.manufacturer, p.label,
+                      v.id AS variation_id, e.name AS exercise_name, v.name AS variation_name,
                       v.tracking_type,
                       v.archived_at IS NOT NULL OR p.archived_at IS NOT NULL AS archived
+               FROM routine_exercises re
+               JOIN gym_exercise_profiles p ON p.id = re.profile_id
+               JOIN exercise_variations v ON v.id = p.variation_id
+               JOIN exercises e ON e.id = v.exercise_id
+               WHERE re.routine_id = ? ORDER BY re.position""",
+            (routine["id"],),
+        ))
+        # Deleting a Configuration in Manage may leave a gap; positions are shown 1..n.
+        routine["exercises"] = [
+            {**item, "position": index, "archived": bool(item["archived"])}
+            for index, item in enumerate(exercises, start=1)
+        ]
+    return routines
+
+
+def _describe_routine(connection: sqlite3.Connection, routine_id: int) -> dict[str, Any]:
+    gym_id = connection.execute("SELECT gym_id FROM routines WHERE id = ?", (routine_id,)).fetchone()["gym_id"]
+    return _routine_rows(connection, gym_id, routine_id)[0]
+
+
+def _require_gym(connection: sqlite3.Connection, gym_id: object) -> sqlite3.Row:
+    gym = connection.execute(
+        "SELECT id, name, archived_at FROM gyms WHERE id = ?", (gym_id,)
+    ).fetchone() if type(gym_id) is int and 1 <= gym_id <= 9223372036854775807 else None
+    if not gym:
+        raise LookupError("Gym not found.")
+    return gym
+
+
+def _require_routine(connection: sqlite3.Connection, routine_id: int) -> sqlite3.Row:
+    routine = connection.execute(
+        """SELECT r.id, r.gym_id, g.name AS gym_name, g.archived_at FROM routines r
+           JOIN gyms g ON g.id = r.gym_id WHERE r.id = ?""", (routine_id,),
+    ).fetchone() if 1 <= routine_id <= 9223372036854775807 else None
+    if not routine:
+        raise LookupError("Routine not found.")
+    return routine
+
+
+def routines_for_gym(connection: sqlite3.Connection, gym_id: int) -> dict[str, Any]:
+    """A Gym's Routines and the Exercise Configurations that can be added to them.
+
+    Configurations are offered like Recent, most recently used first, but without a limit.
+    """
+    _require_gym(connection, gym_id)
+    configurations = rows(connection.execute(
+        """SELECT p.id AS profile_id, p.variation_id, e.name AS exercise_name,
+                  v.name AS variation_name, v.tracking_type, p.equipment, p.manufacturer, p.label,
+                  MAX(we.added_at) AS last_used
+           FROM gym_exercise_profiles p
+           JOIN exercise_variations v ON v.id = p.variation_id
+           JOIN exercises e ON e.id = v.exercise_id
+           LEFT JOIN workout_exercises we ON we.gym_profile_id = p.id
+           WHERE p.gym_id = ? AND p.archived_at IS NULL AND v.archived_at IS NULL
+           GROUP BY p.id
+           ORDER BY last_used IS NULL, last_used DESC, e.name, v.name, p.equipment, p.manufacturer, p.label""",
+        (gym_id,),
+    ))
+    return {"routines": _routine_rows(connection, gym_id), "configurations": configurations}
+
+
+def _clean_routine_exercises(connection: sqlite3.Connection, gym_id: int,
+                             exercises: object) -> list[tuple[int, int]]:
+    """Validate a Routine's ordered (profile_id, set_count) list for its Gym."""
+    if not isinstance(exercises, list) or len(exercises) > ROUTINE_MAX_EXERCISES:
+        raise ValueError(f"A routine lists up to {ROUTINE_MAX_EXERCISES} exercises.")
+    clean = []
+    for item in exercises:
+        profile_id = item.get("profile_id") if isinstance(item, dict) else None
+        set_count = item.get("set_count") if isinstance(item, dict) else None
+        if type(profile_id) is not int or not 1 <= profile_id <= 9223372036854775807:
+            raise ValueError("Each routine exercise needs an exercise configuration.")
+        if type(set_count) is not int or not 1 <= set_count <= ROUTINE_MAX_SETS:
+            raise ValueError(f"Sets must be a whole number from 1 to {ROUTINE_MAX_SETS}.")
+        # Archived Configurations may stay listed; they are skipped when the Routine starts.
+        if not connection.execute(
+            "SELECT 1 FROM gym_exercise_profiles WHERE id = ? AND gym_id = ?", (profile_id, gym_id),
+        ).fetchone():
+            raise ValueError("That exercise configuration is not saved for this gym.")
+        clean.append((profile_id, set_count))
+    return clean
+
+
+def _replace_routine_exercises(connection: sqlite3.Connection, routine_id: int,
+                               exercises: list[tuple[int, int]]) -> None:
+    connection.execute("DELETE FROM routine_exercises WHERE routine_id = ?", (routine_id,))
+    connection.executemany(
+        "INSERT INTO routine_exercises(routine_id, position, profile_id, set_count) VALUES (?, ?, ?, ?)",
+        [(routine_id, position, profile_id, set_count)
+         for position, (profile_id, set_count) in enumerate(exercises, start=1)],
+    )
+
+
+def create_routine(connection: sqlite3.Connection, gym_id: int, name: object,
+                   exercises: object = None) -> dict[str, Any]:
+    clean_name = clean_routine_name(name)
+    with connection:
+        connection.execute("BEGIN IMMEDIATE")
+        _require_gym(connection, gym_id)
+        _require_free_routine_name(connection, gym_id, clean_name)
+        clean = _clean_routine_exercises(connection, gym_id, [] if exercises is None else exercises)
+        routine_id = connection.execute(
+            "INSERT INTO routines(gym_id, name) VALUES (?, ?)", (gym_id, clean_name),
+        ).lastrowid
+        _replace_routine_exercises(connection, routine_id, clean)
+        return _describe_routine(connection, routine_id)
+
+
+def save_workout_as_routine(connection: sqlite3.Connection, workout_id: int,
+                            name: object) -> dict[str, Any]:
+    """Save a Completed Workout's Exercise Configurations as a Routine at its Gym.
+
+    Each gets its number of completed sets, at least 1 and at most ROUTINE_MAX_SETS.
+    Archived Configurations and Variations are skipped and counted, as in Repeat.
+    """
+    clean_name = clean_routine_name(name)
+    _require_completed_id(workout_id)
+    with connection:
+        connection.execute("BEGIN IMMEDIATE")
+        source = connection.execute(
+            """SELECT w.gym_id, g.name AS gym_name, g.archived_at FROM workouts w
+               JOIN gyms g ON g.id = w.gym_id
+               WHERE w.id = ? AND w.completed_at IS NOT NULL""",
+            (workout_id,),
+        ).fetchone()
+        if not source:
+            raise LookupError("Completed workout not found.")
+        if source["archived_at"]:
+            raise RuntimeError(f"{source['gym_name']} is archived. Restore it in Manage to save routines there.")
+        _require_free_routine_name(connection, source["gym_id"], clean_name)
+        # Workout Exercises recorded before configurations were remembered have none to save.
+        entries = connection.execute(
+            """SELECT we.gym_profile_id,
+                      v.archived_at IS NOT NULL OR p.archived_at IS NOT NULL AS archived,
+                      (SELECT COUNT(*) FROM workout_sets
+                       WHERE workout_exercise_id = we.id AND completed = 1) AS completed_sets
                FROM workout_exercises we
                JOIN exercise_variations v ON v.id = we.variation_id
-               JOIN exercises e ON e.id = v.exercise_id
-               LEFT JOIN gym_exercise_profiles p ON p.id = we.gym_profile_id
+               JOIN gym_exercise_profiles p ON p.id = we.gym_profile_id
                WHERE we.workout_id = ? ORDER BY we.position""",
             (workout_id,),
         ).fetchall()
-        # Archived Variations and Exercise Configurations are not offered for new
-        # Workouts, so Repeat skips them and closes the gaps they leave. Names come
-        # from the current Exercise and Variation (a Rename applies to new
-        # workouts); equipment, manufacturer and label identify the configuration.
-        kept = [entry for entry in source_entries if not entry["archived"]]
-        for position, entry in enumerate(kept, start=1):
-            entry_cursor = connection.execute(
-                """INSERT INTO workout_exercises
-                   (workout_id, variation_id, gym_profile_id, position,
-                    exercise_name_snapshot, variation_name_snapshot,
-                    equipment_snapshot, manufacturer_snapshot, label_snapshot,
-                    tracking_type_snapshot)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (new_workout_id, entry["variation_id"], entry["gym_profile_id"], position,
-                 *(entry[key] for key in (
-                    "exercise_name", "variation_name",
-                    "equipment_snapshot", "manufacturer_snapshot", "label_snapshot",
-                    "tracking_type",
-                 ))),
-            )
-            slots = connection.execute(
-                "SELECT COUNT(*) FROM workout_sets WHERE workout_exercise_id = ?",
-                (entry["id"],),
-            ).fetchone()[0]
-            # Number from 1: older workouts may have gaps left by removed sets.
-            connection.executemany(
-                "INSERT INTO workout_sets(workout_exercise_id, position) VALUES (?, ?)",
-                [(entry_cursor.lastrowid, slot) for slot in range(1, max(slots, 1) + 1)],
-            )
-        workout = connection.execute(
-            "SELECT id, started_at FROM workouts WHERE id = ?", (new_workout_id,)
-        ).fetchone()
-    return {
-        "id": workout["id"],
-        "started_at": workout["started_at"],
-        "gym_id": source["gym_id"],
-        "gym_name": source["gym_name"],
-        "skipped": len(source_entries) - len(kept),
-    }
+        kept = [(entry["gym_profile_id"], min(max(entry["completed_sets"], 1), ROUTINE_MAX_SETS))
+                for entry in entries if not entry["archived"]]
+        routine_id = connection.execute(
+            "INSERT INTO routines(gym_id, name) VALUES (?, ?)", (source["gym_id"], clean_name),
+        ).lastrowid
+        _replace_routine_exercises(connection, routine_id, kept)
+        return {**_describe_routine(connection, routine_id), "skipped": len(entries) - len(kept)}
+
+
+def update_routine(connection: sqlite3.Connection, routine_id: int, payload: dict) -> dict[str, Any]:
+    """Rename a Routine and/or replace its ordered exercises and set counts."""
+    with connection:
+        connection.execute("BEGIN IMMEDIATE")
+        routine = _require_routine(connection, routine_id)
+        if "name" in payload:
+            clean_name = clean_routine_name(payload["name"])
+            _require_free_routine_name(connection, routine["gym_id"], clean_name, routine_id)
+            connection.execute("UPDATE routines SET name = ? WHERE id = ?", (clean_name, routine_id))
+        if "exercises" in payload:
+            clean = _clean_routine_exercises(connection, routine["gym_id"], payload["exercises"])
+            _replace_routine_exercises(connection, routine_id, clean)
+        return _describe_routine(connection, routine_id)
+
+
+def delete_routine(connection: sqlite3.Connection, routine_id: int) -> dict[str, bool]:
+    """Delete a Routine and its exercises. No Workout refers to a Routine."""
+    with connection:
+        connection.execute("BEGIN IMMEDIATE")
+        _require_routine(connection, routine_id)
+        connection.execute("DELETE FROM routines WHERE id = ?", (routine_id,))
+    return {"ok": True}
+
+
+def start_routine(connection: sqlite3.Connection, routine_id: int) -> dict[str, Any]:
+    """Start a workout at the Routine's Gym with its exercises and blank set slots.
+
+    Like Repeat, it is refused during an Active Workout or at an archived Gym, and
+    archived Configurations and Variations are skipped and counted.
+    """
+    with connection:
+        connection.execute("BEGIN IMMEDIATE")
+        routine = _require_routine(connection, routine_id)
+        new_workout_id = _open_new_workout(
+            connection, routine["gym_id"], routine["gym_name"], routine["archived_at"],
+        )
+        planned = connection.execute(
+            f"""SELECT p.id AS gym_profile_id, p.equipment, p.manufacturer, p.label, re.set_count,
+                       {PLANNED_EXERCISE_COLUMNS}
+                FROM routine_exercises re
+                JOIN gym_exercise_profiles p ON p.id = re.profile_id
+                JOIN exercise_variations v ON v.id = p.variation_id
+                JOIN exercises e ON e.id = v.exercise_id
+                WHERE re.routine_id = ? ORDER BY re.position""",
+            (routine_id,),
+        ).fetchall()
+        skipped = _add_planned_exercises(
+            connection, new_workout_id, planned, [entry["set_count"] for entry in planned],
+        )
+        return _new_workout_summary(
+            connection, new_workout_id, routine["gym_id"], routine["gym_name"], skipped,
+        )
 
 
 def exercise_progress(
