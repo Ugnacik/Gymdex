@@ -301,7 +301,7 @@ function renderWorkout() {
         ${entries.length ? entries.map((entry, index) => `
           <article class="exercise-entry" data-entry-id="${entry.id}">
             <div class="history-exercise-heading"><h3>${escapeHtml(exerciseDisplayName(entry))}</h3><button type="button" class="text-button" data-active-progress="${entry.variation_id}" data-progress-equipment="${escapeHtml(entry.equipment)}" data-progress-manufacturer="${escapeHtml(entry.manufacturer || "")}" data-progress-label="${escapeHtml(entry.label || "")}">View progress</button><button type="button" class="remove-exercise" data-remove-exercise="${entry.id}" aria-label="Remove ${escapeHtml(exerciseDisplayName(entry))}"><span aria-hidden="true">×</span></button></div>
-            <p class="meta">${escapeHtml(configurationLabel(entry))}</p>
+            <div class="machine-line"><p class="meta">${escapeHtml(configurationLabel(entry))}</p><button type="button" class="text-button" data-change-machine="${entry.id}" aria-label="Change machine for ${escapeHtml(exerciseDisplayName(entry))}">Change machine</button></div>
             ${renderNote(`exercise:${entry.id}`, "Note", `Note for ${exerciseDisplayName(entry)}`)}
             <p class="set-hint">${entry.tracking_type === "duration" ? "Duration in seconds" : "Repetitions"}. ${entry.assisted ? "Assist kg is the counterweight and is optional." : "Weight is optional."}</p>
             <div class="sets-list">${entry.sets.map((set, index) => renderSet(entry, set, index)).join("")}</div>
@@ -1316,27 +1316,30 @@ async function openPicker() {
   } catch (error) { showToast(error.message); }
 }
 
-function renderPicker(query = "") {
+// Opens the bottom sheet that Add exercise and Change machine render into (#picker .sheet).
+function openSheet(content) {
   document.querySelector("#picker")?.remove();
   const wrapper = document.createElement("div");
   wrapper.id = "picker";
   wrapper.className = "sheet-backdrop";
-  wrapper.innerHTML = `
-    <section class="sheet" role="dialog" aria-modal="true" aria-labelledby="picker-title">
+  wrapper.innerHTML = `<section class="sheet" role="dialog" aria-modal="true" aria-labelledby="picker-title">${content}</section>`;
+  document.querySelector("main")?.setAttribute("inert", "");
+  document.body.append(wrapper);
+  wrapper.addEventListener("click", (event) => { if (event.target === wrapper) closePicker(); });
+}
+
+function renderPicker(query = "") {
+  openSheet(`
       <div class="sheet-handle" aria-hidden="true"></div>
       <div class="sheet-header"><h2 id="picker-title">Add exercise</h2><button class="text-button" id="close-picker">Close</button></div>
       <input class="search" id="exercise-search" type="search" inputmode="search" autocomplete="off" placeholder="Search exercises" aria-label="Search exercises" value="${escapeHtml(query)}" />
-      <div id="picker-results"></div>
-    </section>`;
-  document.querySelector("main")?.setAttribute("inert", "");
-  document.body.append(wrapper);
+      <div id="picker-results"></div>`);
   const search = document.querySelector("#exercise-search");
   search.focus();
   search.setSelectionRange(search.value.length, search.value.length);
   search.addEventListener("input", (event) => renderPickerResults(event.target.value));
   renderPickerResults(query);
   document.querySelector("#close-picker").addEventListener("click", closePicker);
-  wrapper.addEventListener("click", (event) => { if (event.target === wrapper) closePicker(); });
 }
 
 function renderPickerResults(query) {
@@ -1491,10 +1494,10 @@ function renderCustomExerciseForm(query = "") {
   nameInput.focus();
 }
 
-function closePicker() {
+function closePicker(focus = "#open-picker") {
   document.querySelector("#picker")?.remove();
   document.querySelector("main")?.removeAttribute("inert");
-  document.querySelector("#open-picker")?.focus();
+  document.querySelector(focus)?.focus();
 }
 
 async function addRecent(profileId) {
@@ -1512,22 +1515,26 @@ function chooseExercise(variationId) {
   renderConfiguration();
 }
 
-function renderConfiguration() {
+// The Exercise Configuration form: equipment of state.selectedExercise plus manufacturer and
+// machine label. Adding a Variation starts empty; Change machine (change) starts from a
+// Workout Exercise's current values and saves them to it instead.
+function renderConfiguration(change = null) {
   const sheet = document.querySelector("#picker .sheet");
   const item = state.selectedExercise;
   sheet.innerHTML = `
     <div class="sheet-handle" aria-hidden="true"></div>
-    <div class="sheet-header"><button class="text-button" id="back-to-picker">Back</button><button class="text-button" id="close-picker">Close</button></div>
+    ${change ? `<div class="sheet-header"><h2 id="picker-title">Change machine</h2><button class="text-button" id="close-picker">Cancel</button></div>
+    <p>${escapeHtml(exerciseDisplayName(item))} keeps its sets and note.</p>` : `<div class="sheet-header"><button class="text-button" id="back-to-picker">Back</button><button class="text-button" id="close-picker">Close</button></div>
     <h2 id="picker-title">${escapeHtml(exerciseDisplayName(item))}</h2>
-    <p>Choose the equipment used at this gym.</p>
+    <p>Choose the equipment used at this gym.</p>`}
     <div class="equipment-grid">${item.equipment.map((equipment) => `<button class="equipment-option" data-equipment="${escapeHtml(equipment)}" aria-pressed="${state.selectedEquipment === equipment}">${escapeHtml(equipment)}</button>`).join("")}</div>
     <form id="configuration-form">
       <div class="field choice-field" id="manufacturer-field"></div>
       <div class="field choice-field" id="machine-label-field"></div>
-      <button class="primary accent" type="submit">Add exercise</button>
+      <button class="primary accent" type="submit">${change ? "Save" : "Add exercise"}</button>
     </form>`;
-  document.querySelector("#back-to-picker").addEventListener("click", () => renderPicker());
-  document.querySelector("#close-picker").addEventListener("click", closePicker);
+  document.querySelector("#back-to-picker")?.addEventListener("click", () => renderPicker());
+  document.querySelector("#close-picker").addEventListener("click", () => closePicker(change?.focus));
   document.querySelectorAll("[data-equipment]").forEach((button) => button.addEventListener("click", () => {
     state.selectedEquipment = button.dataset.equipment;
     document.querySelectorAll("[data-equipment]").forEach((option) => option.setAttribute("aria-pressed", String(option === button)));
@@ -1536,11 +1543,53 @@ function renderConfiguration() {
   const known = exerciseSuggestions(item.exercise_name);
   const details = {
     manufacturer: new ChoiceField(document.querySelector("#manufacturer-field"), { id: "manufacturer", name: "manufacturer",
-      title: "Manufacturer", optional: true, empty: "None", placeholder: "e.g. Technogym", options: known.manufacturers }),
+      title: "Manufacturer", optional: true, empty: "None", placeholder: "e.g. Technogym", options: known.manufacturers,
+      value: change?.entry.manufacturer ?? null }),
     label: new ChoiceField(document.querySelector("#machine-label-field"), { id: "machine-label", name: "label",
-      title: "Machine label", optional: true, empty: "None", placeholder: "e.g. Upstairs plate-loaded", options: known.labels }),
+      title: "Machine label", optional: true, empty: "None", placeholder: "e.g. Upstairs plate-loaded", options: known.labels,
+      value: change?.entry.label ?? null }),
   };
-  document.querySelector("#configuration-form").addEventListener("submit", (event) => addConfiguredExercise(event, details));
+  document.querySelector("#configuration-form").addEventListener("submit", (event) =>
+    change ? saveMachine(event, change, details) : addConfiguredExercise(event, details));
+}
+
+// Change machine on a Workout Exercise card: saves set and note drafts first, like the other
+// card actions, then opens the Exercise Configuration form with the card's current values.
+async function changeMachine(entryId) {
+  const entry = state.data.workout_exercises.find((item) => item.id === entryId);
+  if (!entry || !state.editor || state.editor.busy) return;
+  if (!await saveAllSets("Cannot change the machine yet")) return;
+  try {
+    state.picker = await api(`/api/catalog?gym_id=${state.data.active_workout.gym_id}`);
+  } catch (error) { showToast(error.message); return; }
+  const variation = state.picker.catalog.find((item) => item.id === entry.variation_id);
+  if (!variation) {
+    showToast(`${exerciseDisplayName(entry)} is archived. Restore it in Manage to change its machine.`);
+    return;
+  }
+  state.selectedExercise = variation;
+  state.selectedEquipment = entry.equipment;
+  openSheet("");
+  renderConfiguration({ entry, focus: `[data-change-machine="${entry.id}"]` });
+}
+
+async function saveMachine(event, change, { manufacturer, label }) {
+  event.preventDefault();
+  const submit = event.currentTarget?.querySelector?.('[type="submit"]');
+  if (submit) submit.disabled = true;
+  try {
+    const saved = await api(`/api/workouts/${state.data.active_workout.id}/exercises/${change.entry.id}/configuration`, {
+      method: "PUT",
+      body: JSON.stringify({ equipment: state.selectedEquipment, manufacturer: manufacturer.value, label: label.value }),
+    });
+    closePicker(change.focus);
+    await load();
+    document.querySelector(change.focus)?.focus();
+    showToast(`Machine changed to ${configurationLabel(saved)}.`);
+  } catch (error) {
+    if (submit) submit.disabled = false;
+    showToast(error.message);
+  }
 }
 
 async function addConfiguredExercise(event, { manufacturer, label }) {
@@ -1688,9 +1737,9 @@ function showInvalidSet(blocked) {
     : `${blocked}: fix the highlighted ${note ? "note" : "set"}, then try again.`);
 }
 
-async function saveAllSets() {
+async function saveAllSets(blocked = "Cannot add an exercise yet") {
   const saved = await state.editor?.flush();
-  if (!saved) showInvalidSet("Cannot add an exercise yet");
+  if (!saved) showInvalidSet(blocked);
   return Boolean(saved);
 }
 
@@ -1777,6 +1826,8 @@ app.addEventListener("click", (event) => {
   if (move) return moveExercise(Number(move.dataset.moveExercise), Number(move.dataset.moveTo));
   const remove = event.target.closest?.("[data-remove-exercise]");
   if (remove) return removeExercise(Number(remove.dataset.removeExercise));
+  const machine = event.target.closest?.("[data-change-machine]");
+  if (machine) return changeMachine(Number(machine.dataset.changeMachine));
 });
 
 window.addEventListener("beforeunload", (event) => {

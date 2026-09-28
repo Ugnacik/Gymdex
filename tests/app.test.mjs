@@ -488,8 +488,8 @@ test('a finished rest still completes when the browser has no Web Audio', async 
   assert.equal(app.nodes['#rest-status'].textContent, 'Rest complete');
 });
 
-// Opens the picker with the catalog response and returns the sheet's stand-in elements.
-async function openPickerSheet(app, catalog, respond = () => { throw new Error('Unexpected request'); }) {
+// Stand-ins for the elements of the picker sheet, which Add exercise and Change machine open.
+function pickerSheet(app) {
   const wrapper = node();
   wrapper.remove = () => { delete app.nodes['#picker']; };
   const sheet = node();
@@ -505,6 +505,12 @@ async function openPickerSheet(app, catalog, respond = () => { throw new Error('
     '#manufacturer-field': choiceContainer(), '#machine-label-field': choiceContainer() });
   app.env.document.createElement = () => wrapper;
   app.env.document.body = { append: () => { app.nodes['#picker'] = wrapper; } };
+  return { sheet, sheetNodes, customForm };
+}
+
+// Opens the picker with the catalog response and returns the sheet's stand-in elements.
+async function openPickerSheet(app, catalog, respond = () => { throw new Error('Unexpected request'); }) {
+  const { sheet, sheetNodes, customForm } = pickerSheet(app);
   const requests = [];
   app.env.fetch = async (path, options) => {
     requests.push([path, options]);
@@ -682,6 +688,96 @@ test('an Exercise never configured starts with empty machine details and no sugg
   await app.nodes['#configuration-form'].events.submit({ preventDefault() {}, currentTarget: app.nodes['#configuration-form'] });
   const added = requests.find(([path]) => path === '/api/workouts/1/exercises');
   assert.deepEqual(JSON.parse(added[1].body), { variation_id: 30, equipment: 'Bodyweight', manufacturer: '', label: '' });
+});
+
+const legPressEntry = { id: 3, variation_id: 17, exercise_name: 'Leg Press', variation_name: 'Single Leg', equipment: 'Machine',
+  manufacturer: 'Cybex', label: '', note: 'Seat 4', tracking_type: 'repetitions', previous_sets: [],
+  sets: [{ id: 2, position: 1, weight: null, result: null, completed: false }] };
+
+test('Change machine saves set drafts, then switches the exercise to the machine chosen in its sheet', async () => {
+  const app = await harness(storage(), { workout_exercises: [legPressEntry] });
+  assert.match(app.nodes['#app'].innerHTML, /<div class="machine-line"><p class="meta">Machine · Cybex<\/p><button type="button" class="text-button" data-change-machine="3" aria-label="Change machine for Single Leg Leg Press">Change machine<\/button><\/div>/);
+  const { sheet } = pickerSheet(app);
+  const changed = { ...structuredClone(legPressEntry), equipment: 'Sled', manufacturer: 'Technogym', label: 'Upstairs',
+    sets: [{ id: 2, position: 1, weight: 100, result: null, completed: false }] };
+  const requests = [];
+  app.env.fetch = async (url, options = {}) => {
+    requests.push([`${options.method ?? 'GET'} ${url}`, options.body && JSON.parse(options.body)]);
+    if (url === '/api/sets/2') return response({ id: 2, position: 1, weight: 100, result: null, completed: false });
+    if (url.startsWith('/api/catalog')) return response(structuredClone(suggestionCatalog));
+    if (url.endsWith('/configuration')) return response({ id: 3, equipment: 'Sled', manufacturer: 'Technogym', label: 'Upstairs' });
+    if (url === '/api/bootstrap') return response({ gyms: [], active_workout: { id: 1, gym_id: 1, gym_name: 'Home', started_at: '2026-09-22 10:00:00' }, workout_exercises: [changed] });
+    throw new Error(`Unexpected ${url}`);
+  };
+  // Like a browser, the sheet's equipment buttons exist while it is open.
+  const equipmentButtons = ['Sled', 'Machine'].map((equipment) => Object.assign(node(), { dataset: { equipment },
+    pressed: null, setAttribute(name, value) { if (name === 'aria-pressed') this.pressed = value; } }));
+  const querySelectorAll = app.env.document.querySelectorAll;
+  app.env.document.querySelectorAll = (selector) => selector === '[data-equipment]' ? equipmentButtons : querySelectorAll(selector);
+  app.form.elements.weight.value = '100';
+  app.form.events.input();
+
+  await clickIn(app, '[data-change-machine]', { changeMachine: '3' });
+  assert.deepEqual(requests.map(([request]) => request), ['PUT /api/sets/2', 'GET /api/catalog?gym_id=1'], 'the set draft is saved first');
+  assert.match(sheet.innerHTML, /<h2 id="picker-title">Change machine<\/h2><button class="text-button" id="close-picker">Cancel<\/button>/);
+  assert.match(sheet.innerHTML, /Single Leg Leg Press keeps its sets and note\./);
+  assert.match(sheet.innerHTML, /data-equipment="Sled" aria-pressed="false"[\s\S]*data-equipment="Machine" aria-pressed="true"/);
+  assert.match(sheet.innerHTML, /<button class="primary accent" type="submit">Save<\/button>/);
+  assert.doesNotMatch(sheet.innerHTML, /back-to-picker/);
+  const manufacturer = app.nodes['#manufacturer-field'];
+  const label = app.nodes['#machine-label-field'];
+  // Cybex is not among the suggestions here, so it starts typed under Other…; the label starts as None.
+  assert.equal(manufacturer.querySelector('#manufacturer-choice').value, OTHER);
+  assert.equal(manufacturer.querySelector('#manufacturer').value, 'Cybex');
+  assert.equal(label.querySelector('#machine-label-choice').value, '');
+  choose(manufacturer, 'manufacturer-choice', 'Technogym');
+  assert.equal(manufacturer.querySelector('#manufacturer').hidden, true);
+  choose(label, 'machine-label-choice', 'Upstairs');
+  equipmentButtons[0].events.click();
+  assert.deepEqual(equipmentButtons.map((button) => button.pressed), ['true', 'false']);
+
+  await app.nodes['#configuration-form'].events.submit({ preventDefault() {}, currentTarget: app.nodes['#configuration-form'] });
+  assert.deepEqual(requests.slice(2), [
+    ['PUT /api/workouts/1/exercises/3/configuration', { equipment: 'Sled', manufacturer: 'Technogym', label: 'Upstairs' }],
+    ['GET /api/bootstrap', undefined]]);
+  assert.equal(app.nodes['#picker'], undefined, 'the sheet closes');
+  assert.match(app.nodes['#app'].innerHTML, /<p class="meta">Sled · Technogym · Upstairs<\/p>/);
+  assert.match(app.nodes['#app'].innerHTML, /data-set-id="2"/);
+  assert.equal(app.nodes['#toast'].textContent, 'Machine changed to Sled · Technogym · Upstairs.');
+});
+
+test('Change machine waits for a set that cannot be saved, and Cancel changes nothing', async () => {
+  const app = await harness(storage(), { workout_exercises: [legPressEntry] });
+  pickerSheet(app);
+  const requests = [];
+  app.env.fetch = async (url, options = {}) => {
+    requests.push(`${options.method ?? 'GET'} ${url}`);
+    if (url.startsWith('/api/catalog')) return response(structuredClone(suggestionCatalog));
+    return response({ id: 2, position: 1, weight: null, result: 8, completed: false });
+  };
+  app.form.elements.completed.checked = true;
+  app.form.events.input();
+  await clickIn(app, '[data-change-machine]', { changeMachine: '3' });
+  assert.deepEqual(requests, []);
+  assert.equal(app.nodes['#picker'], undefined);
+  assert.equal(app.nodes['#toast'].textContent, 'Cannot change the machine yet: fix the highlighted set, then try again.');
+
+  app.form.elements.completed.checked = false;
+  app.form.events.input();
+  await clickIn(app, '[data-change-machine]', { changeMachine: '3' });
+  assert.deepEqual(requests, ['PUT /api/sets/2', 'GET /api/catalog?gym_id=1']);
+  app.nodes['#close-picker'].events.click();
+  assert.equal(app.nodes['#picker'], undefined);
+  assert.equal(requests.length, 2);
+});
+
+test('Change machine explains that an archived exercise must be restored first', async () => {
+  const app = await harness(storage(), { workout_exercises: [{ ...legPressEntry, variation_id: 99 }] });
+  pickerSheet(app);
+  app.env.fetch = async () => response(structuredClone(suggestionCatalog));
+  await clickIn(app, '[data-change-machine]', { changeMachine: '3' });
+  assert.equal(app.nodes['#picker'], undefined);
+  assert.equal(app.nodes['#toast'].textContent, 'Single Leg Leg Press is archived. Restore it in Manage to change its machine.');
 });
 
 test('progress shows a chart and numeric history for an exercise', async () => {

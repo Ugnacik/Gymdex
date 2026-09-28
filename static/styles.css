@@ -157,6 +157,9 @@ input::placeholder { color: var(--muted); opacity: 1; }
 
 .exercise-entry { padding: 20px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--surface); overflow-wrap: anywhere; }
 .exercise-entry .meta { margin: 6px 0 0; color: var(--muted); font-size: 0.9rem; }
+.machine-line { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.machine-line .meta { min-width: 0; margin: 0; }
+.machine-line .text-button { min-height: 44px; margin-right: -8px; padding: 0 8px; font-size: 0.85rem; }
 .empty { border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--surface); padding: 32px 24px; text-align: center; }
 .empty h3 { margin-bottom: 10px; font-size: 1.15rem; }
 .empty p { margin-bottom: 0; }

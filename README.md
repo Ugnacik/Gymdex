@@ -12,7 +12,8 @@ Gymdex supports:
 - searching a starter exercise catalog of common exercises;
 - remembering equipment and machine details separately for each gym;
 - logging sets with optional weight, repetitions or duration, and completion;
-- removing and reordering exercises in the active workout;
+- removing and reordering exercises in the active workout, and changing the
+  machine an exercise was added with;
 - adding an optional note to a workout and to each of its exercises;
 - showing completed sets from the last matching workout and copying one in a tap;
 - prefilling each added set from the set above it;
@@ -286,6 +287,17 @@ all its sets after confirmation. Both actions first save outstanding set edits t
 removing an exercise also discards any unsaved drafts for its sets and note on
 this phone.
 
+**Change machine**, beside an exercise's equipment and machine details, fixes
+them without adding the exercise again, for example when you picked the wrong
+manufacturer. It opens the same equipment, Manufacturer and Machine label
+choices as adding an exercise, starting from the current ones; **Save** switches
+the exercise to that configuration at this gym, and **Cancel** leaves it as it
+was. The exercise keeps its sets and note, and its "Last workout" values then
+come from the last workout with the new configuration. Choosing an archived
+configuration's details restores it. The previous configuration is deleted when
+no workout and no routine uses it any more, so a mistaken machine does not stay
+under Recent. Change machine is only on the active workout, not in history.
+
 Notes are optional free text, up to 1,000 characters, for anything the numbers
 don't capture. They stay collapsed so they never get in the way of logging sets:
 tap **Add note** under an exercise's name and equipment, above its sets, or **Add workout note** under the
@@ -294,8 +306,8 @@ like sets: automatically after a short typing pause or when you leave the box,
 with a draft kept on this phone until the server has it, so a note typed without
 signal is not lost. A note still waiting to save opens when the page reloads.
 
-Outstanding set and note edits must reach the server before adding, moving or
-removing an exercise, or finishing the workout. If one cannot be saved, the page
+Outstanding set and note edits must reach the server before adding, moving,
+removing an exercise or changing its machine, or finishing the workout. If one cannot be saved, the page
 scrolls to it and a message says why the action waited. Every input change also saves a draft on the current
 device. Reloading restores those drafts, including unfinished entries. The page
 shows whether changes are saved to the server or waiting on the phone.
@@ -601,5 +613,6 @@ it on the Pi with `tailscale file get ~/`, and follow the restore steps above.
 Exercise configurations belong to a gym. A configuration can record equipment,
 a manufacturer, and a machine label. When it is added to a workout, Gymdex
 copies those details into the workout record so old workouts do not change when
-the gym configuration is edited later. A routine refers to a gym's configurations
+the gym configuration is edited later. Change machine on the active workout
+updates that copy and the configuration it refers to. A routine refers to a gym's configurations
 and stores only their order and set counts.

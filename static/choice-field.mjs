@@ -14,12 +14,18 @@ const escapeHtml = (value) => String(value)
 export class ChoiceField {
   // empty: label of a first option meaning "no value" (e.g. "None"), or null for none.
   // onEnter: called instead of submitting the form when Enter is pressed in the text input.
+  // value: the value to start with, chosen when listed and typed under Other… otherwise;
+  // "" starts on the empty option. Without one the field starts on its default choice.
   constructor(container, { id, name = "", title, optional = false, empty = null, placeholder = "",
-    newLabel = `New ${title.toLowerCase()}`, onEnter = null, describedBy = "", options = [] }) {
+    newLabel = `New ${title.toLowerCase()}`, onEnter = null, describedBy = "", options = [], value = null }) {
     Object.assign(this, { container, id, name, title, optional, empty, placeholder, newLabel, onEnter, describedBy });
     this.choice = null;
     this.picked = false; // whether the user chose this.choice, rather than it being the default
     this.typed = "";
+    if (value !== null && (value !== "" || empty !== null)) {
+      const listed = value === "" || options.includes(value);
+      [this.choice, this.typed, this.picked] = listed ? [value, "", true] : [OTHER, value, true];
+    }
     this.setOptions(options);
   }
 

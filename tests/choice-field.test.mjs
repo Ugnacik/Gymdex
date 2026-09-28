@@ -107,6 +107,30 @@ test('without an empty option the first value is the default, and Other… can a
   assert.equal(field.value, 'Standard');
 });
 
+test('a starting value is chosen when listed, typed under Other… when not, and None when empty', () => {
+  const start = (options, value) => {
+    const container = choiceContainer();
+    const field = new ChoiceField(container, { id: 'manufacturer', name: 'manufacturer', title: 'Manufacturer',
+      optional: true, empty: 'None', options, value });
+    return { container, field, select: container.querySelector('#manufacturer-choice'), input: container.querySelector('#manufacturer') };
+  };
+  let { field, select, input, container } = start(['Cybex', 'Technogym'], 'Technogym');
+  assert.deepEqual([select.value, input.hidden, field.value], ['Technogym', true, 'Technogym']);
+  field.setOptions(['Cybex', 'Technogym']);
+  assert.equal(field.value, 'Technogym', 'the starting value counts as chosen');
+
+  ({ field, select, input, container } = start(['Technogym'], 'Cybex'));
+  assert.deepEqual([select.value, input.hidden, input.value, field.value], [OTHER, false, 'Cybex', 'Cybex']);
+  choose(container, 'manufacturer-choice', '');
+  assert.deepEqual([container.querySelector('#manufacturer').hidden, field.value], [true, '']);
+
+  ({ field, select, input } = start(['Technogym'], ''));
+  assert.deepEqual([select.value, input.hidden, field.value], ['', true, '']);
+
+  ({ field, select, input } = start([], 'Cybex'));
+  assert.deepEqual([select, input.hidden, input.value, field.value], [null, false, 'Cybex', 'Cybex']);
+});
+
 test('Enter in the text input runs onEnter instead of submitting, and clear() starts over', () => {
   const container = choiceContainer();
   let entered = 0;
