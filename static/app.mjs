@@ -926,11 +926,15 @@ function manageItems(overview, kind) {
   return [];
 }
 
+// Names an item in confirmations, toasts and aria-labels. A configuration adds its equipment
+// details, which tell apart several configurations of one exercise at a gym.
 function manageItemName(kind, item) {
-  return kind === "configuration" || kind === "variation" ? exerciseDisplayName(item) : item.name;
+  if (kind === "configuration") return `${exerciseDisplayName(item)} (${configurationLabel(item)})`;
+  return kind === "variation" ? exerciseDisplayName(item) : item.name;
 }
 
-function renderManageRow(kind, item, { name = manageItemName(kind, item), detail = "", rename = false, remove = true, actions: more = "", editor = "" } = {}) {
+// shown is the visible name when the row's detail line already says the rest of name.
+function renderManageRow(kind, item, { name = manageItemName(kind, item), shown = name, detail = "", rename = false, remove = true, actions: more = "", editor = "" } = {}) {
   const key = `${kind}:${item.id}`;
   const label = escapeHtml(name);
   const removeLabel = item.used ? "Archive" : "Delete";
@@ -938,7 +942,7 @@ function renderManageRow(kind, item, { name = manageItemName(kind, item), detail
     ? `<button type="button" class="text-button" data-manage-restore="${key}" aria-label="Restore ${label}">Restore</button>`
     : `${rename ? `<button type="button" class="text-button" data-manage-rename="${key}" aria-label="Rename ${label}">Rename</button>` : ""}${more}${remove ? `<button type="button" class="text-button manage-remove" data-manage-remove="${key}" aria-label="${removeLabel} ${label}">${removeLabel}</button>` : ""}`;
   return `<li class="manage-row">
-    <div class="manage-row-text"><span class="manage-name">${label}</span>${detail ? `<span class="meta">${escapeHtml(detail)}</span>` : ""}</div>
+    <div class="manage-row-text"><span class="manage-name">${escapeHtml(shown)}</span>${detail ? `<span class="meta">${escapeHtml(detail)}</span>` : ""}</div>
     ${actions ? `<div class="manage-actions">${actions}</div>` : ""}
     ${rename && !item.archived ? `<form class="manage-rename-form" data-manage-rename-form="${key}" hidden>
       <label class="field">New name<input name="name" maxlength="80" value="${label}" required autocomplete="off" /></label>
@@ -1022,10 +1026,10 @@ function renderManage(overview, open) {
     renderManageSection("configurations", "Exercise Configurations", configurations.length, `
       <p class="manage-help">Saved for a gym when you add an exercise there, and offered under Recent. Delete removes one never used in a workout. Archive hides a used one from Recent and Repeat; choosing the same equipment, manufacturer and label again restores it.</p>
       ${configurations.length ? renderManageGroups(configurations, (item) => `${item.gym_name}${item.gym_archived ? " (archived)" : ""}`,
-        (item) => renderManageRow("configuration", item, { detail: configurationDetail(item) }))
+        (item) => renderManageRow("configuration", item, { shown: exerciseDisplayName(item), detail: configurationDetail(item) }))
         : `<p>No exercise configurations yet. Add an exercise to a workout to save one.</p>`}
       ${renderManageArchived("configurations", archivedConfigurations.map((item) =>
-        renderManageRow("configuration", item, { detail: `${item.gym_name} · ${configurationLabel(item)}` })), open)}`, open),
+        renderManageRow("configuration", item, { shown: exerciseDisplayName(item), detail: `${item.gym_name} · ${configurationLabel(item)}` })), open)}`, open),
     renderCustomExercises(overview, open),
   ].join("");
 }

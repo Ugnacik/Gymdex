@@ -1326,20 +1326,23 @@ test('Manage archives, deletes and restores Exercise Configurations', async () =
   assert.match(html, /Sled · Recent hides it while Heavy Sled Push is archived/);
   assert.match(html, /Archived \(1\)[\s\S]*Home · Machine · Old[\s\S]*data-manage-restore="configuration:8"[^>]*>Restore<\/button>/);
   assert.doesNotMatch(html, /<1>/);
+  // Several configurations of one exercise at a gym are told apart by their equipment details.
+  assert.match(html, /<span class="manage-name">Incline Bench Press<\/span><span class="meta">Machine · Press &lt;1&gt;<\/span>/);
+  assert.match(html, /aria-label="Archive Incline Bench Press \(Machine · Press &lt;1&gt;\)"/);
 
   await click('[data-manage-remove]', { manageRemove: 'configuration:5' });
-  assert.match(questions[0], /^Archive Incline Bench Press\? It is used in recorded workouts/);
-  assert.equal(app.nodes['#toast'].textContent, 'Incline Bench Press archived.');
+  assert.match(questions[0], /^Archive Incline Bench Press \(Machine · Press <1>\)\? It is used in recorded workouts/);
+  assert.equal(app.nodes['#toast'].textContent, 'Incline Bench Press (Machine · Press <1>) archived.');
   await click('[data-manage-remove]', { manageRemove: 'configuration:6' });
-  assert.match(questions[1], /^Delete Incline Bench Press\? It has never been used/);
-  assert.equal(app.nodes['#toast'].textContent, 'Incline Bench Press deleted.');
+  assert.match(questions[1], /^Delete Incline Bench Press \(Machine · Press 2\)\? It has never been used/);
+  assert.equal(app.nodes['#toast'].textContent, 'Incline Bench Press (Machine · Press 2) deleted.');
   html = content.innerHTML;
   assert.doesNotMatch(html, /configuration:6/);
   assert.match(html, /Archived \(2\)[\s\S]*data-manage-restore="configuration:5"/);
 
   await click('[data-manage-restore]', { manageRestore: 'configuration:8' });
   assert.ok(requests.some(([key]) => key === 'POST /api/manage/configurations/8/restore'));
-  assert.equal(app.nodes['#toast'].textContent, 'Incline Bench Press restored.');
+  assert.equal(app.nodes['#toast'].textContent, 'Incline Bench Press (Machine · Old) restored.');
   assert.match(content.innerHTML, /data-manage-remove="configuration:8"/);
 });
 
