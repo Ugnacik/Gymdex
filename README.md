@@ -206,21 +206,22 @@ corner deletes it after confirmation, and the remaining sets are renumbered, as
 in history. Sets can be edited while the workout is active.
 
 Below each exercise's sets, **Move up** and **Move down** change its place in
-the workout, and **Remove** deletes the exercise with all its sets after
-confirmation. Both actions first save outstanding set edits to the server;
+the workout. The × in the exercise's top-right corner deletes the exercise with
+all its sets after confirmation. Both actions first save outstanding set edits to the server;
 removing an exercise also discards any unsaved drafts for its sets and note on
 this phone.
 
 Notes are optional free text, up to 1,000 characters, for anything the numbers
 don't capture. They stay collapsed so they never get in the way of logging sets:
-tap **Add note** below an exercise's sets, or **Add workout note** below Add
+tap **Add note** under an exercise's name and equipment, above its sets, or **Add workout note** below Add
 exercise, to open a text box. A collapsed note shows its first words. Notes save
 like sets: automatically after a short typing pause or when you leave the box,
 with a draft kept on this phone until the server has it, so a note typed without
 signal is not lost. A note still waiting to save opens when the page reloads.
 
 Outstanding set and note edits must reach the server before adding, moving or
-removing an exercise, or finishing the workout. Every input change also saves a draft on the current
+removing an exercise, or finishing the workout. If one cannot be saved, the page
+scrolls to it and a message says why the action waited. Every input change also saves a draft on the current
 device. Reloading restores those drafts, including unfinished entries. The page
 shows whether changes are saved to the server or waiting on the phone.
 

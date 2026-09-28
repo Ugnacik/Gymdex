@@ -262,12 +262,12 @@ function renderWorkout() {
       <section class="exercise-list">
         ${entries.length ? entries.map((entry, index) => `
           <article class="exercise-entry" data-entry-id="${entry.id}">
-            <div class="history-exercise-heading"><h3>${escapeHtml(exerciseDisplayName(entry))}</h3><button type="button" class="text-button" data-active-progress="${entry.variation_id}" data-progress-equipment="${escapeHtml(entry.equipment)}" data-progress-manufacturer="${escapeHtml(entry.manufacturer || "")}" data-progress-label="${escapeHtml(entry.label || "")}">View progress</button></div>
+            <div class="history-exercise-heading"><h3>${escapeHtml(exerciseDisplayName(entry))}</h3><button type="button" class="text-button" data-active-progress="${entry.variation_id}" data-progress-equipment="${escapeHtml(entry.equipment)}" data-progress-manufacturer="${escapeHtml(entry.manufacturer || "")}" data-progress-label="${escapeHtml(entry.label || "")}">View progress</button><button type="button" class="remove-exercise" data-remove-exercise="${entry.id}" aria-label="Remove ${escapeHtml(exerciseDisplayName(entry))}"><span aria-hidden="true">×</span></button></div>
             <p class="meta">${escapeHtml(configurationLabel(entry))}</p>
+            ${renderNote(`exercise:${entry.id}`, "Note", `Note for ${exerciseDisplayName(entry)}`)}
             <p class="set-hint">${entry.tracking_type === "duration" ? "Duration in seconds" : "Repetitions"}. ${entry.assisted ? "Assist kg is the counterweight and is optional." : "Weight is optional."}</p>
             <div class="sets-list">${entry.sets.map((set, index) => renderSet(entry, set, index)).join("")}</div>
             <button class="secondary add-set" data-add-set="${entry.id}">Add set</button>
-            ${renderNote(`exercise:${entry.id}`, "Note", `Note for ${exerciseDisplayName(entry)}`)}
             ${renderExerciseTools(entry, index, entries.length)}
           </article>`).join("") : `<div class="empty"><h3>No exercises yet</h3><p>Add a recent choice in one tap, or search the catalog.</p></div>`}
       </section>
@@ -373,7 +373,6 @@ function renderExerciseTools(entry, index, count) {
   return `<div class="exercise-tools">
     <button type="button" class="text-button" data-move-exercise="${entry.id}" data-move-to="${index}" aria-label="Move ${name} up" ${index === 0 ? "disabled" : ""}>Move up</button>
     <button type="button" class="text-button" data-move-exercise="${entry.id}" data-move-to="${index + 2}" aria-label="Move ${name} down" ${index === count - 1 ? "disabled" : ""}>Move down</button>
-    <button type="button" class="text-button remove-exercise" data-remove-exercise="${entry.id}" aria-label="Remove ${name}">Remove</button>
   </div>`;
 }
 

@@ -824,14 +824,15 @@ function clickIn(app, selector, dataset) {
   return app.nodes['#app'].events.click({ target: { closest: (wanted) => wanted === selector ? button : null } });
 }
 
-test('each exercise offers move up, move down and remove with the ends disabled', async () => {
+test('each exercise offers move up and move down with the ends disabled, and × in its corner to remove it', async () => {
   const app = await harness(storage(), { workout_exercises: [pressEntry, plankEntry] });
   const html = app.nodes['#app'].innerHTML;
   assert.match(html, /data-move-exercise="3" data-move-to="0" aria-label="Move Bench Press up" disabled>Move up/);
   assert.match(html, /data-move-exercise="3" data-move-to="2" aria-label="Move Bench Press down" >Move down/);
   assert.match(html, /data-move-exercise="4" data-move-to="1" aria-label="Move Front Plank up" >Move up/);
   assert.match(html, /data-move-exercise="4" data-move-to="3" aria-label="Move Front Plank down" disabled>Move down/);
-  assert.match(html, /data-remove-exercise="4" aria-label="Remove Front Plank">Remove/);
+  assert.match(html, /<div class="history-exercise-heading"><h3>Front Plank<\/h3>[\s\S]*?<button type="button" class="remove-exercise" data-remove-exercise="4" aria-label="Remove Front Plank"><span aria-hidden="true">×<\/span><\/button><\/div>/);
+  assert.doesNotMatch(html, />Remove</, 'the × replaces the Remove button beside Move up and Move down');
 });
 
 test('removing an exercise asks first, then drops it and its drafts from the workout', async () => {
@@ -965,7 +966,7 @@ test('workout and exercise notes stay collapsed, keep drafts on the phone, and a
   assert.match(html, /<details class="note"[^>]*>\s*<summary[^>]*>[\s\S]*?Workout note[\s\S]*?<textarea data-note-target="workout"[^>]*maxlength="1000"[^>]*>Slept &lt;5h<\/textarea>/);
   assert.match(html, /Add note[\s\S]*?<textarea data-note-target="exercise:3"[^>]*aria-label="Note for Bench Press"[^>]*><\/textarea>/);
   assert.doesNotMatch(html, /<details[^>]*\bopen\b/, 'notes are collapsed so the recording path stays short');
-  const order = ['data-add-set="3"', 'data-note-target="exercise:3"', 'class="exercise-tools"', 'id="open-picker"',
+  const order = ['<p class="meta">', 'data-note-target="exercise:3"', 'class="sets-list"', 'data-add-set="3"', 'class="exercise-tools"', 'id="open-picker"',
     'data-note-target="workout"', 'data-finish-workout'].map((marker) => html.indexOf(marker));
   assert.ok(order.every((index, i) => index >= 0 && (i === 0 || index > order[i - 1])), `unexpected order ${order}`);
 
@@ -1008,6 +1009,7 @@ test('history detail shows notes as text and saves an added exercise note', asyn
   await nodes['#history-results'].buttons[0].events.click();
   let html = nodes['#history-detail'].innerHTML;
   assert.match(html, /<p class="note-text">Line one\n&lt;b&gt;bold&lt;\/b&gt;<\/p>/);
+  assert.match(html, /<p class="meta">Barbell<\/p>\s*<button[^>]*data-edit-note="exercise:33"[\s\S]*?No sets recorded/, 'the exercise note sits under the equipment, before the sets');
   assert.doesNotMatch(html, /<b>/);
   assert.match(html, /data-edit-note="workout"[^>]*>Edit workout note</);
   assert.match(html, /data-edit-note="exercise:33"[^>]*aria-label="Add note for Bench Press"[^>]*>Add note</);

@@ -317,7 +317,7 @@ textarea:focus-visible, summary:focus-visible { outline: 3px solid var(--accent)
   .gym-card:hover, .exercise-card:hover, .recent-card:hover, .secondary:hover, .equipment-option:hover { border-color: var(--accent); }
   .primary:not(:disabled):hover { background: var(--accent-hover); }
   .text-button:hover { background: var(--accent-soft); }
-  .remove-set:hover { background: var(--surface-muted); color: var(--ink); }
+  .remove-set:hover, .remove-exercise:hover { background: var(--surface-muted); color: var(--ink); }
   .fill-previous:hover { background: var(--accent-soft); }
 }
 
@@ -369,7 +369,9 @@ textarea:focus-visible, summary:focus-visible { outline: 3px solid var(--accent)
 .exercise-tools { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
 .exercise-tools .text-button { min-height: 44px; padding: 0 10px; font-size: 0.85rem; }
 .exercise-tools .text-button:disabled { cursor: default; opacity: 0.4; background: transparent; }
-.exercise-tools .remove-exercise { margin-left: auto; color: var(--danger); }
+/* Like a set's ×, but in the exercise heading row, pulled into the card's top-right corner. */
+.history-exercise-heading h3 { flex: 1; }
+.remove-exercise { flex-shrink: 0; display: grid; place-items: center; width: 44px; height: 44px; margin: -10px -10px -10px -4px; padding: 0; border: 0; border-radius: 12px; background: transparent; color: var(--muted); font-size: 1.5rem; line-height: 1; }
 .rest-timer { margin: 4px 0 24px; padding: 16px 18px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--surface); }
 .rest-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .rest-heading h2 { margin: 0; }
