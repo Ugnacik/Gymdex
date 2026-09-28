@@ -322,6 +322,46 @@ class FeatureTests(unittest.TestCase):
                 self.assertEqual(self.request(method, path, {'name': 'Gym'})[0], 404)
         self.assertEqual(self.request('DELETE', '/api/manage/gyms/no')[0], 400)
 
+    def test_manage_routes_rename_edit_archive_and_restore_custom_exercises(self):
+        heavy = db.create_exercise(self.connection, 'Sled Push', 'Heavy', 'duration', ['Sled', 'Prowler'])
+        self.workout_with_set(variation=heavy, equipment='Prowler')
+        exercise, = self.request('GET', '/api/manage')[1]['exercises']
+        variation_path = f'/api/manage/variations/{heavy["id"]}'
+
+        self.assertEqual(self.request('PUT', f'/api/manage/exercises/{exercise["id"]}', {'name': 'Sled Drive'})[1]['name'],
+                         'Sled Drive')
+        self.assertEqual(self.request('PUT', variation_path, {'name': 'Max'})[1]['name'], 'Max')
+        status, saved = self.request('PUT', variation_path, {'equipment': ['Prowler', 'Rope']})
+        self.assertEqual((status, saved['equipment']), (200, [{'name': 'Prowler', 'used': True}, {'name': 'Rope', 'used': False}]))
+        self.assertEqual(self.request('PUT', variation_path, {'equipment': ['Rope']}),
+                         (409, {'error': 'Prowler is used in recorded workouts, so it cannot be removed.'}))
+        self.assertEqual(self.request('PUT', variation_path, {'equipment': 'Rope'})[0], 400)
+        self.assertEqual(self.request('PUT', f'/api/manage/gyms/{self.gym["id"]}', {'equipment': ['Rope']})[0], 400)
+
+        self.assertEqual(self.request('DELETE', variation_path), (200, {'outcome': 'archived'}))
+        catalog_path = f'/api/catalog?gym_id={self.gym["id"]}'
+        self.assertNotIn(heavy['id'], [item['id'] for item in self.request('GET', catalog_path)[1]['catalog']])
+        archived = [item for item in self.request('GET', f'{catalog_path}&include_archived=1')[1]['catalog']
+                    if item['id'] == heavy['id']]
+        self.assertEqual([(item['exercise_name'], item['variation_name'], item['archived']) for item in archived],
+                         [('Sled Drive', 'Max', True)])
+        self.assertEqual(self.request('POST', '/api/exercises', {
+            'name': 'sled drive', 'variation_name': 'max', 'tracking_type': 'duration', 'equipment': ['Sled'],
+        }), (409, {'error': 'Sled Drive already has an archived variation named Max. Restore it in Manage.'}))
+        self.assertEqual(self.request('POST', f'{variation_path}/restore')[1]['archived'], False)
+        self.assertIn(heavy['id'], [item['id'] for item in self.request('GET', catalog_path)[1]['catalog']])
+
+    def test_manage_routes_refuse_starter_catalog_exercises(self):
+        catalog = self.request('GET', f'/api/catalog?gym_id={self.gym["id"]}')[1]['catalog']
+        bench_id = next(row['id'] for row in self.connection.execute('SELECT id, name FROM exercises') if row['name'] == 'Bench Press')
+        refused = (409, {'error': "Starter catalog exercises can't be changed."})
+        self.assertEqual(self.request('PUT', f'/api/manage/variations/{self.press["id"]}', {'name': 'Flat'}), refused)
+        self.assertEqual(self.request('PUT', f'/api/manage/variations/{self.press["id"]}', {'equipment': ['Barbell']}), refused)
+        self.assertEqual(self.request('DELETE', f'/api/manage/variations/{self.press["id"]}'), refused)
+        self.assertEqual(self.request('PUT', f'/api/manage/exercises/{bench_id}', {'name': 'Chest Press'}), refused)
+        self.assertEqual(self.request('PUT', '/api/manage/variations/9999', {'equipment': ['Rope']})[0], 404)
+        self.assertEqual(self.request('GET', f'/api/catalog?gym_id={self.gym["id"]}')[1]['catalog'], catalog)
+
     def test_csv_export_route_downloads_without_caching(self):
         self.workout_with_set()
         handler = object.__new__(GymdexHandler)

@@ -1182,3 +1182,135 @@ test('history offers archived gyms as filters and hides Repeat for a workout at 
   assert.doesNotMatch(html, /data-repeat-workout/);
   assert.match(html, /Restore Annex &lt;b&gt; in Manage to repeat this workout\./);
 });
+
+const sled = (variations) => ({ id: 3, name: 'Sled <i>', archived: false, renamable: true, variations });
+const heavy = { id: 7, name: 'Heavy', tracking_type: 'duration', assisted: 0, archived: false, used: true,
+  equipment: [{ name: 'Sled', used: false }, { name: 'Prowler <b>', used: true }] };
+const closeGrip = { id: 4, name: 'Bench Press', archived: false, renamable: false, variations: [
+  { id: 9, name: 'Close Grip', tracking_type: 'repetitions', assisted: 0, archived: false, used: false, equipment: [{ name: 'Barbell', used: false }] }] };
+
+test('Manage lists custom exercises with rename, equipment and Delete or Archive, and archived variations to restore', async () => {
+  const app = await harness(storage(), startData([home]));
+  let variations = [heavy, { ...heavy, id: 8, name: 'Old', archived: true, equipment: [{ name: 'Rope', used: true }] }];
+  const questions = [];
+  app.env.window.confirm = (question) => { questions.push(question); return true; };
+  const { content, requests, click } = await openManage(app, {
+    'GET /api/manage': () => manageOverview([{ ...home, archived: false, used: true }], { exercises: [sled(variations), closeGrip] }),
+    'DELETE /api/manage/variations/7': () => { variations = variations.map((item) => ({ ...item, archived: true })); return { outcome: 'archived' }; },
+    'POST /api/manage/variations/8/restore': () => { variations = [variations[0], { ...variations[1], archived: false }]; return variations[1]; },
+    'GET /api/bootstrap': () => startData([home]),
+  });
+  let html = content.innerHTML;
+  assert.doesNotMatch(html, /<[ib]>/);
+  assert.match(html, /<summary><h3>Custom exercises<\/h3><span>2<\/span><\/summary>/);
+  assert.match(html, /data-manage-rename="exercise:3" aria-label="Rename Sled &lt;i&gt;">Rename<\/button>/);
+  assert.doesNotMatch(html, /data-manage-rename="exercise:4"/);
+  assert.doesNotMatch(html, /data-manage-remove="exercise:/);
+  assert.match(html, /data-manage-rename="variation:7"[^>]*>Rename<\/button><button[^>]*data-manage-equipment="variation:7"[^>]*>Equipment<\/button><button[^>]*data-manage-remove="variation:7"[^>]*>Archive<\/button>/);
+  assert.match(html, /data-manage-remove="variation:9"[^>]*>Delete<\/button>/);
+  // × only on unused equipment, and never on the last value.
+  const editor = html.match(/<form class="manage-rename-form manage-equipment-form" data-manage-equipment-form="variation:7" hidden>[\s\S]*?<\/form>/)[0];
+  assert.match(editor, /<span>Sled<\/span><button type="button" class="chip-remove" data-remove-equipment="0" aria-label="Remove Sled">/);
+  assert.match(editor, /<li class="equipment-chip equipment-chip-fixed"><span>Prowler &lt;b&gt;<\/span><\/li>/);
+  assert.match(editor, /used in recorded workouts/);
+  assert.doesNotMatch(html.match(/data-manage-equipment-form="variation:9"[\s\S]*?<\/form>/)[0], /chip-remove/);
+  assert.match(html, /Archived \(1\)[\s\S]*Old Sled &lt;i&gt;[\s\S]*data-manage-restore="variation:8"[^>]*>Restore<\/button>/);
+
+  await click('[data-manage-remove]', { manageRemove: 'variation:7' });
+  assert.match(questions[0], /^Archive Heavy Sled <i>\? /);
+  assert.ok(requests.some(([key]) => key === 'DELETE /api/manage/variations/7'));
+  assert.equal(app.nodes['#toast'].textContent, 'Heavy Sled <i> archived.');
+  html = content.innerHTML;
+  assert.match(html, /Archived \(2\)/);
+  assert.doesNotMatch(html, /data-manage-rename="exercise:3"/);
+  await click('[data-manage-restore]', { manageRestore: 'variation:8' });
+  assert.ok(requests.some(([key]) => key === 'POST /api/manage/variations/8/restore'));
+  assert.equal(app.nodes['#toast'].textContent, 'Old Sled <i> restored.');
+  assert.match(content.innerHTML, /data-manage-rename="exercise:3"/);
+});
+
+test('Manage renames a custom exercise', async () => {
+  const app = await harness(storage(), startData([home]));
+  let name = 'Sled <i>';
+  const { content, requests } = await openManage(app, {
+    'GET /api/manage': () => manageOverview([], { exercises: [{ ...sled([heavy]), name }] }),
+    'PUT /api/manage/exercises/3': () => { name = 'Sled Drive'; return { ...sled([heavy]), name }; },
+    'GET /api/bootstrap': () => startData([home]),
+  });
+  assert.match(content.innerHTML, /data-manage-rename-form="exercise:3" hidden>[\s\S]*value="Sled &lt;i&gt;"/);
+  const form = Object.assign(node(), { dataset: { manageRenameForm: 'exercise:3' }, elements: { name: Object.assign(node(), { value: 'Sled Drive' }) },
+    closest: (selector) => selector === '[data-manage-rename-form]' ? form : null, querySelector: () => node() });
+  await content.events.submit({ target: form, preventDefault() {} });
+  assert.deepEqual(requests.find(([key]) => key.startsWith('PUT')), ['PUT /api/manage/exercises/3', { name: 'Sled Drive' }]);
+  assert.equal(app.nodes['#toast'].textContent, 'Renamed to Sled Drive.');
+  assert.match(content.innerHTML, /Sled Drive/);
+});
+
+test('Manage adds and removes equipment of a custom variation and shows refusals', async () => {
+  const app = await harness(storage(), startData([home]));
+  let equipment = heavy.equipment;
+  const { content, requests, click } = await openManage(app, {
+    'GET /api/manage': () => manageOverview([], { exercises: [sled([{ ...heavy, equipment }])] }),
+    'PUT /api/manage/variations/7': () => {
+      const names = requests.at(-1)[1].equipment;
+      if (!names.includes('Sled')) return reply(409, { error: 'Sled is used in recorded workouts, so it cannot be removed.' });
+      equipment = names.map((value) => ({ name: value, used: value === 'Prowler <b>' }));
+      return { ...heavy, equipment };
+    },
+  });
+  const status = node();
+  const entry = Object.assign(node(), { value: '' });
+  const form = Object.assign(node(), { hidden: true, dataset: { manageEquipmentForm: 'variation:7' }, elements: { equipment: entry },
+    closest: (selector) => selector === '[data-manage-equipment-form]' ? form : null,
+    querySelector: (selector) => selector === '.set-status' ? status : node() });
+  content.querySelector = (selector) => selector === '[data-manage-equipment-form="variation:7"]' ? form : node();
+  await click('[data-manage-equipment]', { manageEquipment: 'variation:7' });
+  assert.equal(form.hidden, false);
+  assert.equal(entry.focused, true);
+
+  entry.value = 'sled';
+  await content.events.submit({ target: form, preventDefault() {} });
+  assert.equal(status.textContent, 'sled is already added.');
+  assert.ok(!requests.some(([key]) => key.startsWith('PUT')));
+  entry.value = '  Rope   Sled ';
+  entry.focused = false;
+  await content.events.submit({ target: form, preventDefault() {} });
+  assert.deepEqual(requests.at(-2), ['PUT /api/manage/variations/7', { equipment: ['Sled', 'Prowler <b>', 'Rope Sled'] }]);
+  assert.equal(app.nodes['#toast'].textContent, 'Added Rope Sled.');
+  // The editor stays open after the refresh, ready for the next value.
+  assert.match(content.innerHTML, /data-manage-equipment-form="variation:7">/);
+  assert.match(content.innerHTML, /<span>Rope Sled<\/span><button type="button" class="chip-remove" data-remove-equipment="2"/);
+  assert.equal(entry.focused, true);
+
+  const chip = (index) => ({ target: { closest: (selector) => selector === '[data-remove-equipment]'
+    ? Object.assign(node(), { dataset: { removeEquipment: String(index) }, closest: () => form }) : null } });
+  await content.events.click(chip(2));
+  assert.deepEqual(requests.at(-2), ['PUT /api/manage/variations/7', { equipment: ['Sled', 'Prowler <b>'] }]);
+  assert.equal(app.nodes['#toast'].textContent, 'Removed Rope Sled.');
+  await content.events.click(chip(0));
+  assert.deepEqual(requests.at(-1), ['PUT /api/manage/variations/7', { equipment: ['Prowler <b>'] }]);
+  assert.equal(status.textContent, 'Sled is used in recorded workouts, so it cannot be removed.');
+});
+
+test('progress keeps archived custom exercises selectable', async () => {
+  const app = await harness(storage(), { gyms: [{ id: 1, name: 'Home' }] });
+  const nodes = {};
+  const dialog = node();
+  dialog.querySelector = (selector) => nodes[selector] ??= node();
+  dialog.showModal = () => { dialog.open = true; };
+  nodes['#progress-exercise'] = Object.assign(node(), { value: '17' });
+  nodes['#progress-filters'] = Object.assign(node(), { elements: { gym_id: { value: '' } } });
+  app.env.document.createElement = () => dialog;
+  app.env.document.body = { append: () => { app.nodes['#progress'] = dialog; } };
+  const urls = [];
+  app.env.fetch = async (url) => {
+    urls.push(url);
+    if (url.startsWith('/api/catalog')) return response({ catalog: [
+      { id: 17, exercise_name: 'Sled <i>', variation_name: 'Heavy', equipment: ['Sled'], archived: true },
+      { id: 18, exercise_name: 'Leg Press', variation_name: 'Standard', equipment: ['Machine'], archived: false }] });
+    return response({ variation_id: 17, exercise_name: 'Sled', variation_name: 'Heavy', tracking_type: 'duration', points: [] });
+  };
+  await app.nodes['#open-progress'].events.click();
+  assert.equal(urls[0], '/api/catalog?gym_id=1&include_archived=1');
+  assert.match(nodes['#progress-exercise'].innerHTML, /<option value="17" >Heavy Sled &lt;i&gt; \(archived\)<\/option><option value="18" >Leg Press<\/option>/);
+});

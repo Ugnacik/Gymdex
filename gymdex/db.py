@@ -287,21 +287,27 @@ def previous_sets(
     ] if previous else []
 
 
-def catalog_for_gym(connection: sqlite3.Connection, gym_id: int) -> dict[str, Any]:
+def catalog_for_gym(
+    connection: sqlite3.Connection, gym_id: int, include_archived: bool = False,
+) -> dict[str, Any]:
+    """The picker's Variations and Recent. Progress includes archived Variations."""
     catalog_rows = connection.execute(
         """SELECT v.id, e.name AS exercise_name, v.name AS variation_name,
-                  v.tracking_type, v.assisted,
+                  v.tracking_type, v.assisted, v.archived_at IS NOT NULL AS archived,
                   (SELECT GROUP_CONCAT(ordered.equipment, '|')
                    FROM (SELECT equipment FROM variation_equipment
                          WHERE variation_id = v.id ORDER BY position) AS ordered) AS equipment
            FROM exercise_variations v
            JOIN exercises e ON e.id = v.exercise_id
-           ORDER BY e.name, v.name"""
+           WHERE ? OR v.archived_at IS NULL
+           ORDER BY e.name, v.name""",
+        (int(include_archived),),
     ).fetchall()
     catalog = []
     for row in catalog_rows:
         item = dict(row)
         item["equipment"] = item["equipment"].split("|")
+        item["archived"] = bool(item["archived"])
         catalog.append(item)
 
     recent = rows(
@@ -441,6 +447,23 @@ def require_unarchived_gym(name: str, archived_at: str | None) -> None:
         raise RuntimeError(f"{name} is archived. Restore it in Manage to train there.")
 
 
+def clean_equipment_list(equipment: object) -> list[str]:
+    """A Variation's ordered Equipment values: 1 to 20, unique ignoring case."""
+    if not isinstance(equipment, list) or not 1 <= len(equipment) <= 20:
+        raise ValueError("Choose 1 to 20 equipment options.")
+    clean_equipment = []
+    for value in equipment:
+        if not isinstance(value, str):
+            raise ValueError("Equipment names must be strings.")
+        clean = " ".join(value.split())
+        if not clean or len(clean) > 80 or "|" in clean:
+            raise ValueError("Equipment names must be 1 to 80 characters and cannot contain |.")
+        clean_equipment.append(clean)
+    if len({value.casefold() for value in clean_equipment}) != len(clean_equipment):
+        raise ValueError("Equipment options must be unique.")
+    return clean_equipment
+
+
 def create_exercise(
     connection: sqlite3.Connection,
     name: str,
@@ -462,18 +485,7 @@ def create_exercise(
         raise ValueError("Tracking type must be repetitions or duration.")
     if type(assisted) is not bool:
         raise ValueError("Assisted must be true or false.")
-    if not isinstance(equipment, list) or not 1 <= len(equipment) <= 20:
-        raise ValueError("Choose 1 to 20 equipment options.")
-    clean_equipment = []
-    for value in equipment:
-        if not isinstance(value, str):
-            raise ValueError("Equipment names must be strings.")
-        clean = " ".join(value.split())
-        if not clean or len(clean) > 80 or "|" in clean:
-            raise ValueError("Equipment names must be 1 to 80 characters and cannot contain |.")
-        clean_equipment.append(clean)
-    if len({value.casefold() for value in clean_equipment}) != len(clean_equipment):
-        raise ValueError("Equipment options must be unique.")
+    clean_equipment = clean_equipment_list(equipment)
 
     with connection:
         connection.execute("BEGIN IMMEDIATE")
@@ -481,12 +493,7 @@ def create_exercise(
         exercise = connection.execute(
             "SELECT id, name FROM exercises WHERE name = ? COLLATE NOCASE", (exercise_name,)
         ).fetchone()
-        if connection.execute(
-            """SELECT 1 FROM exercise_variations
-               WHERE exercise_id = ? AND name = ? COLLATE NOCASE""",
-            (exercise["id"], variation_name),
-        ).fetchone():
-            raise RuntimeError("That exercise variation already exists.")
+        require_free_variation_name(connection, exercise["id"], variation_name)
         cursor = connection.execute(
             """INSERT INTO exercise_variations(exercise_id, name, tracking_type, assisted, custom)
                VALUES (?, ?, ?, ?, 1)""",
@@ -504,6 +511,7 @@ def create_exercise(
         "variation_name": variation_name,
         "tracking_type": tracking_type,
         "assisted": int(assisted),
+        "archived": False,
         "equipment": clean_equipment,
     }
 
@@ -1083,6 +1091,8 @@ class ManagedKind:
     delete: Callable[[sqlite3.Connection, int], None] | None = None
     # Raises to refuse archiving a used item, such as the Active Workout's gym.
     before_archive: Callable[[sqlite3.Connection, int], None] | None = None
+    # Raises to refuse any change to the item, such as a starter catalog Variation.
+    require_changeable: Callable[[sqlite3.Connection, int], None] | None = None
 
 
 def _gym_rows(connection: sqlite3.Connection, gym_id: int | None = None) -> list[dict[str, Any]]:
@@ -1144,6 +1154,12 @@ def _configuration_rows(connection: sqlite3.Connection) -> list[dict[str, Any]]:
     return [{**item, **{flag: bool(item[flag]) for flag in flags}} for item in items]
 
 
+def _has_starter_variations(connection: sqlite3.Connection, exercise_id: int) -> bool:
+    return bool(connection.execute(
+        "SELECT 1 FROM exercise_variations WHERE exercise_id = ? AND custom = 0", (exercise_id,)
+    ).fetchone())
+
+
 def _custom_exercise_rows(connection: sqlite3.Connection) -> list[dict[str, Any]]:
     """Exercises that have custom Variations, each listing only those Variations."""
     exercises: dict[int, dict[str, Any]] = {}
@@ -1155,9 +1171,12 @@ def _custom_exercise_rows(connection: sqlite3.Connection) -> list[dict[str, Any]
            WHERE v.custom = 1 ORDER BY e.name, e.id, v.name, v.id"""
     )):
         exercise_id, exercise_name = variation.pop("exercise_id"), variation.pop("exercise_name")
-        exercise = exercises.setdefault(
-            exercise_id, {"id": exercise_id, "name": exercise_name, "variations": []}
-        )
+        exercise = exercises.setdefault(exercise_id, {
+            "id": exercise_id, "name": exercise_name, "variations": [],
+            # A custom Exercise is archived when all its Variations are, and can be
+            # renamed only when it has no starter catalog Variations.
+            "archived": True, "renamable": not _has_starter_variations(connection, exercise_id),
+        })
         # An Equipment value is used when a Workout Exercise of this Variation recorded it.
         equipment = [{"name": row["equipment"], "used": bool(row["used"])} for row in connection.execute(
             """SELECT equipment, EXISTS (
@@ -1167,11 +1186,164 @@ def _custom_exercise_rows(connection: sqlite3.Connection) -> list[dict[str, Any]
                FROM variation_equipment ve WHERE variation_id = ? ORDER BY position""",
             (variation["id"],),
         )]
+        exercise["archived"] = exercise["archived"] and bool(variation["archived"])
         exercise["variations"].append({
             **variation, "archived": bool(variation["archived"]), "used": bool(variation["used"]),
             "equipment": equipment,
         })
     return list(exercises.values())
+
+
+STARTER_CATALOG_UNCHANGEABLE = "Starter catalog exercises can't be changed."
+
+
+def clean_variation_name(name: object) -> str:
+    if not isinstance(name, str):
+        raise ValueError("Variation name must be text.")
+    clean_name = " ".join(name.split())
+    if not clean_name:
+        raise ValueError("Variation name is required.")
+    if len(clean_name) > 80:
+        raise ValueError("Variation name must be 80 characters or fewer.")
+    return clean_name
+
+
+def require_free_variation_name(
+    connection: sqlite3.Connection, exercise_id: int, name: str, variation_id: int | None = None,
+) -> None:
+    """Variation names are unique within an Exercise ignoring case, archived Variations included."""
+    taken = connection.execute(
+        """SELECT e.name AS exercise_name, v.name, v.archived_at
+           FROM exercise_variations v JOIN exercises e ON e.id = v.exercise_id
+           WHERE v.exercise_id = ? AND v.name = ? COLLATE NOCASE AND v.id IS NOT ?""",
+        (exercise_id, name, variation_id),
+    ).fetchone()
+    if taken and taken["archived_at"]:
+        raise RuntimeError(
+            f"{taken['exercise_name']} already has an archived variation named {taken['name']}. "
+            "Restore it in Manage."
+        )
+    if taken:
+        raise RuntimeError(f"{taken['exercise_name']} already has a variation named {taken['name']}.")
+
+
+def _require_custom_variation(connection: sqlite3.Connection, variation_id: int) -> None:
+    if not connection.execute(
+        "SELECT custom FROM exercise_variations WHERE id = ?", (variation_id,)
+    ).fetchone()["custom"]:
+        raise RuntimeError(STARTER_CATALOG_UNCHANGEABLE)
+
+
+def _describe_variation(connection: sqlite3.Connection, variation_id: int) -> dict[str, Any]:
+    return next(variation for exercise in _custom_exercise_rows(connection)
+                for variation in exercise["variations"] if variation["id"] == variation_id)
+
+
+def _rename_variation(connection: sqlite3.Connection, variation_id: int, name: object) -> None:
+    clean_name = clean_variation_name(name)
+    exercise_id = connection.execute(
+        "SELECT exercise_id FROM exercise_variations WHERE id = ?", (variation_id,)
+    ).fetchone()["exercise_id"]
+    require_free_variation_name(connection, exercise_id, clean_name, variation_id)
+    # Workout Exercises keep the name they were recorded with (see CONTEXT.md).
+    connection.execute("UPDATE exercise_variations SET name = ? WHERE id = ?", (clean_name, variation_id))
+
+
+def _delete_variation(connection: sqlite3.Connection, variation_id: int) -> None:
+    exercise_id = connection.execute(
+        "SELECT exercise_id FROM exercise_variations WHERE id = ?", (variation_id,)
+    ).fetchone()["exercise_id"]
+    # A never-used Variation's Exercise Configurations are never used either.
+    connection.execute("DELETE FROM gym_exercise_profiles WHERE variation_id = ?", (variation_id,))
+    connection.execute("DELETE FROM variation_equipment WHERE variation_id = ?", (variation_id,))
+    connection.execute("DELETE FROM exercise_variations WHERE id = ?", (variation_id,))
+    connection.execute(
+        """DELETE FROM exercises WHERE id = ?
+           AND NOT EXISTS (SELECT 1 FROM exercise_variations WHERE exercise_id = exercises.id)""",
+        (exercise_id,),
+    )
+
+
+MANAGED_KINDS["variation"] = ManagedKind(
+    table="exercise_variations",
+    missing="Exercise variation not found.",
+    used_sql="SELECT 1 FROM workout_exercises WHERE variation_id = ? LIMIT 1",
+    describe=_describe_variation,
+    rename=_rename_variation,
+    delete=_delete_variation,
+    require_changeable=_require_custom_variation,
+)
+
+
+def _require_custom_exercise(connection: sqlite3.Connection, exercise_id: int) -> None:
+    # Startup seeding would recreate a renamed starter Exercise.
+    if _has_starter_variations(connection, exercise_id):
+        raise RuntimeError(STARTER_CATALOG_UNCHANGEABLE)
+
+
+def _rename_exercise(connection: sqlite3.Connection, exercise_id: int, name: object) -> None:
+    if not isinstance(name, str):
+        raise ValueError("Exercise name must be text.")
+    clean_name = " ".join(name.split())
+    if not clean_name:
+        raise ValueError("Exercise name is required.")
+    if len(clean_name) > 80:
+        raise ValueError("Exercise name must be 80 characters or fewer.")
+    taken = connection.execute(
+        "SELECT name FROM exercises WHERE name = ? AND id IS NOT ?", (clean_name, exercise_id),
+    ).fetchone()
+    if taken:
+        raise RuntimeError(f"An exercise named {taken['name']} already exists.")
+    # Workout Exercises keep the name they were recorded with (see CONTEXT.md).
+    connection.execute("UPDATE exercises SET name = ? WHERE id = ?", (clean_name, exercise_id))
+
+
+# A custom Exercise is not archived itself: it follows its Variations.
+MANAGED_KINDS["exercise"] = ManagedKind(
+    table="exercises",
+    missing="Exercise not found.",
+    used_sql="SELECT 1 FROM workout_exercises we JOIN exercise_variations v ON v.id = we.variation_id"
+             " WHERE v.exercise_id = ? LIMIT 1",
+    describe=lambda connection, exercise_id: next(
+        exercise for exercise in _custom_exercise_rows(connection) if exercise["id"] == exercise_id
+    ),
+    rename=_rename_exercise,
+    require_changeable=_require_custom_exercise,
+)
+
+
+def set_variation_equipment(
+    connection: sqlite3.Connection, variation_id: int, equipment: object,
+) -> dict[str, Any]:
+    """Replace a custom Variation's ordered Equipment list. Only unused values can be removed."""
+    clean_equipment = clean_equipment_list(equipment)
+    spec = MANAGED_KINDS["variation"]
+    with connection:
+        connection.execute("BEGIN IMMEDIATE")
+        _require_managed_item(connection, spec, variation_id)
+        current = [row["equipment"] for row in connection.execute(
+            "SELECT equipment FROM variation_equipment WHERE variation_id = ? ORDER BY position",
+            (variation_id,),
+        )]
+        removed = [value for value in current if value not in clean_equipment]
+        for value in removed:
+            if connection.execute(
+                """SELECT 1 FROM workout_exercises
+                   WHERE variation_id = ? AND equipment_snapshot = ? LIMIT 1""",
+                (variation_id, value),
+            ).fetchone():
+                raise RuntimeError(f"{value} is used in recorded workouts, so it cannot be removed.")
+            # Configurations of an unused Equipment value are never used either.
+            connection.execute(
+                "DELETE FROM gym_exercise_profiles WHERE variation_id = ? AND equipment = ?",
+                (variation_id, value),
+            )
+        connection.execute("DELETE FROM variation_equipment WHERE variation_id = ?", (variation_id,))
+        connection.executemany(
+            "INSERT INTO variation_equipment(variation_id, equipment, position) VALUES (?, ?, ?)",
+            [(variation_id, value, position) for position, value in enumerate(clean_equipment)],
+        )
+        return spec.describe(connection, variation_id)
 
 
 def manage_overview(connection: sqlite3.Connection) -> dict[str, Any]:
@@ -1195,6 +1367,8 @@ def _require_managed_item(connection: sqlite3.Connection, spec: ManagedKind, ite
         f"SELECT 1 FROM {spec.table} WHERE id = ?", (item_id,)
     ).fetchone():
         raise LookupError(spec.missing)
+    if spec.require_changeable:
+        spec.require_changeable(connection, item_id)
 
 
 def rename_item(connection: sqlite3.Connection, kind: str, item_id: int, name: object) -> dict[str, Any]:

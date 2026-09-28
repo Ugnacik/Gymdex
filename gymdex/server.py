@@ -101,7 +101,9 @@ class GymdexHandler(BaseHTTPRequestHandler):
                 gym_id = int(query.get("gym_id", [""])[0])
             except ValueError:
                 return self._json_error("A valid gym_id is required.", HTTPStatus.BAD_REQUEST)
-            return self._with_db(lambda connection: db.catalog_for_gym(connection, gym_id))
+            # Progress lists archived Variations too; the picker does not.
+            include_archived = query.get("include_archived", [""])[0] == "1"
+            return self._with_db(lambda connection: db.catalog_for_gym(connection, gym_id, include_archived))
         self._serve_static(parsed.path)
 
     def do_POST(self) -> None:
@@ -192,6 +194,10 @@ class GymdexHandler(BaseHTTPRequestHandler):
             payload = self._read_json()
         except ValueError:
             return self._json_error("The request body must be a JSON object.", HTTPStatus.BAD_REQUEST)
+        if kind == "variation" and "equipment" in payload:
+            return self._with_db(lambda connection: db.set_variation_equipment(
+                connection, int(parts[3]), payload["equipment"],
+            ))
         if kind:
             return self._with_db(lambda connection: db.rename_item(
                 connection, kind, int(parts[3]), payload.get("name"),
