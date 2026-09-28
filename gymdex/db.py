@@ -326,7 +326,60 @@ def catalog_for_gym(
             (gym_id,),
         )
     )
-    return {"catalog": catalog, "recent": recent}
+    return {"catalog": catalog, "recent": recent, "suggestions": exercise_suggestions(connection)}
+
+
+# Equipment named in the starter Exercise Catalog, offered when creating any Exercise.
+STARTER_EQUIPMENT = tuple(sorted({value for _, _, _, equipment, *_ in CATALOG for value in equipment}))
+
+
+def _distinct(values: Any) -> list[str]:
+    """Non-empty values sorted ignoring case; of values differing only in case, the first sorted wins."""
+    distinct: dict[str, str] = {}
+    for value in sorted((value for value in values if value), key=lambda value: (value.casefold(), value)):
+        distinct.setdefault(value.casefold(), value)
+    return list(distinct.values())
+
+
+def exercise_suggestions(connection: sqlite3.Connection) -> dict[str, Any]:
+    """Values offered by the custom exercise and Exercise Configuration forms, per Exercise.
+
+    They are derived from the Exercise's unarchived Variations: their names, their Equipment
+    plus the starter Equipment, and the manufacturers and machine labels of their unarchived
+    Exercise Configurations at every Gym. Archiving or deleting the source row removes a value.
+    """
+    exercises: dict[int, dict[str, Any]] = {}
+    for row in connection.execute(
+        """SELECT e.id, e.name, v.id AS variation_id, v.name AS variation_name
+           FROM exercise_variations v JOIN exercises e ON e.id = v.exercise_id
+           WHERE v.archived_at IS NULL"""
+    ):
+        exercise = exercises.setdefault(row["id"], {
+            "name": row["name"], "variations": [], "equipment": list(STARTER_EQUIPMENT),
+            "manufacturers": [], "labels": [],
+        })
+        exercise["variations"].append(row["variation_name"])
+    for row in connection.execute(
+        """SELECT v.exercise_id, ve.equipment FROM variation_equipment ve
+           JOIN exercise_variations v ON v.id = ve.variation_id
+           WHERE v.archived_at IS NULL"""
+    ):
+        exercises[row["exercise_id"]]["equipment"].append(row["equipment"])
+    for row in connection.execute(
+        """SELECT v.exercise_id, p.manufacturer, p.label FROM gym_exercise_profiles p
+           JOIN exercise_variations v ON v.id = p.variation_id
+           WHERE p.archived_at IS NULL AND v.archived_at IS NULL"""
+    ):
+        exercises[row["exercise_id"]]["manufacturers"].append(row["manufacturer"])
+        exercises[row["exercise_id"]]["labels"].append(row["label"])
+    return {
+        "equipment": list(STARTER_EQUIPMENT),
+        "exercises": [
+            {**exercise, **{field: _distinct(exercise[field])
+                            for field in ("variations", "equipment", "manufacturers", "labels")}}
+            for exercise in sorted(exercises.values(), key=lambda exercise: exercise["name"].casefold())
+        ],
+    }
 
 
 def _utc_timestamp(value: str) -> str:
