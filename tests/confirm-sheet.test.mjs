@@ -129,3 +129,30 @@ test('Cancel, Escape and a backdrop tap leave the text sheet without an answer',
   sheet().dispatch('click');
   assert.equal(await answer, null);
 });
+
+test('leaving the text sheet while the name is being saved still answers with what was saved', async () => {
+  // On a slow connection Escape or a backdrop tap can close the sheet after Save was tapped;
+  // the server still saves, so the caller must learn about it rather than hear "cancelled".
+  const { document, all, sheet } = page();
+  let finish;
+  const answer = askTextInPage(document, 'New routine', { label: 'Routine name', confirmLabel: 'Create routine',
+    submit: () => new Promise((resolve) => { finish = resolve; }) });
+  const dialog = sheet();
+  all(dialog).find((item) => item.tagName === 'INPUT').value = 'Legs';
+  all(dialog).find((item) => item.tagName === 'FORM').dispatch('submit');
+  await settle();
+  dialog.close(); // Escape while the request is in flight
+  finish({ id: 7, name: 'Legs' });
+  assert.deepEqual(await answer, { id: 7, name: 'Legs' });
+
+  // A save that fails after the sheet was left answers nothing.
+  const failed = askTextInPage(document, 'New routine', { label: 'Routine name', confirmLabel: 'Create routine',
+    submit: () => new Promise((_, reject) => { finish = reject; }) });
+  const second = sheet();
+  all(second).find((item) => item.tagName === 'INPUT').value = 'Legs';
+  all(second).find((item) => item.tagName === 'FORM').dispatch('submit');
+  await settle();
+  second.dispatch('click'); // backdrop tap
+  finish(new Error('offline'));
+  assert.equal(await failed, null);
+});

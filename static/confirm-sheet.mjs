@@ -37,7 +37,8 @@ export function confirmInPage(document, question, { confirmLabel, cancelLabel = 
 // Asks for one line of text, such as a Routine name, in the same kind of sheet instead of
 // window.prompt(). submit(text) receives the trimmed text; when it throws, its message shows
 // in the sheet, which stays open for a correction. Resolves with submit's result, or null
-// when the user leaves with Cancel, Escape or a backdrop tap.
+// when the user leaves with Cancel, Escape or a backdrop tap. Leaving while a submit is in
+// flight resolves with that submit's result once it arrives (null if it fails).
 export function askTextInPage(document, question, { label, value = "", confirmLabel, cancelLabel = "Cancel", maxLength = 80, submit }) {
   const returnFocus = document.activeElement;
   const element = (tagName, className, text) =>
@@ -65,6 +66,8 @@ export function askTextInPage(document, question, { label, value = "", confirmLa
   form.append(text, field, status, actions);
   dialog.append(form);
   let result = null;
+  // The save in flight, if any: leaving the sheet does not stop the server from saving.
+  let pending = null;
   cancel.addEventListener("click", () => dialog.close());
   dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
   form.addEventListener("submit", async (event) => {
@@ -78,9 +81,11 @@ export function askTextInPage(document, question, { label, value = "", confirmLa
     confirm.disabled = true;
     status.textContent = "";
     try {
-      result = await submit(clean);
+      pending = submit(clean);
+      result = await pending;
       dialog.close("confirm");
     } catch (error) {
+      pending = null;
       status.textContent = error.message;
       confirm.disabled = false;
       input.focus();
@@ -91,7 +96,10 @@ export function askTextInPage(document, question, { label, value = "", confirmLa
     dialog.addEventListener("close", () => {
       dialog.remove();
       if (returnFocus?.isConnected) returnFocus.focus();
-      resolve(dialog.returnValue === "confirm" ? result : null);
+      if (dialog.returnValue === "confirm") resolve(result);
+      // Left with Escape, Cancel or a backdrop tap while saving: answer with the save's outcome.
+      else if (pending) Promise.resolve(pending).then(resolve, () => resolve(null));
+      else resolve(null);
     });
     dialog.showModal();
     input.focus();
