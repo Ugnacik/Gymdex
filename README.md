@@ -84,7 +84,8 @@ optional and records added load, such as a dip belt.
 
 When Gymdex starts, it adds any starter variations missing from an existing
 database. It does not change existing catalog entries, custom variations with
-the same name, or recorded workouts.
+the same name, or recorded workouts. So a later catalog change that adds
+equipment to an existing starter variation reaches only new databases.
 
 ## Custom exercises
 
@@ -347,8 +348,11 @@ python3 -m gymdex.backup backup ~/gymdex-backup.sqlite3
 ```
 
 Copy the backup somewhere other than the Pi and verify you can restore it.
-[Daily backups](#daily-backups) does both automatically. To restore, stop the
-Gymdex service first and keep a copy of the current database. Then run:
+[Daily backups](#daily-backups) makes the off-device copy automatically; verify
+a restore by hand now and then (see
+[Verify a restore from a received backup](#verify-a-restore-from-a-received-backup)).
+To restore, stop the Gymdex service first and keep a copy of the current
+database. Then run:
 
 ```bash
 systemctl --user stop gymdex
