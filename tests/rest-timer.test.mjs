@@ -31,12 +31,14 @@ function fixture(durationSeconds = 3) {
   };
 }
 
-test("defaults to a 90 second rest interval", () => {
+test("defaults to a 90 second rest interval, shown in full while idle", () => {
   const timer = new RestTimer();
   assert.equal(DEFAULT_REST_DURATION_SECONDS, 90);
   assert.deepEqual(timer.snapshot(), {
-    status: "idle", durationSeconds: 90, remainingSeconds: 0,
+    status: "idle", durationSeconds: 90, remainingSeconds: 90,
   });
+  timer.setDuration(60);
+  assert.equal(timer.snapshot().remainingSeconds, 60);
 });
 
 test("start and ticks use a wall-clock deadline", () => {
@@ -85,7 +87,7 @@ test("new completed sets restart the timer and stop clears it", () => {
   assert.equal(clock.scheduled.size, 1);
   clock.timer.stop();
   assert.deepEqual(clock.changes.at(-1), {
-    status: "idle", durationSeconds: 4, remainingSeconds: 0,
+    status: "idle", durationSeconds: 4, remainingSeconds: 4,
   });
   assert.equal(clock.scheduled.size, 0);
 });

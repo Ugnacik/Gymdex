@@ -175,7 +175,8 @@ archived variation instead.
 
 Turn on Rest timer during an active workout and choose a rest interval. Marking
 a valid set complete starts the countdown, including when the phone is offline.
-The timer can be started, paused, resumed, or reset manually. Its enabled state
+The timer can be started, paused, resumed, or reset manually; before it starts
+and after a reset, it shows the chosen interval. Its enabled state
 and interval are kept in this browser; a running countdown is not restored after
 the page closes. The timer does not send notifications when the app is closed.
 

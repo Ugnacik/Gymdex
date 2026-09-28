@@ -36,8 +36,9 @@ export class RestTimer {
   }
 
   snapshot() {
-    const remainingMs = this.#status === "running"
-      ? Math.max(0, this.#deadline - this.#now()) : this.#remainingMs;
+    // An idle timer shows the interval the next completed set will start.
+    const remainingMs = this.#status === "running" ? Math.max(0, this.#deadline - this.#now())
+      : this.#status === "idle" ? this.#durationSeconds * 1000 : this.#remainingMs;
     return {
       status: this.#status === "running" && remainingMs === 0 ? "finished" : this.#status,
       durationSeconds: this.#durationSeconds,

@@ -393,7 +393,8 @@ test('a valid completed set starts the optional rest timer while offline', async
   app.env.navigator.onLine = false;
   app.form.elements.completed.checked = true;
   app.form.elements.completed.events.change();
-  assert.equal(app.nodes['#rest-clock'].textContent, '0:00');
+  assert.equal(app.nodes['#rest-clock'].textContent, '0:30', 'an idle timer shows the chosen interval');
+  assert.equal(app.nodes['#rest-status'].textContent, 'Ready after a completed set');
   app.form.elements.result.value = '8';
   app.form.elements.completed.events.change();
   assert.equal(app.nodes['#rest-clock'].textContent, '0:30');
