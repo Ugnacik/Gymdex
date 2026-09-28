@@ -238,14 +238,8 @@ class ManageConfigurationTests(unittest.TestCase):
         self.assertIn(archived_label, [entry['label'] for entry in detail['workout_exercises']])
 
     def archive_variation(self, variation_id):
-        """Archive a used custom Variation through Manage once that kind lands (T10c)."""
-        if 'variation' in db.MANAGED_KINDS:
-            self.assertEqual(db.remove_item(self.connection, 'variation', variation_id), {'outcome': 'archived'})
-        else:
-            with self.connection:
-                self.connection.execute(
-                    "UPDATE exercise_variations SET archived_at = CURRENT_TIMESTAMP WHERE id = ?", (variation_id,)
-                )
+        """Archive a used custom Variation through Manage."""
+        self.assertEqual(db.remove_item(self.connection, 'variation', variation_id), {'outcome': 'archived'})
 
     def test_configurations_of_an_archived_variation_leave_recent(self):
         sled = db.create_exercise(self.connection, 'Sled Push', 'Heavy', 'duration', ['Sled'])
