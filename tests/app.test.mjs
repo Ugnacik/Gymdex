@@ -88,6 +88,10 @@ async function harness(disk = storage(), initialData = {}, { now = Date.parse('2
     }
     return rendered.fields;
   };
+  // Like a browser, the workout's set forms exist only while the rendered workout contains them;
+  // forms appended by Add set live in their exercise's list.
+  const isRendered = (item) => item.isConnected
+    && (item !== form || nodes['#app'].innerHTML.includes(`data-set-id="${item.dataset.setId}"`));
   const entryNode = { querySelector: (selector) => selector === '.sets-list' ? list : null };
   const addSetButton = Object.assign(node(), { dataset: { addSet: '3' }, closest: () => entryNode });
   const data = { gyms: [], active_workout: { id: 1, gym_id: 1, gym_name: 'Home', started_at: '2026-09-22 10:00:00' },
@@ -99,10 +103,10 @@ async function harness(disk = storage(), initialData = {}, { now = Date.parse('2
     document: {
       visibilityState: 'visible', addEventListener() {},
       querySelector: (selector) => selector === '.set-form[data-dirty="true"]'
-        ? forms.find((item) => item.isConnected && item.dataset.dirty) ?? null : nodes[selector] ?? null,
+        ? forms.find((item) => isRendered(item) && item.dataset.dirty) ?? null : nodes[selector] ?? null,
       querySelectorAll: (selector) => {
-        if (selector === '.set-form') return forms.filter((item) => item.isConnected);
-        if (selector === '.set-form[data-dirty="true"]') return forms.filter((item) => item.isConnected && item.dataset.dirty);
+        if (selector === '.set-form') return forms.filter(isRendered);
+        if (selector === '.set-form[data-dirty="true"]') return forms.filter((item) => isRendered(item) && item.dataset.dirty);
         if (selector === '[data-add-set]') return form.isConnected ? [addSetButton] : [];
         if (selector === '[data-finish-workout]') return [nodes['#finish']];
         if (selector === '[data-finish-workout], #cancel-workout') return [nodes['#finish'], nodes['#cancel-workout']];
@@ -613,6 +617,7 @@ test('history repeats a completed workout when no workout is active', async () =
   assert.equal(requests.find(([url]) => url.endsWith('/repeat'))[1].method, 'POST');
   assert.equal(dialog.removed, true);
   assert.match(app.nodes['#app'].innerHTML, /Workout active/);
+  assert.match(app.nodes['#toast'].textContent, /^Workout repeated\. Sets are ready to log\.$/);
 });
 
 test('correcting a completed set refreshes active references and the history count without losing a draft', async () => {
