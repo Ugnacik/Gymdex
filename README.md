@@ -158,8 +158,10 @@ missing starter variations back when it starts.
   its equipment and saved configurations, and the exercise too once it has no
   variations left.
 - **Archive** appears for a variation used in a workout. It disappears from the
-  exercise picker, but history, progress, and the CSV export keep it, and
-  Progress still offers it, marked "(archived)".
+  exercise picker and Recent, but history, progress, and the CSV export keep
+  it, and Progress still offers it, marked "(archived)". If another phone still
+  has the picker open, adding the archived variation there is refused with
+  "… is archived. Restore it in Manage to add it."
 
 Archived variations are listed under **Archived** at the end of the Custom
 exercises section, and **Restore** offers one in the picker again. Creating a

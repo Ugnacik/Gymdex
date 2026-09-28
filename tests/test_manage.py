@@ -404,6 +404,23 @@ class ManageCustomExerciseTests(unittest.TestCase):
         exercise, = db.manage_overview(self.connection)['exercises']
         self.assertEqual((exercise['archived'], exercise['variations'][0]['archived']), (True, True))
 
+    def test_an_archived_variation_cannot_be_added_to_a_workout(self):
+        self.completed_workout_with(self.heavy, 'Prowler')
+        configuration_id = db.manage_overview(self.connection)['configurations'][0]['id']
+        db.remove_item(self.connection, 'variation', self.heavy['id'])
+        workout = db.start_workout(self.connection, self.home['id'])
+
+        refused = 'Sled Push Heavy is archived. Restore it in Manage to add it.'
+        with self.assertRaisesRegex(RuntimeError, refused):
+            db.add_workout_exercise(self.connection, workout['id'], self.heavy['id'], 'Prowler')
+        with self.assertRaisesRegex(RuntimeError, refused):
+            db.add_recent_profile(self.connection, workout['id'], configuration_id)
+        self.assertEqual(db.bootstrap(self.connection)['workout_exercises'], [])
+
+        db.restore_item(self.connection, 'variation', self.heavy['id'])
+        added = db.add_recent_profile(self.connection, workout['id'], configuration_id)
+        self.assertEqual((added['variation_name'], added['equipment']), ('Heavy', 'Prowler'))
+
     def test_restoring_a_variation_offers_it_in_the_picker_again(self):
         self.completed_workout_with(self.heavy, 'Prowler')
         db.remove_item(self.connection, 'variation', self.heavy['id'])

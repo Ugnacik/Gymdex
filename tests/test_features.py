@@ -373,6 +373,19 @@ class FeatureTests(unittest.TestCase):
         self.assertEqual(self.request('POST', f'{variation_path}/restore')[1]['archived'], False)
         self.assertIn(heavy['id'], [item['id'] for item in self.request('GET', catalog_path)[1]['catalog']])
 
+    def test_adding_an_archived_variation_is_refused_on_the_picker_and_recent_routes(self):
+        heavy = db.create_exercise(self.connection, 'Sled Push', 'Heavy', 'duration', ['Sled'])
+        self.workout_with_set(variation=heavy, equipment='Sled')
+        configuration_id = self.request('GET', '/api/manage')[1]['configurations'][0]['id']
+        self.assertEqual(self.request('DELETE', f'/api/manage/variations/{heavy["id"]}'), (200, {'outcome': 'archived'}))
+        workout = db.start_workout(self.connection, self.gym['id'])
+        path = f'/api/workouts/{workout["id"]}/exercises'
+        refused = (409, {'error': 'Sled Push Heavy is archived. Restore it in Manage to add it.'})
+
+        self.assertEqual(self.request('POST', path, {'variation_id': heavy['id'], 'equipment': 'Sled'}), refused)
+        self.assertEqual(self.request('POST', path, {'profile_id': configuration_id}), refused)
+        self.assertEqual(self.request('GET', '/api/bootstrap')[1]['workout_exercises'], [])
+
     def test_manage_routes_refuse_starter_catalog_exercises(self):
         catalog = self.request('GET', f'/api/catalog?gym_id={self.gym["id"]}')[1]['catalog']
         bench_id = next(row['id'] for row in self.connection.execute('SELECT id, name FROM exercises') if row['name'] == 'Bench Press')

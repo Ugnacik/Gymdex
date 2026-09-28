@@ -678,13 +678,21 @@ def add_workout_exercise(
     if not workout:
         raise LookupError("Active workout not found.")
     variation = connection.execute(
-        """SELECT v.id, v.tracking_type, v.name AS variation_name, e.name AS exercise_name
+        """SELECT v.id, v.tracking_type, v.name AS variation_name, e.name AS exercise_name,
+                  v.archived_at
            FROM exercise_variations v JOIN exercises e ON e.id = v.exercise_id
            WHERE v.id = ?""",
         (variation_id,),
     ).fetchone()
     if not variation:
         raise LookupError("Exercise variation not found.")
+    # The picker hides archived Variations, but another device may archive one
+    # while this picker is open. Recent goes through here too.
+    if variation["archived_at"]:
+        raise RuntimeError(
+            f"{variation['exercise_name']} {variation['variation_name']} is archived. "
+            "Restore it in Manage to add it."
+        )
     allowed = connection.execute(
         "SELECT 1 FROM variation_equipment WHERE variation_id = ? AND equipment = ?",
         (variation_id, equipment),
