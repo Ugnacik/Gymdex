@@ -1021,6 +1021,46 @@ def exercise_progress(
     }
 
 
+def _require_unarchived_variation(name: str, archived_at: str | None, action: str = "add it") -> None:
+    # The picker hides archived Variations, but another device may archive one
+    # while this picker is open. Recent goes through add_workout_exercise too.
+    if archived_at:
+        raise RuntimeError(f"{name} is archived. Restore it in Manage to {action}.")
+
+
+def _choose_configuration(
+    connection: sqlite3.Connection, gym_id: int, variation_id: int, equipment: str,
+    manufacturer: str, label: str,
+) -> dict[str, Any]:
+    """The Exercise Configuration for a Gym, Variation, Equipment and machine details,
+    created when new and restored when archived. The caller owns the transaction."""
+    allowed = connection.execute(
+        "SELECT 1 FROM variation_equipment WHERE variation_id = ? AND equipment = ?",
+        (variation_id, equipment),
+    ).fetchone()
+    if not allowed:
+        raise ValueError("That equipment is not available for this exercise.")
+    manufacturer = " ".join(manufacturer.split())[:80]
+    label = " ".join(label.split())[:80]
+    connection.execute(
+        """INSERT OR IGNORE INTO gym_exercise_profiles
+           (gym_id, variation_id, equipment, manufacturer, label)
+           VALUES (?, ?, ?, ?, ?)""",
+        (gym_id, variation_id, equipment, manufacturer, label),
+    )
+    profile = connection.execute(
+        """SELECT id FROM gym_exercise_profiles
+           WHERE gym_id = ? AND variation_id = ? AND equipment = ?
+             AND manufacturer = ? AND label = ?""",
+        (gym_id, variation_id, equipment, manufacturer, label),
+    ).fetchone()
+    # Choosing an archived Exercise Configuration's combination again restores it.
+    connection.execute(
+        "UPDATE gym_exercise_profiles SET archived_at = NULL WHERE id = ?", (profile["id"],)
+    )
+    return {"id": profile["id"], "manufacturer": manufacturer, "label": label}
+
+
 def add_workout_exercise(
     connection: sqlite3.Connection,
     workout_id: int,
@@ -1044,38 +1084,13 @@ def add_workout_exercise(
     ).fetchone()
     if not variation:
         raise LookupError("Exercise variation not found.")
-    # The picker hides archived Variations, but another device may archive one
-    # while this picker is open. Recent goes through here too.
-    if variation["archived_at"]:
-        raise RuntimeError(
-            f"{variation['exercise_name']} {variation['variation_name']} is archived. "
-            "Restore it in Manage to add it."
-        )
-    allowed = connection.execute(
-        "SELECT 1 FROM variation_equipment WHERE variation_id = ? AND equipment = ?",
-        (variation_id, equipment),
-    ).fetchone()
-    if not allowed:
-        raise ValueError("That equipment is not available for this exercise.")
-
-    manufacturer = " ".join(manufacturer.split())[:80]
-    label = " ".join(label.split())[:80]
-    connection.execute(
-        """INSERT OR IGNORE INTO gym_exercise_profiles
-           (gym_id, variation_id, equipment, manufacturer, label)
-           VALUES (?, ?, ?, ?, ?)""",
-        (workout["gym_id"], variation_id, equipment, manufacturer, label),
+    _require_unarchived_variation(
+        f"{variation['exercise_name']} {variation['variation_name']}", variation["archived_at"],
     )
-    profile = connection.execute(
-        """SELECT id FROM gym_exercise_profiles
-           WHERE gym_id = ? AND variation_id = ? AND equipment = ?
-             AND manufacturer = ? AND label = ?""",
-        (workout["gym_id"], variation_id, equipment, manufacturer, label),
-    ).fetchone()
-    # Choosing an archived Exercise Configuration's combination again restores it.
-    connection.execute(
-        "UPDATE gym_exercise_profiles SET archived_at = NULL WHERE id = ?", (profile["id"],)
+    profile = _choose_configuration(
+        connection, workout["gym_id"], variation_id, equipment, manufacturer, label,
     )
+    manufacturer, label = profile["manufacturer"], profile["label"]
     position = connection.execute(
         "SELECT COALESCE(MAX(position), 0) + 1 AS next FROM workout_exercises WHERE workout_id = ?",
         (workout_id,),
@@ -1143,6 +1158,51 @@ def add_recent_profile(
         profile["manufacturer"],
         profile["label"],
     )
+
+
+def change_workout_exercise_configuration(
+    connection: sqlite3.Connection, workout_id: int, exercise_id: int, equipment: str,
+    manufacturer: str = "", label: str = "",
+) -> dict[str, Any]:
+    """Switch an Active Workout's Workout Exercise to another Exercise Configuration of its
+    Variation, such as the machine actually used. Its sets and note stay as they are.
+
+    The previous Configuration is deleted once nothing uses it (see "Archived" in CONTEXT.md):
+    no Workout Exercise and no Routine. A mistaken machine then does not linger in Recent.
+    """
+    with connection:
+        connection.execute("BEGIN IMMEDIATE")
+        entry = connection.execute(
+            """SELECT we.variation_id, we.gym_profile_id, w.gym_id,
+                      we.exercise_name_snapshot || ' ' || we.variation_name_snapshot AS name,
+                      v.archived_at
+               FROM workout_exercises we
+               JOIN workouts w ON w.id = we.workout_id
+               JOIN exercise_variations v ON v.id = we.variation_id
+               WHERE we.id = ? AND we.workout_id = ? AND w.completed_at IS NULL""",
+            (exercise_id, workout_id),
+        ).fetchone()
+        if not entry:
+            raise LookupError("Active workout exercise not found.")
+        _require_unarchived_variation(entry["name"], entry["archived_at"], "change its machine")
+        profile = _choose_configuration(
+            connection, entry["gym_id"], entry["variation_id"], equipment, manufacturer, label,
+        )
+        connection.execute(
+            """UPDATE workout_exercises SET gym_profile_id = ?, equipment_snapshot = ?,
+                      manufacturer_snapshot = ?, label_snapshot = ?
+               WHERE id = ?""",
+            (profile["id"], equipment, profile["manufacturer"], profile["label"], exercise_id),
+        )
+        previous = entry["gym_profile_id"]
+        if (previous is not None and previous != profile["id"]
+                and not connection.execute(MANAGED_KINDS["configuration"].used_sql, (previous,)).fetchone()
+                and not connection.execute(
+                    "SELECT 1 FROM routine_exercises WHERE profile_id = ? LIMIT 1", (previous,)
+                ).fetchone()):
+            MANAGED_KINDS["configuration"].delete(connection, previous)
+    return {"id": exercise_id, "equipment": equipment,
+            "manufacturer": profile["manufacturer"], "label": profile["label"]}
 
 
 def complete_workout(connection: sqlite3.Connection, workout_id: int) -> None:
