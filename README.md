@@ -183,7 +183,8 @@ the beep is enabled by checking Done or tapping Start or Resume; a silent switch
 or muted media volume can still mute it. iPhones and iPads do not vibrate
 because Safari has no vibration support. If the countdown ends while the app is
 in the background or the screen is locked, the cue can be late or wait until
-you return to the app.
+you return to the app. When you return more than 30 seconds after the countdown
+ended, the timer shows it finished without the cue.
 
 ## Log sets
 

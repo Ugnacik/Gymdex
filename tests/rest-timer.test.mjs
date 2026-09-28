@@ -127,6 +127,26 @@ test("a countdown that ends while the page is throttled signals when refreshed",
   assert.equal(clock.finishes.length, 1);
 });
 
+test("a countdown found finished more than 30 seconds late finishes silently", () => {
+  const clock = fixture(3);
+  clock.timer.start();
+  clock.advance(3000 + 30_000);
+  clock.timer.refresh();
+  assert.equal(clock.finishes.length, 1, "up to 30 seconds late still signals");
+  clock.timer.start();
+  clock.advance(3000 + 30_001);
+  assert.equal(clock.timer.refresh().status, "finished");
+  assert.equal(clock.changes.at(-1).status, "finished");
+  assert.equal(clock.finishes.length, 1);
+  clock.timer.start();
+  clock.timer.pause();
+  clock.timer.resume();
+  clock.advance(3000 + 60_000);
+  clock.timer.pause();
+  assert.equal(clock.timer.snapshot().status, "finished");
+  assert.equal(clock.finishes.length, 1);
+});
+
 test("reset, restart and disabling do not signal a finished rest", () => {
   const clock = fixture(3);
   clock.timer.start();
