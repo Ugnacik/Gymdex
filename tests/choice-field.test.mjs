@@ -24,6 +24,9 @@ test('known values are a select whose Other… option reveals the text input', (
   assert.match(container.innerHTML, /<label for="manufacturer-choice">/);
   assert.deepEqual(select.options.map((option) => [option.value, option.text]),
     [['', 'None'], ['Hammer Strength', 'Hammer Strength'], ['Technogym', 'Technogym'], [OTHER, 'Other…']]);
+  // Other…'s value survives HTML parsing (no NUL) and differs from every whitespace-collapsed value.
+  assert.doesNotMatch(OTHER, /[\u0000-\u001f]/);
+  assert.notEqual(OTHER, OTHER.split(/\s+/).filter(Boolean).join(' '));
   const input = container.querySelector('#manufacturer');
   assert.equal(input.hidden, true);
   assert.equal(input.value, '');

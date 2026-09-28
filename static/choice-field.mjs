@@ -3,7 +3,9 @@
 // <datalist> suggestions unreliably. Without known values the field is just the text input.
 // The text input always carries the value, hidden while a known value is chosen, so a
 // named field submits with its form like a plain input.
-export const OTHER = "\u0000other";
+// Known values are whitespace-collapsed, so none starts with a space: the Other… option's value
+// cannot collide with one. (A NUL character would not survive HTML parsing.)
+export const OTHER = " other";
 
 const escapeHtml = (value) => String(value)
   .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
