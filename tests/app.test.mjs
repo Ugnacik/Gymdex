@@ -967,8 +967,8 @@ test('workout and exercise notes stay collapsed, keep drafts on the phone, and a
   assert.match(html, /<details class="note"[^>]*>\s*<summary[^>]*>[\s\S]*?Workout note[\s\S]*?<textarea data-note-target="workout"[^>]*maxlength="1000"[^>]*>Slept &lt;5h<\/textarea>/);
   assert.match(html, /Add note[\s\S]*?<textarea data-note-target="exercise:3"[^>]*aria-label="Note for Bench Press"[^>]*><\/textarea>/);
   assert.doesNotMatch(html, /<details[^>]*\bopen\b/, 'notes are collapsed so the recording path stays short');
-  const order = ['<p class="meta">', 'data-note-target="exercise:3"', 'class="sets-list"', 'data-add-set="3"', 'class="exercise-tools"', 'id="open-picker"',
-    'data-note-target="workout"', 'data-finish-workout'].map((marker) => html.indexOf(marker));
+  const order = ['id="workout-elapsed"', 'data-note-target="workout"', 'class="rest-timer"', '<p class="meta">', 'data-note-target="exercise:3"',
+    'class="sets-list"', 'data-add-set="3"', 'class="exercise-tools"', 'id="open-picker"', 'data-finish-workout'].map((marker) => html.indexOf(marker));
   assert.ok(order.every((index, i) => index >= 0 && (i === 0 || index > order[i - 1])), `unexpected order ${order}`);
 
   const requests = [];

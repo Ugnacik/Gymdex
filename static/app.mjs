@@ -257,6 +257,7 @@ function renderWorkout() {
         <p>This workout started ${formatElapsed(elapsedMinutes(workout))} ago.</p>
         <div class="stale-actions"><button type="button" class="primary" id="stale-finish" data-finish-workout>Finish it</button><button type="button" class="secondary" id="stale-keep">Keep going</button></div>
       </section>` : ""}
+      ${renderNote("workout", "Workout note")}
       ${renderRestTimer()}
       <div class="section-title"><h2>Exercises</h2><span>${entries.length}</span></div>
       <section class="exercise-list">
@@ -272,7 +273,6 @@ function renderWorkout() {
           </article>`).join("") : `<div class="empty"><h3>No exercises yet</h3><p>Add a recent choice in one tap, or search the catalog.</p></div>`}
       </section>
       <button class="primary accent add-exercise" id="open-picker">Add exercise</button>
-      ${renderNote("workout", "Workout note")}
       <div class="workout-actions">
         <button class="secondary" data-finish-workout>Finish workout</button>
         <button class="text-button cancel-workout" id="cancel-workout">Cancel workout</button>
