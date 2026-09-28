@@ -260,6 +260,25 @@ test('failed removal preserves drafts, and finish waits for an in-flight removal
   assert.deepEqual(calls, ['/api/sets/2', '/api/workouts/1/complete']);
 });
 
+test('removing a set applies the renumbered positions and keeps the other sets\' drafts', async () => {
+  const threeSets = { active_workout: { id: 1, gym_id: 1 }, gyms: [], workout_exercises: [{ id: 3, sets: [
+    { id: 2, position: 1 }, { id: 5, position: 2 }, { id: 6, position: 3 }] }] };
+  const { editor, env, drafts, requests } = fixture(undefined, threeSets);
+  editor.edit(6, values);
+  env.request = async (path, options) => options.method === 'DELETE'
+    ? { ok: true, sets: [{ id: 2, position: 1 }, { id: 6, position: 2 }] }
+    : { id: 6, position: 2, ...JSON.parse(options.body) };
+  assert.equal(await editor.remove(5), true);
+  const positions = (entry) => entry.sets.map((set) => [set.id, set.position]);
+  assert.deepEqual(positions(editor.data.workout_exercises[0]), [[2, 1], [6, 2]]);
+  assert.deepEqual(positions(drafts.cachedWorkout().workout_exercises[0]), [[2, 1], [6, 2]]);
+  // Drafts are keyed by set id, so the renumbered set keeps its draft and saves to its own id.
+  assert.equal(editor.status(6).values.result, '8');
+  assert.equal(await editor.save(6), true);
+  assert.deepEqual(requests.map(({ method, path }) => `${method} ${path}`), ['DELETE /api/sets/5', 'PUT /api/sets/6']);
+  assert.deepEqual(positions(editor.data.workout_exercises[0]), [[2, 1], [6, 2]]);
+});
+
 const blank = (id) => ({ id, weight: null, result: null, completed: false });
 const twoExercises = () => ({ active_workout: { id: 1, gym_id: 1 }, gyms: [], workout_exercises: [
   { id: 3, position: 1, sets: [blank(2)] }, { id: 4, position: 2, sets: [blank(5), blank(6)] }] });

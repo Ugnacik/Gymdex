@@ -147,6 +147,17 @@ class FeatureTests(unittest.TestCase):
             'SELECT COUNT(*) FROM workouts WHERE completed_at IS NULL'
         ).fetchone()[0], 1)
 
+    def test_repeat_numbers_set_slots_without_gaps(self):
+        # Sets removed before removal renumbered them left gaps in older workouts.
+        workout, entry, _ = self.workout_with_set()
+        self.connection.execute(
+            'INSERT INTO workout_sets(workout_exercise_id, position) VALUES (?, 3)', (entry['id'],),
+        )
+        self.connection.commit()
+        self.request('POST', f'/api/history/{workout["id"]}/repeat')
+        repeated, = db.bootstrap(self.connection)['workout_exercises']
+        self.assertEqual([item['position'] for item in repeated['sets']], [1, 2])
+
     def test_picker_and_recent_add_empty_slots_for_each_set_of_last_matching_workout(self):
         original = db.start_workout(self.connection, self.gym['id'])
         press = db.add_workout_exercise(

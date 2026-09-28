@@ -597,17 +597,15 @@ def repeat_workout(connection: sqlite3.Connection, workout_id: int) -> dict[str,
                     "tracking_type",
                  ))),
             )
-            slots = [row["position"] for row in connection.execute(
-                """SELECT position FROM workout_sets
-                   WHERE workout_exercise_id = ? ORDER BY position""",
+            slots = connection.execute(
+                "SELECT COUNT(*) FROM workout_sets WHERE workout_exercise_id = ?",
                 (entry["id"],),
-            )]
-            for slot in slots or [1]:
-                connection.execute(
-                    """INSERT INTO workout_sets(workout_exercise_id, position)
-                       VALUES (?, ?)""",
-                    (entry_cursor.lastrowid, slot),
-                )
+            ).fetchone()[0]
+            # Number from 1: older workouts may have gaps left by removed sets.
+            connection.executemany(
+                "INSERT INTO workout_sets(workout_exercise_id, position) VALUES (?, ?)",
+                [(entry_cursor.lastrowid, slot) for slot in range(1, max(slots, 1) + 1)],
+            )
         workout = connection.execute(
             "SELECT id, started_at FROM workouts WHERE id = ?", (new_workout_id,)
         ).fetchone()
@@ -1085,15 +1083,23 @@ def delete_completed_workout(connection: sqlite3.Connection, workout_id: int) ->
     return {"ok": True}
 
 
-def delete_set(connection: sqlite3.Connection, set_id: int) -> dict[str, bool]:
+def delete_set(connection: sqlite3.Connection, set_id: int) -> dict[str, Any]:
+    """Delete an active workout's set, renumber the remaining sets 1..n like history,
+    and return their new positions."""
     with connection:
         connection.execute("BEGIN IMMEDIATE")
         item = connection.execute("SELECT workout_exercise_id FROM workout_sets WHERE id = ?", (set_id,)).fetchone()
         if not item:
             raise LookupError("Set not found.")
-        require_active_exercise(connection, item["workout_exercise_id"])
+        exercise_id = item["workout_exercise_id"]
+        require_active_exercise(connection, exercise_id)
         connection.execute("DELETE FROM workout_sets WHERE id = ?", (set_id,))
-    return {"ok": True}
+        renumber_positions(connection, "workout_sets", exercise_id)
+        sets = rows(connection.execute(
+            "SELECT id, position FROM workout_sets WHERE workout_exercise_id = ? ORDER BY position",
+            (exercise_id,),
+        ))
+    return {"ok": True, "sets": sets}
 
 
 # Manage: rename, remove and restore the items new Workouts are built from. Removing

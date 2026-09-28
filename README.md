@@ -199,8 +199,8 @@ Valid edits, including unfinished sets, save automatically after a short typing
 pause, and pressing Enter in a field saves immediately. Add set creates another
 row that copies the weight and reps or seconds of the set above it, saved but
 not completed; Gymdex saves any edit to the set above first. The × in a set's
-corner deletes it after confirmation. Sets can be edited while the workout is
-active.
+corner deletes it after confirmation, and the remaining sets are renumbered, as
+in history. Sets can be edited while the workout is active.
 
 Below each exercise's sets, **Move up** and **Move down** change its place in
 the workout, and **Remove** deletes the exercise with all its sets after

@@ -74,17 +74,21 @@ class SetTests(unittest.TestCase):
         self.save(item, result=None, weight=None, completed=False)
         self.assertIsNone(self.first_set()['result'])
 
-    def test_set_order_removal_and_missing_ids(self):
+    def test_removing_a_set_renumbers_the_remaining_sets_and_missing_ids_are_not_found(self):
+        first = self.first_set()
         second = db.add_set(self.connection, self.entry['id'])
         third = db.add_set(self.connection, self.entry['id'])
-        db.delete_set(self.connection, second['id'])
+        # Like history, the remaining sets close the gap, and the new positions are returned.
+        self.assertEqual(db.delete_set(self.connection, second['id']), {
+            'ok': True, 'sets': [{'id': first['id'], 'position': 1}, {'id': third['id'], 'position': 2}],
+        })
         fourth = db.add_set(self.connection, self.entry['id'])
-        self.assertEqual([s['position'] for s in db.sets_for_exercise(self.connection, self.entry['id'])], [1, 3, 4])
+        self.assertEqual([(s['id'], s['position']) for s in db.sets_for_exercise(self.connection, self.entry['id'])],
+                         [(first['id'], 1), (third['id'], 2), (fourth['id'], 3)])
         self.assertNotEqual(fourth['id'], second['id'])
         for action in [lambda: db.add_set(self.connection, 999), lambda: db.delete_set(self.connection, second['id']), lambda: self.save(second)]:
             with self.assertRaises(LookupError):
                 action()
-        self.assertEqual(third['position'], 3)
 
     def test_added_set_copies_the_set_above_without_completing_it(self):
         self.save(self.first_set(), result=8, weight=42.5, completed=True)

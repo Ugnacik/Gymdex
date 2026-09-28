@@ -776,6 +776,32 @@ test('Add set waits when the set above cannot reach the server', async () => {
   assert.equal(app.addSetButton.disabled, false);
 });
 
+test('removing a set renumbers the remaining sets and pairs them with Last workout again', async () => {
+  const blankSet = (id, position) => ({ id, position, weight: null, result: null, completed: false });
+  const app = await harness(storage(), { workout_exercises: [{ id: 3, exercise_name: 'Bench Press', variation_name: 'Standard', equipment: 'Barbell',
+    tracking_type: 'repetitions', previous_sets: [{ weight: 80, result: 8 }, { weight: 85, result: 6 }, { weight: 90, result: 4 }],
+    sets: [blankSet(2, 1), blankSet(5, 2), blankSet(6, 3)] }] });
+  const questions = [];
+  app.env.window.confirm = (question) => { questions.push(question); return true; };
+  const requests = [];
+  app.env.fetch = async (path, options) => {
+    requests.push(`${options.method} ${path}`);
+    return response({ ok: true, sets: [{ id: 5, position: 1 }, { id: 6, position: 2 }] });
+  };
+  const list = node();
+  const addButton = node();
+  const entryNode = { querySelector: (selector) => ({ '.sets-list': list, '.add-set': addButton })[selector] };
+  Object.assign(app.form, { closest: () => entryNode, remove() { app.form.isConnected = false; } });
+  await app.form.querySelector('.remove-set').events.click();
+  assert.deepEqual(questions, ['Remove set 1?']);
+  assert.deepEqual(requests, ['DELETE /api/sets/2']);
+  const legends = [...list.innerHTML.matchAll(/data-set-id="(\d+)"[\s\S]*?<legend>Set (\d+)<\/legend>/g)].map(([, id, position]) => [id, position]);
+  assert.deepEqual(legends, [['5', '1'], ['6', '2']]);
+  assert.match(list.innerHTML, /aria-label="Remove Bench Press, set 2"/);
+  assert.match(list.innerHTML, /data-set-id="5"[\s\S]*?Last workout: 80 kg × 8 reps[\s\S]*?data-set-id="6"[\s\S]*?Last workout: 85 kg × 6 reps/);
+  assert.equal(addButton.focused, true);
+});
+
 const pressEntry = { id: 3, variation_id: 11, exercise_name: 'Bench Press', variation_name: 'Standard', equipment: 'Barbell',
   tracking_type: 'repetitions', previous_sets: [], sets: [{ id: 2, position: 1, weight: null, result: null, completed: false }] };
 const plankEntry = { id: 4, variation_id: 12, exercise_name: 'Plank', variation_name: 'Front Plank', equipment: 'Bodyweight',

@@ -1635,9 +1635,18 @@ async function removeExercise(entryId) {
 async function removeSet(form) {
   if (state.editor.busy) return;
   if (!window.confirm(`Remove set ${form.querySelector("legend").textContent.replace("Set ", "")}?`)) return;
-  const addButton = form.closest(".exercise-entry").querySelector(".add-set");
+  const entryNode = form.closest(".exercise-entry");
+  const addButton = entryNode.querySelector(".add-set");
   if (await state.editor.remove(form.dataset.setId)) {
     form.remove();
+    // The server renumbered the remaining sets: re-render them so their numbers and
+    // Last workout values line up. Their drafts are keyed by set id and restored by bindSet.
+    const entry = state.data.workout_exercises.find((item) => item.id === Number(form.dataset.entryId));
+    const list = entryNode.querySelector(".sets-list");
+    if (entry && list) {
+      list.innerHTML = entry.sets.map((set, index) => renderSet(entry, set, index)).join("");
+      list.querySelectorAll(".set-form").forEach(bindSet);
+    }
     addButton.focus();
     updateSyncStatus();
   }
