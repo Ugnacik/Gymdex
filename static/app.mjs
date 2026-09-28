@@ -653,7 +653,9 @@ function openHistory() {
         submit: (name) => api(`/api/history/${workout.id}/routine`, { method: "POST", body: JSON.stringify({ name }) }),
       });
       if (!saved) return;
-      state.data.routines = [...(state.data.routines ?? []), { id: saved.id, gym_id: saved.gym_id, name: saved.name, exercise_count: saved.exercises.length }];
+      // Listed by name, as bootstrap lists them.
+      state.data.routines = [...(state.data.routines ?? []), { id: saved.id, gym_id: saved.gym_id, name: saved.name, exercise_count: saved.exercises.length }]
+        .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
       if (!state.data.active_workout) renderStart();
       const skippedNote = saved.skipped ? ` ${saved.skipped} archived exercise${saved.skipped === 1 ? "" : "s"} skipped.` : "";
       showToast(`Routine ${saved.name} saved with ${saved.exercises.length} exercise${saved.exercises.length === 1 ? "" : "s"}.${skippedNote}`);

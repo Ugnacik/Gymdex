@@ -1726,6 +1726,16 @@ test('history saves a completed workout as a routine named in the in-app sheet',
   assert.equal(requests.length, before);
 });
 
+test('a routine saved from history takes its place by name on the start screen, as after a reload', async () => {
+  const app = await harness(storage(), { ...startData([home]), routines: [{ id: 3, gym_id: 1, name: 'Pull', exercise_count: 2 }] });
+  const saved = { id: 9, gym_id: 1, name: 'legs', skipped: 0, exercises: [{ id: 1 }] };
+  const { click } = await openHistoryDetail(app, completedDetail(), { 'POST /api/history/22/routine': saved });
+  app.env.askText = async (question, options) => options.submit('legs');
+  await click('[data-save-routine]', { saveRoutine: '22' });
+  const order = [...app.nodes['#app'].innerHTML.matchAll(/data-start-routine="(\d+)"/g)].map((match) => match[1]);
+  assert.deepEqual(order, ['9', '3'], 'sorted by name ignoring case, like bootstrap');
+});
+
 test('history offers Save as routine during a workout but not at an archived gym', async () => {
   const active = await harness();
   const { nodes } = await openHistoryDetail(active, completedDetail(), {});
