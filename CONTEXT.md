@@ -47,6 +47,10 @@ _Avoid_: Profile, machine setup, recent entry
 The state of a used Gym, Exercise Configuration or Custom Exercise Variation that is no longer offered for new Workouts but remains in everything already recorded. It can be restored. Never-used items are deleted instead.
 _Avoid_: Hidden, inactive, soft-deleted
 
+**Routine**:
+A saved plan for one Gym: an ordered list of Exercise Configurations, each with a number of Sets to start with. It stores no Weights, Repetitions, Durations or Notes. Starting a Routine creates an Active Workout with that many empty Sets per Workout Exercise; Workouts do not refer back to it.
+_Avoid_: Template, plan, program
+
 **Workout**:
 A time-bounded record of performed exercises and their sets.
 _Avoid_: Training, session
