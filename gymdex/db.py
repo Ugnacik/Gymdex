@@ -1220,8 +1220,8 @@ def _custom_exercise_rows(connection: sqlite3.Connection) -> list[dict[str, Any]
         exercise_id, exercise_name = variation.pop("exercise_id"), variation.pop("exercise_name")
         exercise = exercises.setdefault(exercise_id, {
             "id": exercise_id, "name": exercise_name, "variations": [],
-            # A custom Exercise is archived when all its Variations are, and can be
-            # renamed only when it has no starter catalog Variations.
+            # Manage shows the Exercise as archived when all its custom Variations are
+            # Archived; it can be renamed only when it has no starter catalog Variations.
             "archived": True, "renamable": not _has_starter_variations(connection, exercise_id),
         })
         # An Equipment value is used when a Workout Exercise of this Variation recorded it.
@@ -1345,7 +1345,7 @@ def _rename_exercise(connection: sqlite3.Connection, exercise_id: int, name: obj
     connection.execute("UPDATE exercises SET name = ? WHERE id = ?", (clean_name, exercise_id))
 
 
-# A custom Exercise is not archived itself: it follows its Variations.
+# An Exercise is never Archived itself: Manage shows it archived when all its custom Variations are.
 MANAGED_KINDS["exercise"] = ManagedKind(
     table="exercises",
     missing="Exercise not found.",
@@ -1394,7 +1394,8 @@ def set_variation_equipment(
 
 
 def manage_overview(connection: sqlite3.Connection) -> dict[str, Any]:
-    """Gyms, Exercise Configurations and custom Exercises, each marked archived and used."""
+    """Gyms, Exercise Configurations and Custom Exercise Variations (grouped by Exercise),
+    each marked archived and used."""
     return {
         "gyms": _gym_rows(connection),
         "configurations": _configuration_rows(connection),

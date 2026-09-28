@@ -1215,7 +1215,7 @@ test('Manage lists gyms with Delete or Archive, and archiving hides the gym from
   assert.match(html, /<details class="manage-section" data-section="gyms" open>/);
   assert.match(html, /Exercise Configurations/);
   assert.match(html, /Incline Bench Press[\s\S]*Machine · Technogym · Press 1/);
-  assert.match(html, /Custom exercises[\s\S]*No custom exercises yet/);
+  assert.match(html, /Custom Exercise Variations[\s\S]*No custom variations yet/);
   assert.match(html, /Annex &lt;b&gt;[\s\S]*data-manage-remove="gym:2"[^>]*>Archive<\/button>/);
   assert.match(html, /data-manage-remove="gym:1"[^>]*>Delete<\/button>/);
   assert.doesNotMatch(html, /<b>/);
@@ -1365,7 +1365,7 @@ test('Manage lists custom exercises with rename, equipment and Delete or Archive
   });
   let html = content.innerHTML;
   assert.doesNotMatch(html, /<[ib]>/);
-  assert.match(html, /<summary><h3>Custom exercises<\/h3><span>2<\/span><\/summary>/);
+  assert.match(html, /<summary><h3>Custom Exercise Variations<\/h3><span>2<\/span><\/summary>/);
   assert.match(html, /data-manage-rename="exercise:3" aria-label="Rename Sled &lt;i&gt;">Rename<\/button>/);
   assert.doesNotMatch(html, /data-manage-rename="exercise:4"/);
   assert.doesNotMatch(html, /data-manage-remove="exercise:/);

@@ -900,7 +900,7 @@ async function openProgress(initialVariationId = null, initialGymId = null, init
   });
   dialog.showModal();
   try {
-    // Archived custom exercises stay selectable: their recorded workouts still have progress.
+    // Archived custom variations stay selectable: their recorded workouts still have progress.
     const catalog = await api(`/api/catalog?gym_id=${gyms[0].id}&include_archived=1`);
     if (!dialog.open) return;
     exercise.innerHTML = catalog.catalog.map((item) => `<option value="${item.id}" ${item.id === initialVariationId ? "selected" : ""}>${escapeHtml(exerciseDisplayName(item))}${item.archived ? " (archived)" : ""}</option>`).join("");
@@ -968,7 +968,7 @@ function renderEquipmentEditor(variation, open) {
     </form>`;
 }
 
-// Custom exercises grouped by Exercise; archived Variations are listed under Archived.
+// Custom Exercise Variations grouped by Exercise; archived ones are listed under Archived.
 function renderCustomExercises(overview, open) {
   const variations = manageItems(overview, "variation");
   const active = variations.filter((variation) => !variation.archived);
@@ -983,11 +983,11 @@ function renderCustomExercises(overview, open) {
         actions: `<button type="button" class="text-button" data-manage-equipment="variation:${variation.id}" aria-label="Edit equipment of ${escapeHtml(exerciseDisplayName(variation))}">Equipment</button>`,
         editor: renderEquipmentEditor(variation, open) })).join("")}</ul>`;
   }).join("");
-  return renderManageSection("exercises", "Custom exercises", active.length, variations.length ? `
-      <p class="manage-help">Delete removes a variation with no workouts. Archive hides a variation with workouts from the exercise picker; its workouts stay in history and progress.</p>
-      ${groups || "<p>All custom exercises are archived.</p>"}
+  return renderManageSection("exercises", "Custom Exercise Variations", active.length, variations.length ? `
+      <p class="manage-help">Delete removes a variation with no workouts. Archive keeps a variation with workouts in history and progress but stops offering it in the exercise picker.</p>
+      ${groups || "<p>All custom variations are archived.</p>"}
       ${renderManageArchived("exercises", archived.map((variation) => renderManageRow("variation", variation)), open)}`
-    : `<p>No custom exercises yet. Create one with Create custom exercise when adding an exercise to a workout.</p>`, open);
+    : `<p>No custom variations yet. Create one with Create custom exercise when adding an exercise to a workout.</p>`, open);
 }
 
 function renderManageSection(section, title, count, body, open) {
@@ -1020,11 +1020,11 @@ function renderManage(overview, open) {
     ? `${configurationLabel(item)} · Recent hides it while ${exerciseDisplayName(item)} is archived` : configurationLabel(item);
   return [
     renderManageSection("gyms", "Gyms", gyms.length, `
-      <p class="manage-help">Delete removes a gym with no workouts. Archive hides a gym with workouts from the start screen; its workouts stay in history and progress.</p>
+      <p class="manage-help">Delete removes a gym with no workouts. Archive keeps a gym with workouts in history and progress but stops offering it on the start screen.</p>
       ${gyms.length ? `<ul class="manage-list">${gyms.map((gym) => renderManageRow("gym", gym, { rename: true })).join("")}</ul>` : `<p>No gyms to manage.</p>`}
       ${renderManageArchived("gyms", archivedGyms.map((gym) => renderManageRow("gym", gym)), open)}`, open),
     renderManageSection("configurations", "Exercise Configurations", configurations.length, `
-      <p class="manage-help">Saved for a gym when you add an exercise there, and offered under Recent. Delete removes one never used in a workout. Archive hides a used one from Recent and Repeat; choosing the same equipment, manufacturer and label again restores it.</p>
+      <p class="manage-help">Saved for a gym when you add an exercise there, and offered under Recent. Delete removes one never used in a workout. Archive keeps a used one in history but stops offering it under Recent and in Repeat; choosing the same equipment, manufacturer and label again restores it.</p>
       ${configurations.length ? renderManageGroups(configurations, (item) => `${item.gym_name}${item.gym_archived ? " (archived)" : ""}`,
         (item) => renderManageRow("configuration", item, { shown: exerciseDisplayName(item), detail: configurationDetail(item) }))
         : `<p>No exercise configurations yet. Add an exercise to a workout to save one.</p>`}

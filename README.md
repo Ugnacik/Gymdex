@@ -9,7 +9,7 @@ Gymdex supports:
 - starting and finishing one active workout, with its elapsed time shown and a
   reminder to finish it after 3 hours;
 - adding recent gym-specific exercise configurations in one tap;
-- searching a starter exercise catalog of common movements;
+- searching a starter exercise catalog of common exercises;
 - remembering equipment and machine details separately for each gym;
 - logging sets with optional weight, repetitions or duration, and completion;
 - removing and reordering exercises in the active workout;
@@ -74,7 +74,7 @@ mixed. These two best values can come from different sets in the same workout.
 
 ## Exercise catalog
 
-The starter Exercise Catalog covers common gym movements: presses, squats,
+The starter Exercise Catalog covers common gym exercises: presses, squats,
 deadlifts including Romanian Deadlift, rows and pulldowns, leg press, leg
 curls and extensions, lunges, hip thrusts, raises, flies, curls, pushdowns,
 face pulls, core work such as Crunch and Hanging Leg Raise, and bodyweight
@@ -102,8 +102,9 @@ created variations in [Manage](#manage-gyms-and-exercises).
 ## Manage gyms and exercises
 
 On the start screen, **Manage** beside Your gyms opens three sections: Gyms,
-Exercise Configurations, and Custom exercises. Manage is not available during a
-workout, so nothing in the workout you are recording changes underneath you.
+Exercise Configurations, and Custom Exercise Variations. Manage is not
+available during a workout, so nothing in the workout you are recording changes
+underneath you.
 
 **Rename** changes a gym's name everywhere, including completed workouts in
 history and progress. Gym names must be unique regardless of capitalization,
@@ -129,7 +130,7 @@ gym, grouped by gym. Its remove button works the same way:
 - **Delete** appears for a configuration that no workout uses, for example one
   added to a workout that was cancelled. It is removed permanently.
 - **Archive** appears for a configuration used in a workout. It disappears from
-  Recent in the picker, which then has room for the next most recent entry, and
+  Recent in the picker, which then has room for the next most recent configuration, and
   Repeat this workout leaves it out. History, progress, "Last workout", and the
   CSV export keep it.
 
@@ -139,7 +140,7 @@ equipment, manufacturer, and label in the picker also restores it. A
 configuration whose custom variation is archived stays listed but says that
 Recent hides it until the variation is restored.
 
-Custom exercises lists the variations you created, grouped by exercise. Starter
+Custom Exercise Variations lists the variations you created, grouped by exercise. Starter
 catalog exercises are not listed and cannot be changed, because Gymdex adds
 missing starter variations back when it starts.
 
@@ -165,7 +166,7 @@ missing starter variations back when it starts.
   "… is archived. Restore it in Manage to add it."
 
 Archived variations are listed under **Archived** at the end of the Custom
-exercises section, and **Restore** offers one in the picker again. Creating a
+Exercise Variations section, and **Restore** offers one in the picker again. Creating a
 custom exercise with an archived variation's name is refused; restore the
 archived variation instead.
 
