@@ -367,8 +367,15 @@ textarea:focus-visible, summary:focus-visible { outline: 3px solid var(--accent)
 .set-inputs .set-complete { grid-template-rows: auto 48px; justify-items: center; min-width: 48px; margin: 0; }
 .set-inputs .set-complete input { width: 28px; height: 28px; min-height: 28px; align-self: center; padding: 0; accent-color: var(--accent); cursor: pointer; }
 .equipment-field label { font-size: inherit; font-weight: inherit; }
-.equipment-entry { display: flex; gap: 8px; }
-.equipment-entry input { flex: 1; min-width: 0; }
+.equipment-entry { display: flex; align-items: flex-end; gap: 8px; }
+.equipment-entry .choice-field { flex: 1; }
+.choice-field { display: grid; gap: 7px; min-width: 0; }
+.choice-field input[hidden] { display: none; }
+#custom-exercise-form .choice-field > label { font-size: inherit; font-weight: inherit; }
+.track-by { display: grid; margin: 0 0 14px; padding: 0; border: 0; }
+.track-by legend { margin-bottom: 3px; padding: 0; }
+.radio-option { display: flex; align-items: center; gap: 10px; min-height: 44px; cursor: pointer; }
+.radio-option input { width: 24px; height: 24px; min-height: 24px; padding: 0; accent-color: var(--accent); cursor: pointer; }
 .equipment-entry .secondary { min-width: 72px; }
 .equipment-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 2px 0 0; padding: 0; list-style: none; }
 .equipment-chips:empty { display: none; }

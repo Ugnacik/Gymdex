@@ -2,6 +2,7 @@ import { DraftStore, setPayload } from "./drafts.mjs";
 import { NOTE_MAX_LENGTH, WorkoutEditor } from "./workout-editor.mjs";
 import { RestTimer } from "./rest-timer.mjs";
 import { confirmInPage } from "./confirm-sheet.mjs";
+import { ChoiceField } from "./choice-field.mjs";
 
 // The server stores times as SQLite CURRENT_TIMESTAMP values in UTC ("YYYY-MM-DD HH:MM:SS").
 // Gymdex shows them in the device's time zone.
@@ -1328,6 +1329,23 @@ function equipmentProblem(names, name) {
   return "";
 }
 
+// Values offered for an Exercise by name, from the picker catalog: its Variations' names and
+// Equipment plus the starter Equipment, and the machine details of its Exercise Configurations
+// at every gym. A new Exercise gets only the starter Equipment.
+function exerciseSuggestions(name) {
+  const suggestions = state.picker.suggestions ?? { equipment: [], exercises: [] };
+  const key = cleanEquipmentName(name).toLowerCase();
+  return suggestions.exercises.find((item) => item.name.toLowerCase() === key)
+    ?? { variations: [], equipment: suggestions.equipment, manufacturers: [], labels: [] };
+}
+
+// Variation names must be unique within an Exercise, so existing ones are listed but cannot be chosen.
+function variationChoices(variations) {
+  if (!variations.length) return [];
+  const taken = variations.map((value) => ({ value, disabled: true, note: "already added" }));
+  return variations.some((value) => value.toLowerCase() === "standard") ? taken : ["Standard", ...taken];
+}
+
 function renderCustomExerciseForm(query = "") {
   const sheet = document.querySelector("#picker .sheet");
   sheet.innerHTML = `
@@ -1337,46 +1355,59 @@ function renderCustomExerciseForm(query = "") {
     <p>Use an existing exercise name to add a new variation, or enter a new name.</p>
     <form id="custom-exercise-form">
       <label class="field">Exercise name<input name="name" maxlength="80" value="${escapeHtml(query)}" placeholder="e.g. Leg Press" required /></label>
-      <label class="field">Variation<input name="variation_name" maxlength="80" placeholder="Standard" /></label>
-      <label class="field">Track by<select name="tracking_type"><option value="repetitions">Repetitions</option><option value="duration">Duration in seconds</option></select></label>
+      <div class="field choice-field" id="variation-field"></div>
+      <fieldset class="track-by"><legend>Track by</legend>
+        <label class="radio-option"><input type="radio" name="tracking_type" value="repetitions" checked /> Repetitions</label>
+        <label class="radio-option"><input type="radio" name="tracking_type" value="duration" /> Duration in seconds</label>
+      </fieldset>
       <div class="field equipment-field">
-        <label for="equipment-entry">Equipment options</label>
-        <div class="equipment-entry"><input id="equipment-entry" maxlength="80" placeholder="e.g. Machine" autocomplete="off" enterkeyhint="done" aria-describedby="equipment-help" /><button type="button" class="secondary" id="add-equipment">Add</button></div>
+        <div class="equipment-entry"><div class="choice-field" id="equipment-choice"></div><button type="button" class="secondary" id="add-equipment">Add</button></div>
         <ul class="equipment-chips" id="equipment-chips" aria-label="Added equipment options"></ul>
       </div>
-      <p class="field-help" id="equipment-help">Type one option, then tap Add or press Enter. You can choose one for each gym machine when logging.</p>
+      <p class="field-help" id="equipment-help">Choose or type one option, then tap Add. You can choose one for each gym machine when logging.</p>
       <label class="assistance-option"><input name="assisted" type="checkbox" /> Assisted (weight is counterweight)</label>
       <button class="primary accent" type="submit">Create exercise</button>
     </form>`;
   sheet.querySelector("#back-to-picker").addEventListener("click", () => renderPicker(query));
   sheet.querySelector("#close-picker").addEventListener("click", closePicker);
   const equipment = [];
-  const entry = sheet.querySelector("#equipment-entry");
+  const nameInput = sheet.querySelector('[name="name"]');
+  // The typed Exercise name decides which suggestions are offered; see exerciseSuggestions().
+  let known = exerciseSuggestions(nameInput.value ?? query);
+  const variation = new ChoiceField(sheet.querySelector("#variation-field"), { id: "variation-name", name: "variation_name",
+    title: "Variation", placeholder: "Standard", options: variationChoices(known.variations) });
+  const unadded = () => known.equipment.filter((value) => !equipment.some((added) => added.toLowerCase() === value.toLowerCase()));
+  const entry = new ChoiceField(sheet.querySelector("#equipment-choice"), { id: "equipment-entry", title: "Equipment options",
+    empty: "Choose equipment", placeholder: "e.g. Machine", newLabel: "New equipment option", describedBy: "equipment-help",
+    options: unadded(), onEnter: () => addEquipment() });
+  nameInput.addEventListener("input", () => {
+    known = exerciseSuggestions(nameInput.value);
+    variation.setOptions(variationChoices(known.variations));
+    entry.setOptions(unadded());
+  });
   const chips = sheet.querySelector("#equipment-chips");
-  const renderChips = () => { chips.innerHTML = renderEquipmentChips(equipment); };
+  const renderChips = () => {
+    chips.innerHTML = renderEquipmentChips(equipment);
+    entry.setOptions(unadded());
+  };
   const addEquipment = () => {
-    const name = cleanEquipmentName(entry.value);
+    const name = entry.value;
     if (!name) return true;
     const problem = equipmentProblem(equipment, name);
     if (problem) { showToast(problem); entry.focus(); return false; }
     equipment.push(name);
-    entry.value = "";
     renderChips();
-    entry.focus();
+    entry.clear();
+    if (entry.typing) entry.focus();
     return true;
   };
-  entry.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter") return;
-    event.preventDefault();
-    addEquipment();
-  });
   sheet.querySelector("#add-equipment").addEventListener("click", addEquipment);
   chips.addEventListener("click", (event) => {
     const button = event.target.closest?.("[data-remove-equipment]");
     if (!button) return;
     equipment.splice(Number(button.dataset.removeEquipment), 1);
     renderChips();
-    entry.focus();
+    if (entry.typing) entry.focus();
   });
   sheet.querySelector("#custom-exercise-form").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -1392,7 +1423,7 @@ function renderCustomExerciseForm(query = "") {
     submit.disabled = true;
     try {
       const created = await api("/api/exercises", { method: "POST", body: JSON.stringify({
-        name: values.get("name"), variation_name: values.get("variation_name"),
+        name: values.get("name"), variation_name: variation.value,
         tracking_type: values.get("tracking_type"), equipment, assisted: values.get("assisted") === "on",
       }) });
       state.picker.catalog.push(created);
@@ -1400,7 +1431,7 @@ function renderCustomExerciseForm(query = "") {
       showToast("Exercise created. Choose equipment to add it.");
     } catch (error) { submit.disabled = false; showToast(error.message); }
   });
-  sheet.querySelector('[name="name"]').focus();
+  nameInput.focus();
 }
 
 function closePicker() {
@@ -1434,8 +1465,8 @@ function renderConfiguration() {
     <p>Choose the equipment used at this gym.</p>
     <div class="equipment-grid">${item.equipment.map((equipment) => `<button class="equipment-option" data-equipment="${escapeHtml(equipment)}" aria-pressed="${state.selectedEquipment === equipment}">${escapeHtml(equipment)}</button>`).join("")}</div>
     <form id="configuration-form">
-      <div class="field"><label for="manufacturer">Manufacturer <small>(optional)</small></label><input id="manufacturer" name="manufacturer" maxlength="80" autocomplete="off" placeholder="e.g. Technogym" /></div>
-      <div class="field"><label for="machine-label">Machine label <small>(optional)</small></label><input id="machine-label" name="label" maxlength="80" autocomplete="off" placeholder="e.g. Upstairs plate-loaded" /></div>
+      <div class="field choice-field" id="manufacturer-field"></div>
+      <div class="field choice-field" id="machine-label-field"></div>
       <button class="primary accent" type="submit">Add exercise</button>
     </form>`;
   document.querySelector("#back-to-picker").addEventListener("click", () => renderPicker());
@@ -1444,20 +1475,27 @@ function renderConfiguration() {
     state.selectedEquipment = button.dataset.equipment;
     document.querySelectorAll("[data-equipment]").forEach((option) => option.setAttribute("aria-pressed", String(option === button)));
   }));
-  document.querySelector("#configuration-form").addEventListener("submit", addConfiguredExercise);
+  // Machine details entered before for this Exercise, at any gym, are offered first.
+  const known = exerciseSuggestions(item.exercise_name);
+  const details = {
+    manufacturer: new ChoiceField(document.querySelector("#manufacturer-field"), { id: "manufacturer", name: "manufacturer",
+      title: "Manufacturer", optional: true, empty: "None", placeholder: "e.g. Technogym", options: known.manufacturers }),
+    label: new ChoiceField(document.querySelector("#machine-label-field"), { id: "machine-label", name: "label",
+      title: "Machine label", optional: true, empty: "None", placeholder: "e.g. Upstairs plate-loaded", options: known.labels }),
+  };
+  document.querySelector("#configuration-form").addEventListener("submit", (event) => addConfiguredExercise(event, details));
 }
 
-async function addConfiguredExercise(event) {
+async function addConfiguredExercise(event, { manufacturer, label }) {
   event.preventDefault();
-  const form = new FormData(event.currentTarget);
   try {
     await api(`/api/workouts/${state.data.active_workout.id}/exercises`, {
       method: "POST",
       body: JSON.stringify({
         variation_id: state.selectedExercise.id,
         equipment: state.selectedEquipment,
-        manufacturer: form.get("manufacturer"),
-        label: form.get("label"),
+        manufacturer: manufacturer.value,
+        label: label.value,
       }),
     });
     closePicker();

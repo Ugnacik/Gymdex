@@ -90,15 +90,43 @@ equipment to an existing starter variation reaches only new databases.
 ## Custom exercises
 
 During a workout, open Add exercise and choose **Create custom exercise**.
-Enter an exercise name, optional variation name, and tracking type. Add
-equipment choices one at a time: type one, then tap Add or press Enter. Each
-choice appears as a chip you can remove with its ×. An empty variation name
-becomes Standard.
+Enter an exercise name, a variation name, and choose Repetitions or Duration
+in seconds under Track by. Add equipment choices one at a time: pick one from
+the list, or choose **Other…** and type a new one, then tap Add (or press
+Enter while typing). Each choice appears as a chip you can remove with its ×,
+and an added choice leaves the list. An empty variation name becomes Standard.
 Check Assisted when the variation's weight is a machine counterweight.
 Using an existing exercise name adds another variation. The resulting catalog
 entry is available at every gym; machine details are still recorded for the
 gym when you add it to a workout. Rename, edit the equipment of, or remove
 created variations in [Manage](#manage-gyms-and-exercises).
+
+### Suggested values
+
+Fields that name something offer what you entered before, but only for the
+same exercise, from all your gyms. Each is a list with **Other…** at the end,
+which opens a text box for a new value; a field with nothing to suggest is just
+the text box.
+
+- **Variation**, once the exercise name matches an existing exercise (ignoring
+  capitalization), lists that exercise's variations as "already added": a
+  variation name must be unique within its exercise, so type a new one under
+  Other…. Standard is offered while the exercise has no Standard variation. A
+  new exercise has nothing to list.
+- **Equipment options** lists the starter catalog's equipment (Barbell,
+  Bodyweight, Cable, Dumbbell, Machine, Rope) for every exercise, plus the
+  equipment of the named exercise's variations, including values you typed.
+- **Manufacturer** and **Machine label**, shown after you choose a variation,
+  list every manufacturer and label saved in an exercise configuration of any
+  variation of that exercise, at any gym, including archived gyms. They start as
+  None, so both stay optional, and nothing is offered until you have entered
+  one: Gymdex has no built-in manufacturers.
+
+Suggestions come from what is recorded, so there is nothing separate to manage:
+archiving or deleting a variation or exercise configuration in
+[Manage](#manage-gyms-and-exercises) removes the values only it provided, and
+values differing only in capitalization are offered once. Values are sorted
+alphabetically. New values appear the next time you open Add exercise.
 
 ## Manage gyms and exercises
 
@@ -304,6 +332,7 @@ node tests/workout-editor.test.mjs
 node tests/rest-timer.test.mjs
 node tests/keyboard.test.mjs
 node tests/confirm-sheet.test.mjs
+node tests/choice-field.test.mjs
 ```
 
 For a phone smoke test, open Gymdex online, add an exercise and a few sets, then
