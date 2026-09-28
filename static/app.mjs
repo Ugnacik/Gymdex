@@ -1237,12 +1237,17 @@ async function endWorkout(cancel) {
   const editor = state.editor;
   if (!editor || editor.busy) return;
   const gymId = state.data.active_workout.gym_id;
-  const confirm = () => window.confirm(cancel
+  // Finishing saves drafts before asking, so a false result without the question means a draft blocked it.
+  let asked = false;
+  const confirm = () => (asked = true) && window.confirm(cancel
     ? "Cancel this workout and discard all its exercises and sets? This cannot be undone."
     : "Finish this workout?");
   try {
     const ended = await (cancel ? editor.cancel(confirm) : editor.finish(confirm));
-    if (!ended) { showInvalidSet(); return; }
+    if (!ended) {
+      if (!asked) showInvalidSet(cancel ? "Not canceled yet" : "Not finished yet");
+      return;
+    }
     state.restTimer.stop();
     state.selectedGymId = gymId;
     await load();
@@ -1563,23 +1568,27 @@ function setStatus(form, message, error = false) {
   status.classList.toggle("error", error);
 }
 
-function showInvalidSet() {
+// Shows the draft that blocked an action and says why in a toast, because iOS Safari
+// does not show validation bubbles and the draft may be far from the tapped button.
+function showInvalidSet(blocked) {
+  const offline = state.unavailable || !navigator.onLine;
   const form = document.querySelector('.set-form[data-dirty="true"]');
+  const note = form ? null : document.querySelector('[data-note-target][data-dirty="true"]');
   if (form) {
     form.scrollIntoView({ block: "center" });
     form.reportValidity();
-    return;
+  } else if (note) {
+    note.closest("details").open = true;
+    note.scrollIntoView({ block: "center" });
+    note.focus();
   }
-  const note = document.querySelector('[data-note-target][data-dirty="true"]');
-  if (!note) return;
-  note.closest("details").open = true;
-  note.scrollIntoView({ block: "center" });
-  note.focus();
+  showToast(offline ? `${blocked}: cannot reach the server. Your sets are kept on this phone.`
+    : `${blocked}: fix the highlighted ${note ? "note" : "set"}, then try again.`);
 }
 
 async function saveAllSets() {
   const saved = await state.editor?.flush();
-  if (!saved) showInvalidSet();
+  if (!saved) showInvalidSet("Cannot add an exercise yet");
   return Boolean(saved);
 }
 
@@ -1610,7 +1619,7 @@ async function moveExercise(entryId, position) {
   if (!state.editor || state.editor.busy) return;
   const from = state.data.workout_exercises.findIndex((item) => item.id === entryId) + 1;
   try {
-    if (!await state.editor.moveExercise(entryId, position)) { showInvalidSet(); return; }
+    if (!await state.editor.moveExercise(entryId, position)) { showInvalidSet("Not moved yet"); return; }
     render();
     // Keep focus on the moved exercise, preferring the button for the same direction.
     const [preferred, other] = position < from ? [position - 1, position + 1] : [position + 1, position - 1];
@@ -1628,7 +1637,7 @@ async function removeExercise(entryId) {
   let confirmed = false;
   try {
     if (!await state.editor.removeExercise(entryId, () => (confirmed = window.confirm(question)))) {
-      if (confirmed) showInvalidSet();
+      if (confirmed) showInvalidSet("Not removed yet");
       return;
     }
     render();

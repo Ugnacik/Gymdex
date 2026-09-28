@@ -928,6 +928,35 @@ test('a workout started more than 3 hours ago offers Finish it, which uses the n
   assert.match(app.nodes['#toast'].textContent, /Workout finished/);
 });
 
+test('Finish it explains why a workout with an unsaved set cannot finish yet', async () => {
+  const disk = storage();
+  new DraftStore(() => disk).put(1, 2, { weight: '', result: '', completed: true, assistance: false });
+  const app = await harness(disk, {}, { now: Date.parse('2026-09-22T16:00:00Z') });
+  const requests = [];
+  app.env.fetch = async (path, options) => { requests.push(`${options?.method ?? 'GET'} ${path}`); return response({ ok: true }); };
+  let scrolled = false;
+  app.form.scrollIntoView = () => { scrolled = true; };
+  await app.nodes['#stale-finish'].events.click();
+  assert.deepEqual(requests, []);
+  assert.equal(scrolled, true);
+  assert.equal(app.nodes['#toast'].textContent, 'Not finished yet: fix the highlighted set, then try again.');
+
+  app.env.navigator.onLine = false;
+  app.form.elements.result.value = '5';
+  app.form.events.input();
+  await app.nodes['#stale-finish'].events.click();
+  assert.deepEqual(requests, []);
+  assert.equal(app.nodes['#toast'].textContent, 'Not finished yet: cannot reach the server. Your sets are kept on this phone.');
+});
+
+test('declining the finish question leaves the workout without a warning', async () => {
+  const app = await harness(storage(), {}, { now: Date.parse('2026-09-22T16:00:00Z') });
+  app.env.window.confirm = () => false;
+  await app.nodes['#stale-finish'].events.click();
+  assert.equal(app.nodes['#toast'].textContent, '');
+  assert.match(app.nodes['#app'].innerHTML, /id="stale-banner"/);
+});
+
 test('workout and exercise notes stay collapsed, keep drafts on the phone, and autosave after a typing pause', async () => {
   const noted = { active_workout: { id: 1, gym_id: 1, gym_name: 'Home', started_at: '2026-09-22 10:00:00', note: 'Slept <5h' },
     workout_exercises: [{ ...pressEntry, note: '' }] };
