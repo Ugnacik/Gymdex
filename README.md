@@ -168,7 +168,8 @@ Suggestions come from what is recorded, so there is nothing separate to manage:
 archiving or deleting a variation or exercise configuration in
 [Manage](#manage-gyms-and-exercises) removes the values only it provided, and
 values differing only in capitalization are offered once. Values are sorted
-alphabetically. New values appear the next time you open Add exercise.
+alphabetically, except that Standard, when offered as a variation, comes first.
+New values appear the next time you open Add exercise.
 
 ## Manage gyms and exercises
 
