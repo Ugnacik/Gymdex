@@ -251,6 +251,14 @@ asks for confirmation, then discards the active workout and all its exercises
 and sets, including unsaved edits. Saved gym equipment configurations and
 completed workouts are kept.
 
+Every confirmation (finishing or canceling a workout, removing a set or
+exercise, deleting a set from history, deleting or archiving in Manage) appears
+in Gymdex's own sheet rather than the browser's confirmation box, so it also
+works in in-app browsers that suppress that box. The action button names the
+action, for example **Remove** or **Finish**, and is red when it deletes,
+archives or discards something. **Keep** or **Back**, Escape, or a tap outside
+the sheet leaves everything as it was.
+
 If the active workout started more than 3 hours ago, a "Still training?" banner
 appears when the workout opens. **Finish it** uses the normal Finish workout
 flow. **Keep going** hides the banner for that workout; this browser remembers
@@ -295,6 +303,7 @@ node tests/mobile.test.mjs
 node tests/workout-editor.test.mjs
 node tests/rest-timer.test.mjs
 node tests/keyboard.test.mjs
+node tests/confirm-sheet.test.mjs
 ```
 
 For a phone smoke test, open Gymdex online, add an exercise and a few sets, then

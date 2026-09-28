@@ -245,7 +245,7 @@ export class WorkoutEditor {
     entryId = Number(entryId);
     const entry = this.data.workout_exercises.find((item) => item.id === entryId);
     // Ask before pausing autosave so declining leaves every pending save queued.
-    if (this.#busy || !this.data.active_workout || !entry || !confirm()) return false;
+    if (this.#busy || !this.data.active_workout || !entry || !await confirm()) return false;
     return this.#exclusive(async () => {
       // The removed exercise's set and note drafts are discarded, so they are neither saved nor retried.
       const removed = new Set([...entry.sets.map((set) => set.id), noteKey(`exercise:${entryId}`)]);
@@ -289,10 +289,10 @@ export class WorkoutEditor {
     this.#onChange();
     try {
       if (cancel) {
-        if (!confirm()) return false;
+        if (!await confirm()) return false;
         await this.#settle();
       } else {
-        if (!await this.#flush() || !confirm()) return false;
+        if (!await this.#flush() || !await confirm()) return false;
       }
       const workoutId = this.data.active_workout.id;
       await this.#request(`/api/workouts/${workoutId}${cancel ? "" : "/complete"}`,

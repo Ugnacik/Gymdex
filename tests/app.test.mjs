@@ -103,7 +103,10 @@ async function harness(disk = storage(), initialData = {}, { now = Date.parse('2
     workout_exercises: [{ id: 3, exercise_name: 'Bench Press', variation_name: 'Standard', equipment: 'Barbell',
       previous_sets: [], sets: [{ id: 2, position: 1, weight: null, result: null, completed: false }] }], ...initialData };
   const env = {
-    window: { localStorage: disk, addEventListener() {}, confirm: () => true },
+    // Gymdex asks in its own confirmation sheet: some in-app browsers answer window.confirm() with false unseen.
+    window: { localStorage: disk, addEventListener() {}, confirm: () => { throw new Error('window.confirm() is not used'); } },
+    // Answers the confirmation sheet; tests replace it to record the questions and decline.
+    ask: async () => true,
     navigator: { onLine: true },
     document: {
       visibilityState: 'visible', addEventListener() {},
@@ -128,7 +131,7 @@ async function harness(disk = storage(), initialData = {}, { now = Date.parse('2
       throw new Error('Offline');
     },
   };
-  const app = createApp({ ...env, fetch: (...args) => env.fetch(...args) });
+  const app = createApp({ ...env, fetch: (...args) => env.fetch(...args), ask: (...args) => env.ask(...args) });
   await app.load();
   readPreviousButton(form, nodes['#app'].innerHTML);
   const noteField = (target) => env.document.querySelectorAll('[data-note-target]').find((field) => field.dataset.noteTarget === target);
@@ -199,11 +202,15 @@ test('finish and cancel keep an acknowledged terminal state when bootstrap fails
       if (path.startsWith('/api/workouts/')) return ending.promise;
       throw new Error('Refresh unavailable');
     };
+    const asked = [];
+    app.env.ask = async (question, options) => { asked.push(options); return true; };
     const pending = app.nodes[button].events.click();
     assert.equal(app.nodes.main.inert, true);
     assert.equal(app.nodes[button].disabled, true);
     ending.resolve(response({ ok: true }));
     await pending;
+    assert.deepEqual(asked, [button === '#finish' ? { confirmLabel: 'Finish', cancelLabel: 'Back' }
+      : { confirmLabel: 'Cancel workout', danger: true }]);
     assert.match(app.nodes['#app'].innerHTML, /No active workout/);
     assert.equal(new DraftStore(() => app.disk).cachedWorkout().active_workout, null);
     assert.equal(app.nodes.main.inert, false);
@@ -795,7 +802,7 @@ test('removing a set renumbers the remaining sets and pairs them with Last worko
     tracking_type: 'repetitions', previous_sets: [{ weight: 80, result: 8 }, { weight: 85, result: 6 }, { weight: 90, result: 4 }],
     sets: [blankSet(2, 1), blankSet(5, 2), blankSet(6, 3)] }] });
   const questions = [];
-  app.env.window.confirm = (question) => { questions.push(question); return true; };
+  app.env.ask = async (question, options) => { questions.push(question, options); return true; };
   const requests = [];
   app.env.fetch = async (path, options) => {
     requests.push(`${options.method} ${path}`);
@@ -806,7 +813,7 @@ test('removing a set renumbers the remaining sets and pairs them with Last worko
   const entryNode = { querySelector: (selector) => ({ '.sets-list': list, '.add-set': addButton })[selector] };
   Object.assign(app.form, { closest: () => entryNode, remove() { app.form.isConnected = false; } });
   await app.form.querySelector('.remove-set').events.click();
-  assert.deepEqual(questions, ['Remove set 1?']);
+  assert.deepEqual(questions, ['Remove set 1?', { confirmLabel: 'Remove', danger: true }]);
   assert.deepEqual(requests, ['DELETE /api/sets/2']);
   const legends = [...list.innerHTML.matchAll(/data-set-id="(\d+)"[\s\S]*?<legend>Set (\d+)<\/legend>/g)].map(([, id, position]) => [id, position]);
   assert.deepEqual(legends, [['5', '1'], ['6', '2']]);
@@ -843,11 +850,13 @@ test('removing an exercise asks first, then drops it and its drafts from the wor
   const requests = [];
   const questions = [];
   app.env.fetch = async (url, options) => { requests.push(`${options.method} ${url}`); return response({ ok: true }); };
-  app.env.window.confirm = (question) => { questions.push(question); return false; };
+  app.env.ask = async (question, options) => { questions.push(question, options); return false; };
   await clickIn(app, '[data-remove-exercise]', { removeExercise: '4' });
   assert.deepEqual(requests, []);
-  assert.deepEqual(questions, ['Remove Front Plank and its 2 sets from this workout? This cannot be undone.']);
-  app.env.window.confirm = () => true;
+  assert.deepEqual(questions, ['Remove Front Plank and its 2 sets from this workout? This cannot be undone.',
+    { confirmLabel: 'Remove', danger: true }]);
+  assert.equal(app.nodes['#toast'].textContent, '', 'declining is not a blocked removal');
+  app.env.ask = async () => true;
   await clickIn(app, '[data-remove-exercise]', { removeExercise: '4' });
   assert.deepEqual(requests, ['DELETE /api/workout-exercises/4']);
   assert.doesNotMatch(app.nodes['#app'].innerHTML, /Plank/);
@@ -953,8 +962,19 @@ test('Finish it explains why a workout with an unsaved set cannot finish yet', a
 
 test('declining the finish question leaves the workout without a warning', async () => {
   const app = await harness(storage(), {}, { now: Date.parse('2026-09-22T16:00:00Z') });
-  app.env.window.confirm = () => false;
-  await app.nodes['#stale-finish'].events.click();
+  const answer = deferred();
+  const questions = [];
+  app.env.ask = (question) => { questions.push(question); return answer.promise; };
+  const pending = app.nodes['#stale-finish'].events.click();
+  await settle();
+  assert.deepEqual(questions, ['Finish this workout?']);
+  // The workout stays frozen while the sheet waits for an answer.
+  assert.equal(app.nodes['#stale-finish'].disabled, true);
+  assert.equal(app.nodes.main.inert, true);
+  answer.resolve(false);
+  await pending;
+  assert.equal(app.nodes['#stale-finish'].disabled, false);
+  assert.equal(app.nodes.main.inert, false);
   assert.equal(app.nodes['#toast'].textContent, '');
   assert.match(app.nodes['#app'].innerHTML, /id="stale-banner"/);
 });
@@ -1103,11 +1123,12 @@ test('deleting a set from a completed workout asks first and renumbers the remai
   });
   assert.match(nodes['#history-detail'].innerHTML, /<button type="button" class="text-button history-delete-set" data-delete-history-set="44">Delete set 1<\/button>/);
   const questions = [];
-  app.env.window.confirm = (question) => { questions.push(question); return false; };
+  app.env.ask = async (question, options) => { questions.push(question, options); return false; };
   await click('[data-delete-history-set]', { deleteHistorySet: '44' });
-  assert.deepEqual(questions, ['Delete set 1 of Bench Press from this completed workout? This cannot be undone.']);
+  assert.deepEqual(questions, ['Delete set 1 of Bench Press from this completed workout? This cannot be undone.',
+    { confirmLabel: 'Delete', danger: true }]);
   assert.ok(!requests.some((request) => request.startsWith('DELETE')));
-  app.env.window.confirm = () => true;
+  app.env.ask = async () => true;
   await click('[data-delete-history-set]', { deleteHistorySet: '44' });
   assert.ok(requests.includes('DELETE /api/history/22/sets/44'));
   const html = nodes['#history-detail'].innerHTML;
@@ -1233,7 +1254,8 @@ test('Manage lists gyms with Delete or Archive, and archiving hides the gym from
   const app = await harness(storage(), startData([home, annex]));
   let archived = false;
   const questions = [];
-  app.env.window.confirm = (question) => { questions.push(question); return questions.length > 1; };
+  const options = [];
+  app.env.ask = async (question, asked) => { questions.push(question); options.push(asked); return questions.length > 1; };
   const { content, requests, click, nodes } = await openManage(app, {
     'GET /api/manage': () => manageOverview([
       { ...annex, archived, used: true }, { ...home, archived: false, used: false },
@@ -1253,6 +1275,7 @@ test('Manage lists gyms with Delete or Archive, and archiving hides the gym from
   assert.doesNotMatch(html, /<b>/);
   await click('[data-manage-remove]', { manageRemove: 'gym:2' });
   assert.match(questions[0], /^Archive Annex <b>\? /);
+  assert.deepEqual(options[0], { confirmLabel: 'Archive', danger: true });
   assert.ok(!requests.some(([key]) => key.startsWith('DELETE')));
   await click('[data-manage-remove]', { manageRemove: 'gym:2' });
   assert.ok(requests.some(([key]) => key === 'DELETE /api/manage/gyms/2'));
@@ -1325,7 +1348,8 @@ test('history offers archived gyms as filters and hides Repeat for a workout at 
 test('Manage archives, deletes and restores Exercise Configurations', async () => {
   const app = await harness(storage(), startData([home]));
   const questions = [];
-  app.env.window.confirm = (question) => { questions.push(question); return true; };
+  const labels = [];
+  app.env.ask = async (question, options) => { questions.push(question); labels.push(options.confirmLabel); return true; };
   const configuration = (id, fields) => ({ id, gym_id: 1, gym_name: 'Home', gym_archived: false, variation_id: 11,
     exercise_name: 'Bench Press', variation_name: 'Incline', variation_archived: false, equipment: 'Machine',
     manufacturer: '', label: '', archived: false, used: true, ...fields });
@@ -1367,6 +1391,7 @@ test('Manage archives, deletes and restores Exercise Configurations', async () =
   assert.equal(app.nodes['#toast'].textContent, 'Incline Bench Press (Machine · Press <1>) archived.');
   await click('[data-manage-remove]', { manageRemove: 'configuration:6' });
   assert.match(questions[1], /^Delete Incline Bench Press \(Machine · Press 2\)\? It has never been used/);
+  assert.deepEqual(labels, ['Archive', 'Delete']);
   assert.equal(app.nodes['#toast'].textContent, 'Incline Bench Press (Machine · Press 2) deleted.');
   html = content.innerHTML;
   assert.doesNotMatch(html, /configuration:6/);
@@ -1388,7 +1413,7 @@ test('Manage lists custom exercises with rename, equipment and Delete or Archive
   const app = await harness(storage(), startData([home]));
   let variations = [heavy, { ...heavy, id: 8, name: 'Old', archived: true, equipment: [{ name: 'Rope', used: true }] }];
   const questions = [];
-  app.env.window.confirm = (question) => { questions.push(question); return true; };
+  app.env.ask = async (question) => { questions.push(question); return true; };
   const { content, requests, click } = await openManage(app, {
     'GET /api/manage': () => manageOverview([{ ...home, archived: false, used: true }], { exercises: [sled(variations), closeGrip] }),
     'DELETE /api/manage/variations/7': () => { variations = variations.map((item) => ({ ...item, archived: true })); return { outcome: 'archived' }; },

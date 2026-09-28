@@ -232,6 +232,14 @@ input::placeholder { color: var(--muted); opacity: 1; }
   color: var(--ink);
 }
 .history-dialog::backdrop { background: rgba(0, 6, 3, 0.76); }
+/* The confirmation sheet (confirm-sheet.mjs) replaces window.confirm(). Its body fills the
+   dialog, so a tap on the dialog itself is a tap on the backdrop. */
+.confirm-sheet { width: min(calc(100% - 24px), 440px); padding: 0; }
+.confirm-body { padding: 20px; }
+.confirm-question { margin: 0 0 20px; font-size: 1.05rem; line-height: 1.45; overflow-wrap: anywhere; }
+.confirm-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.confirm-actions button { min-width: 0; padding: 0 12px; overflow-wrap: anywhere; }
+.primary.danger { background: var(--danger); color: #3d0f0a; }
 .history-filters { margin: 16px 0 24px; }
 .history-dates { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .history-dates input { min-width: 0; padding: 8px; }
@@ -324,6 +332,7 @@ textarea:focus-visible, summary:focus-visible { outline: 3px solid var(--accent)
 @media (hover: hover) {
   .gym-card:hover, .exercise-card:hover, .recent-card:hover, .secondary:hover, .equipment-option:hover { border-color: var(--accent); }
   .primary:not(:disabled):hover { background: var(--accent-hover); }
+  .primary.danger:not(:disabled):hover { background: #ffc6bf; }
   .text-button:hover { background: var(--accent-soft); }
   .remove-set:hover, .remove-exercise:hover { background: var(--surface-muted); color: var(--ink); }
   .fill-previous:hover { background: var(--accent-soft); }

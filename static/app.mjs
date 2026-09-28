@@ -1,6 +1,7 @@
 import { DraftStore, setPayload } from "./drafts.mjs";
 import { NOTE_MAX_LENGTH, WorkoutEditor } from "./workout-editor.mjs";
 import { RestTimer } from "./rest-timer.mjs";
+import { confirmInPage } from "./confirm-sheet.mjs";
 
 // The server stores times as SQLite CURRENT_TIMESTAMP values in UTC ("YYYY-MM-DD HH:MM:SS").
 // Gymdex shows them in the device's time zone.
@@ -28,7 +29,9 @@ export function localMidnightUtc(value, addDays = 0) {
   return midnight.toISOString();
 }
 
-export function createApp({ window, document, navigator, fetch, setTimeout, clearTimeout, setInterval, clearInterval, now = () => Date.now() }) {
+// ask(question, { confirmLabel, cancelLabel, danger }) resolves to the user's answer from the confirmation sheet.
+export function createApp({ window, document, navigator, fetch, setTimeout, clearTimeout, setInterval, clearInterval, now = () => Date.now(),
+  ask = (question, options) => confirmInPage(document, question, options) }) {
 
 const drafts = new DraftStore(() => window.localStorage);
 const app = document.querySelector("#app");
@@ -643,7 +646,8 @@ function openHistory() {
       const setId = Number(deleteSet.dataset.deleteHistorySet);
       const entry = selectedDetail.workout_exercises.find((item) => item.sets.some((set) => set.id === setId));
       const number = entry.sets.findIndex((set) => set.id === setId) + 1;
-      if (!window.confirm(`Delete set ${number} of ${exerciseDisplayName(entry)} from this completed workout? This cannot be undone.`)) return;
+      if (!await ask(`Delete set ${number} of ${exerciseDisplayName(entry)} from this completed workout? This cannot be undone.`,
+        { confirmLabel: "Delete", danger: true })) return;
       deleteSet.disabled = true;
       try {
         await api(`/api/history/${selectedDetail.workout.id}/sets/${setId}`, { method: "DELETE" });
@@ -1126,9 +1130,10 @@ function openManage() {
     if (!selected) return;
     const { item, name, path } = selected;
     const button = remove || restore;
-    if (remove && !window.confirm(item.used
+    if (remove && !await ask(item.used
       ? `Archive ${name}? It is used in recorded workouts, so it stays in history and progress but is no longer offered for new workouts. You can restore it here.`
-      : `Delete ${name}? It has never been used in a workout, so it is removed permanently.`)) return;
+      : `Delete ${name}? It has never been used in a workout, so it is removed permanently.`,
+    { confirmLabel: item.used ? "Archive" : "Delete", danger: true })) return;
     button.disabled = true;
     try {
       if (remove) {
@@ -1238,13 +1243,16 @@ async function endWorkout(cancel) {
   const gymId = state.data.active_workout.gym_id;
   // Finishing saves drafts before asking, so a false result without the question means a draft blocked it.
   let asked = false;
-  const confirm = () => (asked = true) && window.confirm(cancel
-    ? "Cancel this workout and discard all its exercises and sets? This cannot be undone."
-    : "Finish this workout?");
+  // The button is disabled while the sheet asks, so focus returns to it once the workout is editable again.
+  const origin = document.activeElement;
+  const confirm = () => (asked = true) && (cancel
+    ? ask("Cancel this workout and discard all its exercises and sets? This cannot be undone.", { confirmLabel: "Cancel workout", danger: true })
+    : ask("Finish this workout?", { confirmLabel: "Finish", cancelLabel: "Back" }));
   try {
     const ended = await (cancel ? editor.cancel(confirm) : editor.finish(confirm));
     if (!ended) {
       if (!asked) showInvalidSet(cancel ? "Not canceled yet" : "Not finished yet");
+      else origin?.focus();
       return;
     }
     state.restTimer.stop();
@@ -1635,7 +1643,8 @@ async function removeExercise(entryId) {
   const question = `Remove ${name}${count ? ` and its ${count} set${count === 1 ? "" : "s"}` : ""} from this workout? This cannot be undone.`;
   let confirmed = false;
   try {
-    if (!await state.editor.removeExercise(entryId, () => (confirmed = window.confirm(question)))) {
+    const confirm = async () => (confirmed = await ask(question, { confirmLabel: "Remove", danger: true }));
+    if (!await state.editor.removeExercise(entryId, confirm)) {
       if (confirmed) showInvalidSet("Not removed yet");
       return;
     }
@@ -1647,7 +1656,7 @@ async function removeExercise(entryId) {
 
 async function removeSet(form) {
   if (state.editor.busy) return;
-  if (!window.confirm(`Remove set ${form.querySelector("legend").textContent.replace("Set ", "")}?`)) return;
+  if (!await ask(`Remove set ${form.querySelector("legend").textContent.replace("Set ", "")}?`, { confirmLabel: "Remove", danger: true })) return;
   const entryNode = form.closest(".exercise-entry");
   const addButton = entryNode.querySelector(".add-set");
   if (await state.editor.remove(form.dataset.setId)) {

@@ -168,12 +168,35 @@ test('finish waits for the latest revision and freezes edits, retries and duplic
 test('declined or failed terminal requests leave the workout editable', async () => {
   for (const operation of ['finish', 'cancel']) {
     const { editor, env } = fixture();
-    assert.equal(await editor[operation](() => false), false);
+    assert.equal(await editor[operation](async () => false), false);
     env.request = async () => { throw new Error('Offline'); };
     await assert.rejects(editor[operation](), /Offline/);
     assert.equal(editor.busy, false);
     assert.equal(editor.data.active_workout.id, 1);
     assert.equal(editor.edit(2, values), true);
+  }
+});
+
+test('finish and cancel hold the workout busy while the confirmation sheet waits for an answer', async () => {
+  for (const operation of ['finish', 'cancel']) {
+    for (const accepted of [false, true]) {
+      const { editor, requests, timers } = fixture();
+      editor.edit(2, values);
+      const answer = deferred();
+      let savedBeforeAsking;
+      const ending = editor[operation](() => { savedBeforeAsking = requests.length; return answer.promise; });
+      await new Promise((resolve) => setImmediate(resolve));
+      // Finish saves drafts before asking; cancel asks first and discards them.
+      assert.equal(savedBeforeAsking, operation === 'finish' ? 1 : 0);
+      assert.equal(editor.busy, true);
+      assert.equal(timers.size, 0);
+      assert.equal(editor.edit(2, { ...values, result: '9' }), false);
+      assert.equal(await editor.finish(), false);
+      answer.resolve(accepted);
+      assert.equal(await ending, accepted);
+      assert.equal(editor.busy, false);
+      assert.equal(requests.some(({ method }) => method === 'DELETE' || method === 'POST'), accepted);
+    }
   }
 });
 
@@ -291,7 +314,7 @@ test('removing an exercise saves other drafts first and discards its own for goo
   editor.edit(2, values);
   editor.edit(5, { ...values, result: '' });
   editor.edit(6, values);
-  assert.equal(await editor.removeExercise(4, () => false), false);
+  assert.equal(await editor.removeExercise(4, async () => false), false);
   assert.deepEqual(requests, []);
   assert.equal(timers.size, 3, 'declining keeps autosave queued');
   assert.equal(await editor.removeExercise(4), true);
