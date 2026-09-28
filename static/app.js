@@ -1,4 +1,7 @@
 import { createApp } from "./app.mjs";
+import { followVisualViewport } from "./keyboard.mjs";
+
+followVisualViewport({ window, document });
 
 createApp({
   window,

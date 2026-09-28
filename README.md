@@ -293,13 +293,16 @@ node tests/app.test.mjs
 node tests/mobile.test.mjs
 node tests/workout-editor.test.mjs
 node tests/rest-timer.test.mjs
+node tests/keyboard.test.mjs
 ```
 
 For a phone smoke test, open Gymdex online, add an exercise and a few sets, then
 disconnect the phone. Edit an existing set and reload. Confirm the values are
 restored, reconnect, and wait for the saved-to-server status. Check Assist kg
 on an assisted variation, editing the middle of an exercise search, and
-scrolling with the keyboard open.
+scrolling with the keyboard open. Sheets and dialogs shrink to the part of the
+screen above the keyboard and keep the field you are typing in visible; check
+Equipment options in Create custom exercise and a rename in Manage.
 When changing cached app assets, also bump the cache version in `static/sw.js`
 so a newly installed worker refreshes the offline copy. Close existing app tabs
 and reopen to activate a waiting worker update.
