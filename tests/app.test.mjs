@@ -107,6 +107,8 @@ async function harness(disk = storage(), initialData = {}, { now = Date.parse('2
     window: { localStorage: disk, addEventListener() {}, confirm: () => { throw new Error('window.confirm() is not used'); } },
     // Answers the confirmation sheet; tests replace it to record the questions and decline.
     ask: async () => true,
+    // Answers the text sheet; tests replace it to name a routine through its submit().
+    askText: async () => null,
     navigator: { onLine: true },
     document: {
       visibilityState: 'visible', addEventListener() {},
@@ -131,7 +133,8 @@ async function harness(disk = storage(), initialData = {}, { now = Date.parse('2
       throw new Error('Offline');
     },
   };
-  const app = createApp({ ...env, fetch: (...args) => env.fetch(...args), ask: (...args) => env.ask(...args) });
+  const app = createApp({ ...env, fetch: (...args) => env.fetch(...args), ask: (...args) => env.ask(...args),
+    askText: (...args) => env.askText(...args) });
   await app.load();
   readPreviousButton(form, nodes['#app'].innerHTML);
   const noteField = (target) => env.document.querySelectorAll('[data-note-target]').find((field) => field.dataset.noteTarget === target);
@@ -1533,4 +1536,226 @@ test('progress keeps archived custom exercises selectable', async () => {
   await app.nodes['#open-progress'].events.click();
   assert.equal(urls[0], '/api/catalog?gym_id=1&include_archived=1');
   assert.match(nodes['#progress-exercise'].innerHTML, /<option value="17" >Heavy Sled &lt;i&gt; \(archived\)<\/option><option value="18" >Leg Press<\/option>/);
+});
+
+// Routines
+
+const clickApp = (app, selector, dataset) => app.nodes['#app'].events.click({
+  target: { closest: (wanted) => wanted === selector ? Object.assign(node(), { dataset }) : null },
+});
+
+test('the start screen offers the selected gym\'s routines beside plain Start, and one tap starts one', async () => {
+  const routines = [{ id: 4, gym_id: 1, name: 'Push <day>', exercise_count: 3 }, { id: 5, gym_id: 2, name: 'Annex plan', exercise_count: 1 }];
+  const app = await harness(storage(), { ...startData([home]), routines });
+  let html = app.nodes['#app'].innerHTML;
+  assert.match(html, /<button class="primary accent" id="start-workout" >Start workout<\/button>/);
+  assert.match(html, /data-start-routine="4" data-routine-name="Push &lt;day&gt;"><strong>Start Push &lt;day&gt;<\/strong><span>3 exercises<\/span>/);
+  assert.doesNotMatch(html, /data-start-routine="5"|<day>/);
+  assert.match(html, /id="open-routines" aria-label="Edit routines at Home">Edit<\/button>/);
+  const requests = [];
+  app.env.fetch = async (url, options = {}) => {
+    requests.push(`${options.method ?? 'GET'} ${url}`);
+    if (url === '/api/routines/4/start') return response({ id: 30, gym_id: 1, gym_name: 'Home', started_at: '2026-09-22 10:00:00', skipped: 1 }, 201);
+    if (url === '/api/bootstrap') return response({ ...startData([home]), routines, active_workout: { id: 30, gym_id: 1, gym_name: 'Home', started_at: '2026-09-22 10:00:00' } });
+    throw new Error('Unexpected request');
+  };
+  await clickApp(app, '[data-start-routine]', { startRoutine: '4', routineName: 'Push <day>' });
+  assert.deepEqual(requests, ['POST /api/routines/4/start', 'GET /api/bootstrap']);
+  assert.match(app.nodes['#app'].innerHTML, /Workout active/);
+  assert.equal(app.nodes['#toast'].textContent, 'Push <day> started. Sets are ready to log. 1 archived exercise skipped.');
+
+  const empty = await harness(storage(), { ...startData([home]), routines: [] });
+  html = empty.nodes['#app'].innerHTML;
+  assert.match(html, /No routines at Home yet\. Save a finished workout as a routine in History, or create one with Edit\./);
+  const unselected = await harness(storage(), { ...startData([home, { id: 2, name: 'Annex' }]), routines });
+  assert.doesNotMatch(unselected.nodes['#app'].innerHTML, /routine/i);
+});
+
+test('a routine that cannot start says why and stays on the start screen', async () => {
+  const app = await harness(storage(), { ...startData([home]), routines: [{ id: 4, gym_id: 1, name: 'Push', exercise_count: 1 }] });
+  app.env.fetch = async () => response({ error: 'A workout is already active.' }, 409);
+  await clickApp(app, '[data-start-routine]', { startRoutine: '4', routineName: 'Push' });
+  assert.equal(app.nodes['#toast'].textContent, 'A workout is already active.');
+  assert.match(app.nodes['#app'].innerHTML, /No active workout/);
+});
+
+test('history saves a completed workout as a routine named in the in-app sheet', async () => {
+  const app = await harness(storage(), { ...startData([home]), routines: [] });
+  const saved = { id: 9, gym_id: 1, name: 'Monday', skipped: 1, exercises: [{ id: 1 }, { id: 2 }] };
+  const { nodes, requests, click } = await openHistoryDetail(app, completedDetail(), { 'POST /api/history/22/routine': saved });
+  const html = nodes['#history-detail'].innerHTML;
+  assert.match(html, /data-repeat-workout="22">Repeat this workout<\/button>\s*<button class="secondary history-save-routine" type="button" data-save-routine="22">Save as routine<\/button>/);
+  const asked = [];
+  const submitted = [];
+  app.env.askText = async (question, options) => {
+    asked.push([question, options.label, options.value, options.confirmLabel]);
+    submitted.push(await options.submit('Monday'));
+    return submitted.at(-1);
+  };
+  const originalFetch = app.env.fetch;
+  const bodies = [];
+  app.env.fetch = async (url, options = {}) => { if (options.body) bodies.push(JSON.parse(options.body)); return originalFetch(url, options); };
+  await click('[data-save-routine]', { saveRoutine: '22' });
+  assert.equal(asked.length, 1);
+  assert.equal(asked[0][0], 'Save this workout as a routine at Home');
+  assert.equal(asked[0][1], 'Routine name');
+  assert.match(asked[0][2], /^Home .*21/);
+  assert.equal(asked[0][3], 'Save routine');
+  assert.ok(requests.includes('POST /api/history/22/routine'));
+  assert.deepEqual(bodies, [{ name: 'Monday' }]);
+  assert.equal(app.nodes['#toast'].textContent, 'Routine Monday saved with 2 exercises. 1 archived exercise skipped.');
+  assert.match(app.nodes['#app'].innerHTML, /data-start-routine="9"/);
+
+  // Leaving the sheet saves nothing.
+  app.env.askText = async () => null;
+  const before = requests.length;
+  await click('[data-save-routine]', { saveRoutine: '22' });
+  assert.equal(requests.length, before);
+});
+
+test('history offers Save as routine during a workout but not at an archived gym', async () => {
+  const active = await harness();
+  const { nodes } = await openHistoryDetail(active, completedDetail(), {});
+  assert.match(nodes['#history-detail'].innerHTML, /Finish the active workout before repeating this one\.<\/p>\s*<button[^>]*data-save-routine="22">Save as routine/);
+  const archived = await harness(storage(), startData([home], [annex]));
+  const detail = completedDetail();
+  detail.workout = { ...detail.workout, gym_id: 2, gym_name: 'Annex <b>', gym_archived: true };
+  const opened = await openHistoryDetail(archived, detail, {});
+  assert.doesNotMatch(opened.nodes['#history-detail'].innerHTML, /data-save-routine/);
+});
+
+// Opens the Routines screen from the start screen. Routes are like openManage's.
+async function openRoutinesScreen(app, routes) {
+  const nodes = {};
+  const dialog = node();
+  dialog.querySelector = (selector) => nodes[selector] ??= node();
+  dialog.showModal = () => { dialog.open = true; };
+  dialog.remove = () => { dialog.removed = true; delete app.nodes['#routines']; };
+  dialog.close = () => { dialog.open = false; dialog.events.close(); };
+  app.env.document.createElement = () => dialog;
+  app.env.document.body = { append: () => { app.nodes['#routines'] = dialog; } };
+  const requests = [];
+  app.env.fetch = async (url, options = {}) => {
+    const key = `${options.method ?? 'GET'} ${url}`;
+    requests.push([key, options.body && JSON.parse(options.body)]);
+    if (!(key in routes)) throw new Error(`Unexpected request ${key}`);
+    const route = typeof routes[key] === 'function' ? routes[key](options.body && JSON.parse(options.body)) : routes[key];
+    return route?.reply ? response(route.body, route.status) : response(structuredClone(route));
+  };
+  await clickApp(app, '#open-routines', {});
+  await settle();
+  const content = nodes['#routines-content'];
+  const click = (selector, dataset) => content.events.click({
+    target: { closest: (wanted) => wanted === selector ? Object.assign(node(), { dataset }) : null },
+  });
+  return { dialog, nodes, content, requests, click };
+}
+
+const routineExercise = (profile_id, exercise_name, set_count, fields = {}) => ({ id: profile_id * 10, profile_id, variation_id: profile_id,
+  exercise_name, variation_name: 'Standard', equipment: 'Barbell', manufacturer: '', label: '', tracking_type: 'repetitions', set_count, archived: false, ...fields });
+
+test('the Routines screen edits a routine\'s exercises, set counts and order', async () => {
+  const app = await harness(storage(), { ...startData([home]), routines: [{ id: 4, gym_id: 1, name: 'Push', exercise_count: 2 }] });
+  let routine = { id: 4, gym_id: 1, name: 'Push', exercises: [routineExercise(1, 'Bench Press', 3, { label: 'Rack <1>' }), routineExercise(2, 'Dip', 2, { archived: true })] };
+  const configurations = [{ profile_id: 1, variation_id: 1, exercise_name: 'Bench Press', variation_name: 'Standard', equipment: 'Barbell', manufacturer: '', label: 'Rack <1>' },
+    { profile_id: 3, variation_id: 3, exercise_name: 'Squat', variation_name: 'Back Squat', equipment: 'Barbell', manufacturer: '', label: '' }];
+  const byProfile = { 1: routineExercise(1, 'Bench Press', 0, { label: 'Rack <1>' }), 2: routineExercise(2, 'Dip', 0, { archived: true }), 3: routineExercise(3, 'Squat', 0, { variation_name: 'Back Squat' }) };
+  const { dialog, nodes, content, requests, click } = await openRoutinesScreen(app, {
+    'GET /api/routines?gym_id=1': () => ({ routines: [routine], configurations }),
+    'PUT /api/routines/4': (body) => {
+      if (body.exercises) routine = { ...routine, exercises: body.exercises.map((item) => ({ ...byProfile[item.profile_id], set_count: item.set_count })) };
+      return routine;
+    },
+    'GET /api/bootstrap': () => ({ ...startData([home]), routines: [{ id: 4, gym_id: 1, name: 'Push', exercise_count: routine.exercises.length }] }),
+  });
+  assert.equal(dialog.open, true);
+  assert.match(dialog.innerHTML, /Routines at Home/);
+  assert.equal(nodes['#routines-message'].textContent, '');
+  assert.match(content.innerHTML, /data-new-routine>New routine<\/button>/);
+  assert.match(content.innerHTML, /data-open-routine="4"><strong>Push<\/strong><span>2 exercises<\/span>/);
+
+  await click('[data-open-routine]', { openRoutine: '4' });
+  let html = content.innerHTML;
+  assert.match(html, /<h3>Push<\/h3>/);
+  assert.match(html, /Barbell · Rack &lt;1&gt;/);
+  assert.match(html, /<select data-set-count="0" aria-label="Sets of Bench Press">[\s\S]*<option value="3" selected>3<\/option>/);
+  assert.match(html, /<option value="20">20<\/option><\/select>/);
+  assert.match(html, /Archived: skipped when this routine starts\. Restore it in Manage\./);
+  assert.match(html, /aria-label="Move Bench Press up" disabled>/);
+  assert.match(html, /aria-label="Move Dip down" disabled>/);
+
+  await content.events.change({ target: { closest: () => Object.assign(node(), { dataset: { setCount: '1' }, value: '4' }) } });
+  assert.deepEqual(requests.at(-1), ['PUT /api/routines/4', { exercises: [{ profile_id: 1, set_count: 3 }, { profile_id: 2, set_count: 4 }] }]);
+
+  await click('[data-move-routine-exercise]', { moveRoutineExercise: '1', moveTo: '0' });
+  assert.deepEqual(requests.at(-1), ['PUT /api/routines/4', { exercises: [{ profile_id: 2, set_count: 4 }, { profile_id: 1, set_count: 3 }] }]);
+  assert.match(content.innerHTML, /Dip[\s\S]*Bench Press/);
+
+  const questions = [];
+  app.env.ask = async (question, options) => { questions.push([question, options]); return questions.length > 1; };
+  await click('[data-remove-routine-exercise]', { removeRoutineExercise: '0' });
+  assert.deepEqual(questions[0], ['Remove Dip from Push?', { confirmLabel: 'Remove', danger: true }]);
+  assert.equal(requests.filter(([key]) => key.startsWith('PUT')).length, 2);
+  await click('[data-remove-routine-exercise]', { removeRoutineExercise: '0' });
+  assert.deepEqual(requests.at(-1), ['PUT /api/routines/4', { exercises: [{ profile_id: 1, set_count: 3 }] }]);
+  assert.equal(app.nodes['#toast'].textContent, 'Dip removed.');
+
+  await click('[data-add-routine-exercise]', {});
+  assert.match(content.innerHTML, /id="routine-search"/);
+  assert.match(nodes['#routine-choices'].innerHTML, /data-add-profile="1"[\s\S]*data-add-profile="3"><strong>Back Squat<\/strong><span>Barbell<\/span>/);
+  content.events.input({ target: { id: 'routine-search', value: 'squat' } });
+  assert.doesNotMatch(nodes['#routine-choices'].innerHTML, /data-add-profile="1"/);
+  await click('[data-add-profile]', { addProfile: '3' });
+  assert.deepEqual(requests.at(-1), ['PUT /api/routines/4', { exercises: [{ profile_id: 1, set_count: 3 }, { profile_id: 3, set_count: 3 }] }]);
+  assert.equal(app.nodes['#toast'].textContent, 'Back Squat added.');
+  assert.match(content.innerHTML, /<h3>Push<\/h3>/);
+
+  dialog.close();
+  assert.equal(dialog.removed, true);
+  await settle();
+  assert.equal(requests.at(-1)[0], 'GET /api/bootstrap');
+  assert.match(app.nodes['#app'].innerHTML, /<span>2 exercises<\/span>/);
+});
+
+test('the Routines screen creates, renames and deletes routines through in-app sheets', async () => {
+  const app = await harness(storage(), { ...startData([home]), routines: [] });
+  let routines = [];
+  const { content, requests, click } = await openRoutinesScreen(app, {
+    'GET /api/routines?gym_id=1': () => ({ routines, configurations: [] }),
+    'POST /api/routines': (body) => body.name === 'push' ? reply(409, { error: 'Home already has a routine named Push.' })
+      : { id: 7, gym_id: 1, name: body.name, exercises: [] },
+    'PUT /api/routines/7': (body) => ({ id: 7, gym_id: 1, name: body.name, exercises: [] }),
+    'DELETE /api/routines/7': { ok: true },
+  });
+  assert.match(content.innerHTML, /No routines yet\./);
+  const errors = [];
+  app.env.askText = async (question, options) => {
+    try { await options.submit('push'); } catch (error) { errors.push([question, error.message]); }
+    return options.submit(question.startsWith('Rename') ? 'Legs' : 'Push');
+  };
+  await click('[data-new-routine]', {});
+  assert.deepEqual(errors, [['New routine at Home', 'Home already has a routine named Push.']]);
+  assert.deepEqual(requests.filter(([key]) => key === 'POST /api/routines').map(([, body]) => body), [{ gym_id: 1, name: 'push' }, { gym_id: 1, name: 'Push' }]);
+  assert.equal(app.nodes['#toast'].textContent, 'Routine Push created. Add its exercises.');
+  assert.match(content.innerHTML, /<h3>Push<\/h3>[\s\S]*No exercises yet\./);
+  assert.match(content.innerHTML, /data-add-routine-exercise>Add exercise<\/button>/);
+
+  await click('[data-rename-routine]', {});
+  assert.deepEqual(requests.at(-1), ['PUT /api/routines/7', { name: 'Legs' }]);
+  assert.equal(app.nodes['#toast'].textContent, 'Renamed to Legs.');
+  assert.match(content.innerHTML, /<h3>Legs<\/h3>/);
+
+  const questions = [];
+  app.env.ask = async (question, options) => { questions.push([question, options]); return true; };
+  await click('[data-delete-routine]', {});
+  assert.deepEqual(questions, [['Delete the routine Legs? Workouts started from it stay in history.', { confirmLabel: 'Delete', danger: true }]]);
+  assert.equal(requests.at(-1)[0], 'DELETE /api/routines/7');
+  assert.equal(app.nodes['#toast'].textContent, 'Legs deleted.');
+  assert.match(content.innerHTML, /No routines yet\./);
+});
+
+test('the Routines screen explains that it needs a connection', async () => {
+  const app = await harness(storage(), { ...startData([home]), routines: [] });
+  const { nodes } = await openRoutinesScreen(app, {});
+  assert.match(nodes['#routines-message'].textContent, /Routines require a connection/);
 });

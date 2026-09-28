@@ -1,7 +1,8 @@
 import { DraftStore, setPayload } from "./drafts.mjs";
 import { NOTE_MAX_LENGTH, WorkoutEditor } from "./workout-editor.mjs";
 import { RestTimer } from "./rest-timer.mjs";
-import { confirmInPage } from "./confirm-sheet.mjs";
+import { askTextInPage, confirmInPage } from "./confirm-sheet.mjs";
+import { openRoutines, renderRoutineStarts } from "./routines.mjs";
 
 // The server stores times as SQLite CURRENT_TIMESTAMP values in UTC ("YYYY-MM-DD HH:MM:SS").
 // Gymdex shows them in the device's time zone.
@@ -30,8 +31,10 @@ export function localMidnightUtc(value, addDays = 0) {
 }
 
 // ask(question, { confirmLabel, cancelLabel, danger }) resolves to the user's answer from the confirmation sheet.
+// askText(question, { label, value, confirmLabel, submit }) asks for a name in a sheet (see confirm-sheet.mjs).
 export function createApp({ window, document, navigator, fetch, setTimeout, clearTimeout, setInterval, clearInterval, now = () => Date.now(),
-  ask = (question, options) => confirmInPage(document, question, options) }) {
+  ask = (question, options) => confirmInPage(document, question, options),
+  askText = (question, options) => askTextInPage(document, question, options) }) {
 
 const drafts = new DraftStore(() => window.localStorage);
 const app = document.querySelector("#app");
@@ -195,6 +198,7 @@ function renderHeader(status = "Ready") {
 function renderStart() {
   stopWorkoutElapsed();
   const gyms = state.data.gyms;
+  const selectedGym = gyms.find((gym) => gym.id === state.selectedGymId);
   app.innerHTML = `
     <main class="shell">
       ${renderHeader("No active workout")}
@@ -211,6 +215,7 @@ function renderStart() {
         <input id="gym-name" name="name" maxlength="80" autocomplete="organization" aria-label="Gym name" placeholder="Gym name" required />
         <button class="secondary" type="submit">Add</button>
       </form>
+      ${selectedGym ? renderRoutineStarts(state.data.routines, selectedGym, escapeHtml) : ""}
       <div class="bottom-action"><button class="primary accent" id="start-workout" ${state.selectedGymId ? "" : "disabled"}>Start workout</button></div>
     </main>`;
 
@@ -243,6 +248,34 @@ async function startWorkout() {
     await api("/api/workouts", { method: "POST", body: JSON.stringify({ gym_id: state.selectedGymId }) });
     await load();
   } catch (error) { showToast(error.message); }
+}
+
+// Repeat and Start routine answer with the new Active Workout and how many exercises they
+// left out because their Variation or Exercise Configuration is archived.
+async function showStartedWorkout({ skipped = 0, ...started }, notice) {
+  state.data.active_workout = started;
+  state.data.workout_exercises = [];
+  state.selectedGymId = started.gym_id;
+  drafts.snapshot(state.data);
+  await load();
+  const skippedNote = skipped ? ` ${skipped} archived exercise${skipped === 1 ? "" : "s"} skipped.` : "";
+  showToast(`${notice}${skippedNote}`);
+}
+
+async function startRoutine(button) {
+  button.disabled = true;
+  try {
+    const started = await api(`/api/routines/${Number(button.dataset.startRoutine)}/start`, { method: "POST", body: "{}" });
+    await showStartedWorkout(started, `${button.dataset.routineName} started. Sets are ready to log.`);
+  } catch (error) { button.disabled = false; showToast(error.message); }
+}
+
+function openRoutinesScreen() {
+  const gym = state.data.gyms.find((item) => item.id === state.selectedGymId);
+  if (!gym) return;
+  return openRoutines({ document, api, ask, askText, showToast, escapeHtml, exerciseDisplayName, configurationLabel,
+    // The start screen lists the routines, so it refreshes once the screen closes.
+    onClose: () => load() }, gym);
 }
 
 function renderWorkout() {
@@ -477,7 +510,8 @@ function renderHistoryDetail(data, canRepeat) {
     <p>Started ${escapeHtml(formatLocalDateTime(workout.started_at))}<br>Finished ${escapeHtml(formatLocalDateTime(workout.completed_at))}</p>
     ${renderHistoryNote("workout", workout.note, "workout note")}
     ${workout.gym_archived ? `<p class="history-notice">Restore ${escapeHtml(workout.gym_name)} in Manage to repeat this workout.</p>`
-      : canRepeat ? `<button class="secondary history-repeat" type="button" data-repeat-workout="${workout.id}">Repeat this workout</button>` : `<p class="history-notice">Finish the active workout before repeating this one.</p>`}
+      : `${canRepeat ? `<button class="secondary history-repeat" type="button" data-repeat-workout="${workout.id}">Repeat this workout</button>` : `<p class="history-notice">Finish the active workout before repeating this one.</p>`}
+        <button class="secondary history-save-routine" type="button" data-save-routine="${workout.id}">Save as routine</button>`}
     <div class="exercise-list">${entries.length ? entries.map((entry) => `
       <article class="exercise-entry">
         <div class="history-exercise-heading"><h3>${escapeHtml(exerciseDisplayName(entry))}</h3>${entry.variation_id ? `<button type="button" class="text-button" data-progress-variation="${entry.variation_id}" data-progress-equipment="${escapeHtml(entry.equipment)}" data-progress-manufacturer="${escapeHtml(entry.manufacturer || "")}" data-progress-label="${escapeHtml(entry.label || "")}">View progress</button>` : ""}</div>
@@ -604,17 +638,24 @@ function openHistory() {
     if (repeat) {
       repeat.disabled = true;
       try {
-        const { skipped = 0, ...repeated } = await api(`/api/history/${repeat.dataset.repeatWorkout}/repeat`, { method: "POST", body: "{}" });
-        state.data.active_workout = repeated;
-        state.data.workout_exercises = [];
-        state.selectedGymId = repeated.gym_id;
-        drafts.snapshot(state.data);
+        const repeated = await api(`/api/history/${repeat.dataset.repeatWorkout}/repeat`, { method: "POST", body: "{}" });
         dialog.close();
-        await load();
-        // Repeat leaves out Workout Exercises whose Variation or Exercise Configuration is archived.
-        const skippedNote = skipped ? ` ${skipped} archived exercise${skipped === 1 ? "" : "s"} skipped.` : "";
-        showToast(`Workout repeated. Sets are ready to log.${skippedNote}`);
+        await showStartedWorkout(repeated, "Workout repeated. Sets are ready to log.");
       } catch (error) { repeat.disabled = false; showToast(error.message); }
+      return;
+    }
+    if (target.closest("[data-save-routine]") && selectedDetail) {
+      const { workout } = selectedDetail;
+      const saved = await askText(`Save this workout as a routine at ${workout.gym_name}`, {
+        label: "Routine name", confirmLabel: "Save routine",
+        value: `${workout.gym_name} ${new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short" }).format(parseServerTime(workout.started_at))}`,
+        submit: (name) => api(`/api/history/${workout.id}/routine`, { method: "POST", body: JSON.stringify({ name }) }),
+      });
+      if (!saved) return;
+      state.data.routines = [...(state.data.routines ?? []), { id: saved.id, gym_id: saved.gym_id, name: saved.name, exercise_count: saved.exercises.length }];
+      if (!state.data.active_workout) renderStart();
+      const skippedNote = saved.skipped ? ` ${saved.skipped} archived exercise${saved.skipped === 1 ? "" : "s"} skipped.` : "";
+      showToast(`Routine ${saved.name} saved with ${saved.exercises.length} exercise${saved.exercises.length === 1 ? "" : "s"}.${skippedNote}`);
       return;
     }
     const progress = target.closest("[data-progress-variation]");
@@ -1675,6 +1716,9 @@ async function removeSet(form) {
 }
 
 app.addEventListener("click", (event) => {
+  const routine = event.target.closest?.("[data-start-routine]");
+  if (routine) return startRoutine(routine);
+  if (event.target.closest?.("#open-routines")) return openRoutinesScreen();
   const move = event.target.closest?.("[data-move-exercise]");
   if (move) return moveExercise(Number(move.dataset.moveExercise), Number(move.dataset.moveTo));
   const remove = event.target.closest?.("[data-remove-exercise]");
