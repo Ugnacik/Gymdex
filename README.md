@@ -57,7 +57,9 @@ saving an empty box removes the note.
 
 With no active workout, **Repeat this workout** starts a new workout at the same
 gym. It copies the exercise configurations and number of set slots, but clears
-all results, weights, and completion marks, and it does not copy notes. The
+all results, weights, and completion marks, and it does not copy notes. Exercise
+and variation names are the current ones, so a renamed exercise appears under
+its new name. The
 source stays in history. A workout at an archived gym cannot be repeated until
 the gym is restored in [Manage](#manage-gyms-and-exercises). Exercises whose
 exercise configuration or custom variation is archived are left out, and the
@@ -141,8 +143,8 @@ catalog exercises are not listed and cannot be changed, because Gymdex adds
 missing starter variations back when it starts.
 
 - **Rename** on an exercise or variation changes the name in the exercise
-  picker, Recent, and progress. Completed workouts keep the name they were
-  recorded with. Exercise names must be unique, and a variation name must be
+  picker, Recent, progress, and new workouts, including repeated ones. Completed
+  workouts keep the name they were recorded with. Exercise names must be unique, and a variation name must be
   unique within its exercise, archived variations included, regardless of
   capitalization. An exercise that also has starter variations, such as Bench
   Press with your own Close Grip variation, cannot be renamed; its variations

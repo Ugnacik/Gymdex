@@ -130,7 +130,9 @@ class FeatureTests(unittest.TestCase):
         active = db.bootstrap(self.connection)
         entries = active['workout_exercises']
         self.assertEqual([entry['position'] for entry in entries], [1, 2])
-        self.assertEqual(entries[0]['variation_name'], 'Standard')
+        # A new workout takes the current name; equipment details come from the source.
+        self.assertEqual(entries[0]['variation_name'], 'Renamed')
+        self.assertEqual(entries[0]['equipment'], 'Machine')
         self.assertEqual(entries[0]['manufacturer'], 'Acme')
         self.assertEqual(entries[0]['label'], 'Rack 1')
         self.assertEqual([set_item['position'] for set_item in entries[0]['sets']], [1, 2, 3])

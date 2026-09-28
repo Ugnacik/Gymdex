@@ -566,18 +566,21 @@ def repeat_workout(connection: sqlite3.Connection, workout_id: int) -> dict[str,
         new_workout_id = workout_cursor.lastrowid
         source_entries = connection.execute(
             """SELECT we.id, we.variation_id, we.gym_profile_id,
-                      we.exercise_name_snapshot, we.variation_name_snapshot,
+                      e.name AS exercise_name, v.name AS variation_name,
                       we.equipment_snapshot, we.manufacturer_snapshot, we.label_snapshot,
-                      we.tracking_type_snapshot,
+                      v.tracking_type,
                       v.archived_at IS NOT NULL OR p.archived_at IS NOT NULL AS archived
                FROM workout_exercises we
                JOIN exercise_variations v ON v.id = we.variation_id
+               JOIN exercises e ON e.id = v.exercise_id
                LEFT JOIN gym_exercise_profiles p ON p.id = we.gym_profile_id
                WHERE we.workout_id = ? ORDER BY we.position""",
             (workout_id,),
         ).fetchall()
         # Archived Variations and Exercise Configurations are not offered for new
-        # Workouts, so Repeat skips them and closes the gaps they leave.
+        # Workouts, so Repeat skips them and closes the gaps they leave. Names come
+        # from the current Exercise and Variation (a Rename applies to new
+        # workouts); equipment, manufacturer and label identify the configuration.
         kept = [entry for entry in source_entries if not entry["archived"]]
         for position, entry in enumerate(kept, start=1):
             entry_cursor = connection.execute(
@@ -589,9 +592,9 @@ def repeat_workout(connection: sqlite3.Connection, workout_id: int) -> dict[str,
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (new_workout_id, entry["variation_id"], entry["gym_profile_id"], position,
                  *(entry[key] for key in (
-                    "exercise_name_snapshot", "variation_name_snapshot",
+                    "exercise_name", "variation_name",
                     "equipment_snapshot", "manufacturer_snapshot", "label_snapshot",
-                    "tracking_type_snapshot",
+                    "tracking_type",
                  ))),
             )
             slots = [row["position"] for row in connection.execute(
