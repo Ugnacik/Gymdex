@@ -296,7 +296,7 @@ textarea:focus-visible, summary:focus-visible { outline: 3px solid var(--accent)
 .field-help { margin-top: -4px; font-size: 0.8rem; }
 .progress-config { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: -6px 0 20px; padding: 8px 12px; border-radius: var(--radius-control); background: var(--accent-soft); color: var(--accent); font-size: 0.85rem; }
 .progress-config[hidden] { display: none; }
-.progress-config .text-button { min-height: 40px; padding: 0 6px; }
+.progress-config .text-button { min-height: 44px; padding: 0 6px; }
 .progress-chart { width: 100%; height: auto; margin: 8px 0 16px; border-radius: var(--radius-control); background: var(--surface); }
 .progress-chart line { stroke: var(--line); stroke-width: 1; }
 .progress-chart polyline { fill: none; stroke: var(--accent); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
@@ -373,7 +373,7 @@ textarea:focus-visible, summary:focus-visible { outline: 3px solid var(--accent)
 .rest-timer { margin: 4px 0 24px; padding: 16px 18px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--surface); }
 .rest-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .rest-heading h2 { margin: 0; }
-.rest-switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+.rest-switch { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; cursor: pointer; }
 .rest-switch input { width: 24px; height: 24px; min-height: 24px; padding: 0; accent-color: var(--accent); }
 .rest-duration { margin: 14px 0 8px; }
 .rest-readout { display: flex; align-items: baseline; gap: 12px; min-height: 48px; }
