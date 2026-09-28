@@ -1382,11 +1382,17 @@ function exerciseSuggestions(name) {
     ?? { variations: [], equipment: suggestions.equipment, manufacturers: [], labels: [] };
 }
 
-// Variation names must be unique within an Exercise, so existing ones are listed but cannot be chosen.
+// Variation names must be unique within an Exercise, so only Standard is offered, while the
+// existing Exercise lacks it; any other new name is typed. A new Exercise gets Standard when left blank.
 function variationChoices(variations) {
-  if (!variations.length) return [];
-  const taken = variations.map((value) => ({ value, disabled: true, note: "already added" }));
-  return variations.some((value) => value.toLowerCase() === "standard") ? taken : ["Standard", ...taken];
+  return variations.length && !variations.some((value) => value.toLowerCase() === "standard") ? ["Standard"] : [];
+}
+
+// Names the typed Exercise's existing Variations under the Variation field, so a taken name is not retyped.
+function variationHelp(known, choices) {
+  if (!known.variations.length) return "";
+  const next = choices.length ? "Choose Standard or Other… for a new variation name." : "Enter a new variation name.";
+  return `${known.name} already has: ${known.variations.join(", ")}. ${next}`;
 }
 
 function renderCustomExerciseForm(query = "") {
@@ -1399,6 +1405,7 @@ function renderCustomExerciseForm(query = "") {
     <form id="custom-exercise-form">
       <label class="field">Exercise name<input name="name" maxlength="80" value="${escapeHtml(query)}" placeholder="e.g. Leg Press" required /></label>
       <div class="field choice-field" id="variation-field"></div>
+      <p class="field-help" id="variation-help" hidden></p>
       <fieldset class="track-by"><legend>Track by</legend>
         <label class="radio-option"><input type="radio" name="tracking_type" value="repetitions" checked /> Repetitions</label>
         <label class="radio-option"><input type="radio" name="tracking_type" value="duration" /> Duration in seconds</label>
@@ -1418,7 +1425,13 @@ function renderCustomExerciseForm(query = "") {
   // The typed Exercise name decides which suggestions are offered; see exerciseSuggestions().
   let known = exerciseSuggestions(nameInput.value ?? query);
   const variation = new ChoiceField(sheet.querySelector("#variation-field"), { id: "variation-name", name: "variation_name",
-    title: "Variation", placeholder: "Standard", options: variationChoices(known.variations) });
+    title: "Variation", placeholder: "Standard", describedBy: "variation-help", options: variationChoices(known.variations) });
+  const help = sheet.querySelector("#variation-help");
+  const showVariationHelp = () => {
+    help.textContent = variationHelp(known, variation.options);
+    help.hidden = !help.textContent;
+  };
+  showVariationHelp();
   const unadded = () => known.equipment.filter((value) => !equipment.some((added) => added.toLowerCase() === value.toLowerCase()));
   const entry = new ChoiceField(sheet.querySelector("#equipment-choice"), { id: "equipment-entry", title: "Equipment options",
     empty: "Choose equipment", placeholder: "e.g. Machine", newLabel: "New equipment option", describedBy: "equipment-help",
@@ -1426,6 +1439,7 @@ function renderCustomExerciseForm(query = "") {
   nameInput.addEventListener("input", () => {
     known = exerciseSuggestions(nameInput.value);
     variation.setOptions(variationChoices(known.variations));
+    showVariationHelp();
     entry.setOptions(unadded());
   });
   const chips = sheet.querySelector("#equipment-chips");

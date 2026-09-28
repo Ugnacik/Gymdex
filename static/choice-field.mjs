@@ -11,9 +11,6 @@ const escapeHtml = (value) => String(value)
   .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
   .replaceAll('"', "&quot;").replaceAll("'", "&#039;");
 
-// Options are strings or { value, disabled, note }; a disabled option is listed but cannot be chosen.
-const normalize = (options) => options.map((option) => typeof option === "string" ? { value: option } : option);
-
 export class ChoiceField {
   // empty: label of a first option meaning "no value" (e.g. "None"), or null for none.
   // onEnter: called instead of submitting the form when Enter is pressed in the text input.
@@ -36,10 +33,9 @@ export class ChoiceField {
   }
 
   setOptions(options) {
-    this.options = normalize(options);
-    const offered = this.options.filter((option) => !option.disabled).map((option) => option.value);
-    const kept = this.picked && (this.choice === OTHER || offered.includes(this.choice));
-    if (!kept) [this.choice, this.picked] = [this.defaultChoice(offered), false];
+    this.options = [...options];
+    const kept = this.picked && (this.choice === OTHER || this.options.includes(this.choice));
+    if (!kept) [this.choice, this.picked] = [this.defaultChoice(), false];
     this.render();
   }
 
@@ -54,20 +50,19 @@ export class ChoiceField {
     (this.typing ? this.input : this.select)?.focus();
   }
 
-  defaultChoice(offered = this.options.filter((option) => !option.disabled).map((option) => option.value)) {
+  defaultChoice() {
     if (!this.options.length) return OTHER;
-    if (this.empty !== null) return "";
-    return offered[0] ?? OTHER;
+    return this.empty !== null ? "" : this.options[0];
   }
 
   render() {
     const selectId = `${this.id}-choice`;
     const listed = this.options.length > 0;
-    const option = (value, text, disabled = false) =>
-      `<option value="${escapeHtml(value)}"${value === this.choice ? " selected" : ""}${disabled ? " disabled" : ""}>${escapeHtml(text)}</option>`;
+    const option = (value, text) =>
+      `<option value="${escapeHtml(value)}"${value === this.choice ? " selected" : ""}>${escapeHtml(text)}</option>`;
     const select = listed ? `<select id="${selectId}">${[
       this.empty === null ? "" : option("", this.empty),
-      ...this.options.map((item) => option(item.value, item.note ? `${item.value} (${item.note})` : item.value, item.disabled)),
+      ...this.options.map((value) => option(value, value)),
       option(OTHER, "Other…"),
     ].join("")}</select>` : "";
     const attributes = [

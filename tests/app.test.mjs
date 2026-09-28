@@ -497,7 +497,7 @@ async function openPickerSheet(app, catalog, respond = () => { throw new Error('
   const sheetNodes = {
     '#back-to-picker': node(), '#close-picker': node(), '#custom-exercise-form': customForm,
     '[name="name"]': Object.assign(node(), { value: '' }), '#add-equipment': node(), '#equipment-chips': node(),
-    '#variation-field': choiceContainer(), '#equipment-choice': choiceContainer(),
+    '#variation-field': choiceContainer(), '#equipment-choice': choiceContainer(), '#variation-help': node(),
   };
   sheet.querySelector = (selector) => sheetNodes[selector];
   Object.assign(app.nodes, { '#picker .sheet': sheet, '#exercise-search': Object.assign(node(), { value: '', setSelectionRange() {} }),
@@ -607,12 +607,18 @@ test('the custom exercise form offers the typed Exercise its variations and equi
   assert.equal(variationField.querySelector('#variation-name-choice'), null);
   assert.deepEqual(optionValues(equipmentField, 'equipment-entry-choice'), ['Choose equipment', 'Barbell', 'Machine', 'Other…']);
 
+  const help = sheetNodes['#variation-help'];
+  assert.equal(help.hidden, true, 'a new Exercise has no variations to list');
+  assert.match(sheetNodes['#variation-field'].innerHTML, /aria-describedby="variation-help"/);
   const name = sheetNodes['[name="name"]'];
   name.value = ' leg  press';
   name.events.input();
-  assert.deepEqual(optionValues(variationField, 'variation-name-choice'),
-    ['Single Leg (already added)', 'Standard (already added)', 'Other…']);
-  assert.equal(variationField.querySelector('#variation-name').hidden, false, 'every name is taken, so a new one is typed');
+  // Every existing name is taken, so the field is just the text box and the taken names are listed below it.
+  assert.equal(variationField.querySelector('#variation-name-choice'), null);
+  assert.doesNotMatch(variationField.innerHTML, /already added|Other…/);
+  assert.equal(variationField.querySelector('#variation-name').hidden, false);
+  assert.equal(help.hidden, false);
+  assert.equal(help.textContent, 'Leg Press already has: Single Leg, Standard. Enter a new variation name.');
   type(variationField, 'variation-name', 'Wide');
   assert.deepEqual(optionValues(equipmentField, 'equipment-entry-choice'), ['Choose equipment', 'Barbell', 'Machine', 'Sled', 'Other…']);
   assert.doesNotMatch(equipmentField.innerHTML, /Eleiko|Technogym/);
@@ -633,7 +639,19 @@ test('the custom exercise form offers the typed Exercise its variations and equi
   // An existing Exercise without a Standard variation offers Standard as the default.
   name.value = 'Plank';
   name.events.input();
-  assert.deepEqual(optionValues(variationField, 'variation-name-choice'), ['Standard', 'Front Plank (already added)', 'Other…']);
+  assert.deepEqual(optionValues(variationField, 'variation-name-choice'), ['Standard', 'Other…']);
+  assert.equal(help.textContent, 'Plank already has: Front Plank. Choose Standard or Other… for a new variation name.');
+  choose(variationField, 'variation-name-choice', 'Standard');
+  assert.equal(variationField.querySelector('#variation-name').hidden, true);
+  // Back to an Exercise whose names are all taken: the text box shows, with no select left behind.
+  name.value = 'Leg Press';
+  name.events.input();
+  assert.equal(variationField.querySelector('#variation-name-choice'), null);
+  assert.equal(variationField.querySelector('#variation-name').hidden, false);
+  name.value = 'Leg Pressing';
+  name.events.input();
+  assert.equal(help.hidden, true);
+  assert.equal(variationField.querySelector('#variation-name-choice'), null);
 });
 
 test('the Exercise Configuration form offers manufacturers and machine labels saved for the same Exercise at any gym', async () => {

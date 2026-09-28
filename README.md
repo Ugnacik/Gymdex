@@ -150,11 +150,13 @@ same exercise, from all your gyms. Each is a list with **Other…** at the end,
 which opens a text box for a new value; a field with nothing to suggest is just
 the text box.
 
-- **Variation**, once the exercise name matches an existing exercise (ignoring
-  capitalization), lists that exercise's variations as "already added": a
-  variation name must be unique within its exercise, so type a new one under
-  Other…. Standard is offered while the exercise has no Standard variation. A
-  new exercise has nothing to list.
+- **Variation**: a variation name must be unique within its exercise, so
+  existing names are not offered. Once the exercise name matches an existing
+  exercise (ignoring capitalization), a line under the field lists its
+  variations, such as "Leg Press already has: Standard, Wide grip. Enter a new
+  variation name.", and you type the new name in the text box. While the
+  exercise has no Standard variation, the field is a list offering Standard,
+  with Other… for a new name. A new exercise has nothing to list.
 - **Equipment options** lists the starter catalog's equipment (Barbell,
   Bodyweight, Cable, Dumbbell, Machine, Rope) for every exercise, plus the
   equipment of the named exercise's variations, including values you typed.
@@ -168,7 +170,7 @@ Suggestions come from what is recorded, so there is nothing separate to manage:
 archiving or deleting a variation or exercise configuration in
 [Manage](#manage-gyms-and-exercises) removes the values only it provided, and
 values differing only in capitalization are offered once. Values are sorted
-alphabetically, except that Standard, when offered as a variation, comes first.
+alphabetically.
 New values appear the next time you open Add exercise.
 
 ## Manage gyms and exercises

@@ -76,21 +76,28 @@ test('new options keep the current choice and typed text', () => {
   assert.equal(field.value, 'Cy', 'the text typed earlier is kept');
 });
 
-test('disabled values are listed with their note, and without an empty option Other… is the default', () => {
+test('without an empty option the first value is the default, and Other… can always go back to it', () => {
   const container = choiceContainer();
   const field = new ChoiceField(container, { id: 'variation-name', name: 'variation_name', title: 'Variation',
-    placeholder: 'Standard', newLabel: 'New variation',
-    options: [{ value: 'Standard', disabled: true, note: 'already added' }, { value: 'Single <Leg>', disabled: true, note: 'already added' }] });
+    placeholder: 'Standard', newLabel: 'New variation', options: ['Standard', 'Single <Leg>'] });
   const select = container.querySelector('#variation-name-choice');
   assert.deepEqual(select.options.map((option) => [option.text, option.disabled]),
-    [['Standard (already added)', true], ['Single <Leg> (already added)', true], ['Other…', false]]);
+    [['Standard', false], ['Single <Leg>', false], ['Other…', false]]);
   assert.match(container.innerHTML, /Single &lt;Leg&gt;/);
-  assert.equal(select.value, OTHER);
-  assert.equal(container.querySelector('#variation-name').hidden, false);
+  assert.equal(select.value, 'Standard');
+  assert.equal(container.querySelector('#variation-name').hidden, true);
+  choose(container, 'variation-name-choice', OTHER);
+  type(container, 'variation-name', 'Wide');
+  choose(container, 'variation-name-choice', 'Standard');
+  assert.equal(container.querySelector('#variation-name').hidden, true, 'a listed value hides the text input again');
+  assert.equal(field.value, 'Standard');
 
-  field.setOptions(['Standard', { value: 'Incline', disabled: true, note: 'already added' }]);
-  assert.equal(container.querySelector('#variation-name-choice').value, 'Standard', 'the first free value is the default');
+  // Without known values there is nothing to choose: no select, only the text input.
   field.setOptions([]);
+  assert.equal(container.querySelector('#variation-name-choice'), null);
+  assert.doesNotMatch(container.innerHTML, /<select|Other…/);
+  assert.equal(container.querySelector('#variation-name').hidden, false);
+  assert.match(container.innerHTML, /<label for="variation-name">Variation<\/label>/);
   type(container, 'variation-name', 'Heavy');
   field.setOptions(['Standard']);
   assert.equal(container.querySelector('#variation-name-choice').value, OTHER, 'text typed before values were known is kept');
