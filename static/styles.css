@@ -413,5 +413,13 @@ button:disabled, fieldset:disabled { cursor: wait; opacity: 0.7; }
 .manage-rename-form .field { margin-bottom: 0; }
 .manage-rename-form input { min-width: 0; }
 .manage-rename-form .set-status { margin: 0; }
+/* A custom Exercise heads its Variations; Variation rows put their three actions on their own line. */
+.manage-exercise { margin: 16px 0 0; }
+.manage-exercise .manage-row { border-top: 0; }
+.manage-exercise .manage-name { font-size: 1.05rem; }
+.manage-variations .manage-row { grid-template-columns: minmax(0, 1fr); }
+.manage-variations .manage-actions { justify-content: flex-start; margin-left: -8px; }
+.manage-equipment-form .field-help { margin: 0; }
+.equipment-chip-fixed { min-height: 44px; padding-right: 14px; }
 #manage-message:empty { display: none; }
 #manage-content:focus { outline: none; }

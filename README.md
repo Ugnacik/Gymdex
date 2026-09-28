@@ -93,8 +93,8 @@ becomes Standard.
 Check Assisted when the variation's weight is a machine counterweight.
 Using an existing exercise name adds another variation. The resulting catalog
 entry is available at every gym; machine details are still recorded for the
-gym when you add it to a workout. Created variations cannot yet be renamed or
-deleted in the app.
+gym when you add it to a workout. Rename, edit the equipment of, or remove
+created variations in [Manage](#manage-gyms-and-exercises).
 
 ## Manage gyms and exercises
 
@@ -136,8 +136,33 @@ equipment, manufacturer, and label in the picker also restores it. A
 configuration whose custom variation is archived stays listed but says that
 Recent hides it until the variation is restored.
 
-Custom exercises lists the variations you created with their equipment. This
-list is read-only for now.
+Custom exercises lists the variations you created, grouped by exercise. Starter
+catalog exercises are not listed and cannot be changed, because Gymdex adds
+missing starter variations back when it starts.
+
+- **Rename** on an exercise or variation changes the name in the exercise
+  picker, Recent, and progress. Completed workouts keep the name they were
+  recorded with. Exercise names must be unique, and a variation name must be
+  unique within its exercise, archived variations included, regardless of
+  capitalization. An exercise that also has starter variations, such as Bench
+  Press with your own Close Grip variation, cannot be renamed; its variations
+  can.
+- **Equipment** opens the variation's equipment chips. Add any new choice one at
+  a time. The × appears only on choices no workout has recorded, and never on
+  the last one. Removing a choice also removes saved exercise configurations
+  that use it, which no workout uses either. Tracking type and Assisted stay as
+  created.
+- **Delete** appears for a variation no workout uses. It removes the variation,
+  its equipment and saved configurations, and the exercise too once it has no
+  variations left.
+- **Archive** appears for a variation used in a workout. It disappears from the
+  exercise picker, but history, progress, and the CSV export keep it, and
+  Progress still offers it, marked "(archived)".
+
+Archived variations are listed under **Archived** at the end of the Custom
+exercises section, and **Restore** offers one in the picker again. Creating a
+custom exercise with an archived variation's name is refused; restore the
+archived variation instead.
 
 ## Rest timer
 

@@ -899,9 +899,10 @@ async function openProgress(initialVariationId = null, initialGymId = null, init
   });
   dialog.showModal();
   try {
-    const catalog = await api(`/api/catalog?gym_id=${gyms[0].id}`);
+    // Archived custom exercises stay selectable: their recorded workouts still have progress.
+    const catalog = await api(`/api/catalog?gym_id=${gyms[0].id}&include_archived=1`);
     if (!dialog.open) return;
-    exercise.innerHTML = catalog.catalog.map((item) => `<option value="${item.id}" ${item.id === initialVariationId ? "selected" : ""}>${escapeHtml(exerciseDisplayName(item))}</option>`).join("");
+    exercise.innerHTML = catalog.catalog.map((item) => `<option value="${item.id}" ${item.id === initialVariationId ? "selected" : ""}>${escapeHtml(exerciseDisplayName(item))}${item.archived ? " (archived)" : ""}</option>`).join("");
     if (!catalog.catalog.length) {
       message.textContent = "No exercises yet. Create one from a workout.";
       return;
@@ -920,7 +921,7 @@ function manageItems(overview, kind) {
   if (kind === "configuration") return overview.configurations;
   if (kind === "exercise") return overview.exercises;
   if (kind === "variation") return overview.exercises.flatMap((exercise) =>
-    exercise.variations.map((variation) => ({ ...variation, exercise_name: exercise.name, variation_name: variation.name })));
+    exercise.variations.map((variation) => ({ ...variation, exercise_id: exercise.id, exercise_name: exercise.name, variation_name: variation.name })));
   return [];
 }
 
@@ -928,13 +929,13 @@ function manageItemName(kind, item) {
   return kind === "configuration" || kind === "variation" ? exerciseDisplayName(item) : item.name;
 }
 
-function renderManageRow(kind, item, { name = manageItemName(kind, item), detail = "", rename = false, remove = true } = {}) {
+function renderManageRow(kind, item, { name = manageItemName(kind, item), detail = "", rename = false, remove = true, actions: more = "", editor = "" } = {}) {
   const key = `${kind}:${item.id}`;
   const label = escapeHtml(name);
   const removeLabel = item.used ? "Archive" : "Delete";
   const actions = item.archived
     ? `<button type="button" class="text-button" data-manage-restore="${key}" aria-label="Restore ${label}">Restore</button>`
-    : `${rename ? `<button type="button" class="text-button" data-manage-rename="${key}" aria-label="Rename ${label}">Rename</button>` : ""}${remove ? `<button type="button" class="text-button manage-remove" data-manage-remove="${key}" aria-label="${removeLabel} ${label}">${removeLabel}</button>` : ""}`;
+    : `${rename ? `<button type="button" class="text-button" data-manage-rename="${key}" aria-label="Rename ${label}">Rename</button>` : ""}${more}${remove ? `<button type="button" class="text-button manage-remove" data-manage-remove="${key}" aria-label="${removeLabel} ${label}">${removeLabel}</button>` : ""}`;
   return `<li class="manage-row">
     <div class="manage-row-text"><span class="manage-name">${label}</span>${detail ? `<span class="meta">${escapeHtml(detail)}</span>` : ""}</div>
     ${actions ? `<div class="manage-actions">${actions}</div>` : ""}
@@ -943,7 +944,45 @@ function renderManageRow(kind, item, { name = manageItemName(kind, item), detail
       <div class="history-edit-actions"><button type="submit" class="secondary">Save name</button><button type="button" class="text-button" data-manage-cancel>Cancel</button></div>
       <p class="set-status" role="status"></p>
     </form>` : ""}
+    ${item.archived ? "" : editor}
   </li>`;
+}
+
+// A custom Variation's Equipment editor. Values recorded in workouts, and the last value, stay.
+function renderEquipmentEditor(variation, open) {
+  const key = `variation:${variation.id}`;
+  const names = variation.equipment.map((equipment) => equipment.name);
+  const label = escapeHtml(exerciseDisplayName(variation));
+  const removable = (index) => !variation.equipment[index].used && names.length > 1;
+  return `<form class="manage-rename-form manage-equipment-form" data-manage-equipment-form="${key}"${open.has(`equipment:${key}`) ? "" : " hidden"}>
+      <ul class="equipment-chips" aria-label="Equipment options for ${label}">${renderEquipmentChips(names, removable)}</ul>
+      ${variation.equipment.some((equipment) => equipment.used) ? `<p class="field-help">Equipment used in recorded workouts can't be removed.</p>` : ""}
+      <label for="manage-equipment-${variation.id}">Add equipment</label>
+      <div class="equipment-entry"><input id="manage-equipment-${variation.id}" name="equipment" maxlength="80" autocomplete="off" enterkeyhint="done" /><button type="submit" class="secondary">Add</button></div>
+      <p class="set-status" role="status"></p>
+    </form>`;
+}
+
+// Custom exercises grouped by Exercise; archived Variations are listed under Archived.
+function renderCustomExercises(overview, open) {
+  const variations = manageItems(overview, "variation");
+  const active = variations.filter((variation) => !variation.archived);
+  const archived = variations.filter((variation) => variation.archived);
+  const groups = overview.exercises.map((exercise) => {
+    const members = active.filter((variation) => variation.exercise_id === exercise.id);
+    if (!members.length) return "";
+    return `<ul class="manage-list manage-exercise">${renderManageRow("exercise", exercise, { rename: exercise.renamable, remove: false,
+      detail: exercise.renamable ? "" : "Starter catalog exercise" })}</ul>
+      <ul class="manage-list manage-variations">${members.map((variation) => renderManageRow("variation", variation, { name: variation.name, rename: true,
+        detail: [variation.tracking_type === "duration" ? "Duration" : "Repetitions", ...variation.equipment.map((equipment) => equipment.name)].join(" · "),
+        actions: `<button type="button" class="text-button" data-manage-equipment="variation:${variation.id}" aria-label="Edit equipment of ${escapeHtml(exerciseDisplayName(variation))}">Equipment</button>`,
+        editor: renderEquipmentEditor(variation, open) })).join("")}</ul>`;
+  }).join("");
+  return renderManageSection("exercises", "Custom exercises", active.length, variations.length ? `
+      <p class="manage-help">Delete removes a variation with no workouts. Archive hides a variation with workouts from the exercise picker; its workouts stay in history and progress.</p>
+      ${groups || "<p>All custom exercises are archived.</p>"}
+      ${renderManageArchived("exercises", archived.map((variation) => renderManageRow("variation", variation)), open)}`
+    : `<p>No custom exercises yet. Create one with Create custom exercise when adding an exercise to a workout.</p>`, open);
 }
 
 function renderManageSection(section, title, count, body, open) {
@@ -974,7 +1013,6 @@ function renderManage(overview, open) {
   const archivedConfigurations = overview.configurations.filter((item) => item.archived);
   const configurationDetail = (item) => item.variation_archived
     ? `${configurationLabel(item)} · Recent hides it while ${exerciseDisplayName(item)} is archived` : configurationLabel(item);
-  const variations = manageItems(overview, "variation");
   return [
     renderManageSection("gyms", "Gyms", gyms.length, `
       <p class="manage-help">Delete removes a gym with no workouts. Archive hides a gym with workouts from the start screen; its workouts stay in history and progress.</p>
@@ -987,11 +1025,7 @@ function renderManage(overview, open) {
         : `<p>No exercise configurations yet. Add an exercise to a workout to save one.</p>`}
       ${renderManageArchived("configurations", archivedConfigurations.map((item) =>
         renderManageRow("configuration", item, { detail: `${item.gym_name} · ${configurationLabel(item)}` })), open)}`, open),
-    renderManageSection("exercises", "Custom exercises", variations.length, variations.length
-      ? renderManageGroups(variations, (item) => item.exercise_name,
-        (item) => renderManageRow("variation", item, { name: item.name, remove: false,
-          detail: [item.tracking_type === "duration" ? "Duration" : "Repetitions", ...item.equipment.map((equipment) => equipment.name)].join(" · ") }))
-      : `<p>No custom exercises yet. Create one with Create custom exercise when adding an exercise to a workout.</p>`, open),
+    renderCustomExercises(overview, open),
   ].join("");
 }
 
@@ -1057,6 +1091,24 @@ function openManage() {
       else form.elements.name.focus();
       return;
     }
+    const equipment = target.closest?.("[data-manage-equipment]");
+    if (equipment) {
+      const key = equipment.dataset.manageEquipment;
+      const form = content.querySelector(`[data-manage-equipment-form="${key}"]`);
+      form.hidden = !form.hidden;
+      if (form.hidden) open.delete(`equipment:${key}`);
+      else { open.add(`equipment:${key}`); form.elements.equipment.focus(); }
+      return;
+    }
+    const chip = target.closest?.("[data-remove-equipment]");
+    if (chip) {
+      const form = chip.closest("[data-manage-equipment-form]");
+      const selected = itemFor(form.dataset.manageEquipmentForm);
+      if (!selected) return;
+      const names = selected.item.equipment.map((item) => item.name);
+      const [removed] = names.splice(Number(chip.dataset.removeEquipment), 1);
+      return saveEquipment(form, selected, names, `Removed ${removed}.`);
+    }
     const cancel = target.closest?.("[data-manage-cancel]");
     if (cancel) {
       const form = cancel.closest("form");
@@ -1084,7 +1136,29 @@ function openManage() {
       }
     } catch (error) { button.disabled = false; showToast(error.message); }
   });
+  // Saves a Variation's full Equipment list and keeps its editor open for the next change.
+  async function saveEquipment(form, selected, names, notice) {
+    const status = form.querySelector(".set-status");
+    status.textContent = "Saving equipment…";
+    try {
+      await api(selected.path, { method: "PUT", body: JSON.stringify({ equipment: names }) });
+      showToast(notice);
+      await refresh();
+      content.querySelector(`[data-manage-equipment-form="${form.dataset.manageEquipmentForm}"]`)?.elements.equipment.focus();
+    } catch (error) { status.textContent = error.message; }
+  }
   content.addEventListener("submit", async (event) => {
+    const equipmentForm = event.target.closest?.("[data-manage-equipment-form]");
+    if (equipmentForm) {
+      event.preventDefault();
+      const selected = itemFor(equipmentForm.dataset.manageEquipmentForm);
+      const name = cleanEquipmentName(equipmentForm.elements.equipment.value);
+      if (!selected || !name) return;
+      const names = selected.item.equipment.map((item) => item.name);
+      const problem = equipmentProblem(names, name);
+      if (problem) { equipmentForm.querySelector(".set-status").textContent = problem; return; }
+      return saveEquipment(equipmentForm, selected, [...names, name], `Added ${name}.`);
+    }
     const form = event.target.closest?.("[data-manage-rename-form]");
     if (!form) return;
     event.preventDefault();
@@ -1218,6 +1292,25 @@ function renderPickerResults(query) {
   document.querySelector("#create-exercise").addEventListener("click", () => renderCustomExerciseForm(query));
 }
 
+// Equipment chips of the custom exercise form and Manage. × appears only on removable values.
+function renderEquipmentChips(names, removable = () => true) {
+  return names.map((name, index) => removable(index)
+    ? `<li class="equipment-chip"><span>${escapeHtml(name)}</span><button type="button" class="chip-remove" data-remove-equipment="${index}" aria-label="Remove ${escapeHtml(name)}"><span aria-hidden="true">×</span></button></li>`
+    : `<li class="equipment-chip equipment-chip-fixed"><span>${escapeHtml(name)}</span></li>`).join("");
+}
+
+function cleanEquipmentName(value) {
+  return value.split(/\s+/).filter(Boolean).join(" ");
+}
+
+// Why a cleaned equipment name cannot join the list, or "".
+function equipmentProblem(names, name) {
+  if (name.includes("|")) return "Equipment names cannot contain |.";
+  if (names.some((item) => item.toLowerCase() === name.toLowerCase())) return `${name} is already added.`;
+  if (names.length >= 20) return "You can add up to 20 equipment options.";
+  return "";
+}
+
 function renderCustomExerciseForm(query = "") {
   const sheet = document.querySelector("#picker .sheet");
   sheet.innerHTML = `
@@ -1243,16 +1336,11 @@ function renderCustomExerciseForm(query = "") {
   const equipment = [];
   const entry = sheet.querySelector("#equipment-entry");
   const chips = sheet.querySelector("#equipment-chips");
-  const renderChips = () => {
-    chips.innerHTML = equipment.map((name, index) => `<li class="equipment-chip"><span>${escapeHtml(name)}</span><button type="button" class="chip-remove" data-remove-equipment="${index}" aria-label="Remove ${escapeHtml(name)}"><span aria-hidden="true">×</span></button></li>`).join("");
-  };
+  const renderChips = () => { chips.innerHTML = renderEquipmentChips(equipment); };
   const addEquipment = () => {
-    const name = entry.value.split(/\s+/).filter(Boolean).join(" ");
+    const name = cleanEquipmentName(entry.value);
     if (!name) return true;
-    let problem = "";
-    if (name.includes("|")) problem = "Equipment names cannot contain |.";
-    else if (equipment.some((item) => item.toLowerCase() === name.toLowerCase())) problem = `${name} is already added.`;
-    else if (equipment.length >= 20) problem = "You can add up to 20 equipment options.";
+    const problem = equipmentProblem(equipment, name);
     if (problem) { showToast(problem); entry.focus(); return false; }
     equipment.push(name);
     entry.value = "";
