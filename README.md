@@ -45,7 +45,8 @@ weight and reps or duration of the set above, and opens it for correction; it
 is Not completed until you mark it completed and save. **Delete set** removes a
 set after a confirmation, and the remaining sets are renumbered. **Delete
 workout** at the bottom removes the whole completed workout with its exercises
-and sets; type DELETE to confirm. An active workout cannot be deleted from
+and sets; type DELETE to confirm. History then returns to the list, or to the
+newer page if that was the last workout on an older one. An active workout cannot be deleted from
 history (use Cancel workout instead). Every correction, added or deleted set,
 and deleted workout immediately affects progress and future "Last workout"
 reference values. Adding exercises to a completed workout is not supported.

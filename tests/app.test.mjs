@@ -223,7 +223,8 @@ test('history paginates and filters without replacing the active form or draft',
   const urls = [];
   app.env.fetch = async (url) => {
     urls.push(url);
-    return response({ workouts: [], next_offset: urls.length === 1 ? 20 : null });
+    const older = { id: 7, gym_name: 'Home', started_at: '2026-09-01 10:00:00', exercise_count: 1, completed_set_count: 1 };
+    return response({ workouts: url.endsWith('offset=20') ? [older] : [], next_offset: urls.length === 1 ? 20 : null });
   };
   app.nodes['#open-history'].events.click();
   await settle();
@@ -1075,6 +1076,39 @@ test('deleting a completed workout needs the typed word DELETE and returns to th
   // The active workout and its unsaved draft survive the refresh.
   assert.match(app.nodes['#app'].innerHTML, /Workout active/);
   assert.equal(app.form.elements.result.value, '9');
+});
+
+test('deleting the only workout on an older history page returns to the newer page', async () => {
+  const app = await harness();
+  const { nodes } = historyDOM(app);
+  const detail = completedDetail();
+  const listed = (id) => ({ ...detail.workout, id, exercise_count: 1, completed_set_count: 1 });
+  const newer = Array.from({ length: 20 }, (_, index) => listed(100 + index));
+  let deleted = false;
+  const urls = [];
+  app.env.fetch = async (url, options = {}) => {
+    urls.push(`${options.method ?? 'GET'} ${url}`);
+    if (url === '/api/history?offset=0') return response({ workouts: newer, next_offset: deleted ? null : 20 });
+    if (url === '/api/history?offset=20') return response({ workouts: deleted ? [] : [listed(22)], next_offset: null });
+    if (url === '/api/history/22' && options.method === 'DELETE') { deleted = true; return response({ ok: true }); }
+    if (url === '/api/history/22') return response(structuredClone(detail));
+    if (url === '/api/bootstrap') return response(refreshedBootstrap([]));
+    throw new Error('Unexpected request');
+  };
+  app.nodes['#open-history'].events.click();
+  await settle();
+  nodes['#history-next'].events.click();
+  await settle();
+  await nodes['#history-results'].buttons[0].events.click();
+  const form = Object.assign(node(), { elements: { confirmation: Object.assign(node(), { value: 'DELETE' }) },
+    closest: (selector) => selector === '[data-delete-workout]' ? form : null, querySelector: () => node() });
+  await nodes['#history-detail'].events.submit({ target: form, preventDefault() {} });
+  await settle();
+  assert.equal(urls.at(-1), 'GET /api/history?offset=0');
+  assert.match(nodes['#history-message'].textContent, /Completed workouts, newest first/);
+  assert.equal(nodes['#history-results'].buttons.length, 20);
+  assert.equal(nodes['#history-previous'].disabled, true);
+  assert.equal(app.nodes['#toast'].textContent, 'Workout deleted.');
 });
 
 const reply = (status, body) => ({ reply: true, status, body });

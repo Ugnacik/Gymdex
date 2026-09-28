@@ -773,6 +773,8 @@ function openHistory() {
     try {
       const data = await api(`/api/history?${params}`);
       if (version !== request) return;
+      // Deleting the last workout on an older page empties it: show the newer page instead.
+      if (!data.workouts.length && pageOffset > 0) return loadPage(Math.max(0, pageOffset - 20));
       offset = pageOffset;
       nextOffset = data.next_offset;
       message.textContent = data.workouts.length ? "Completed workouts, newest first." : "No completed workouts match these filters.";
