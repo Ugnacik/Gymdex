@@ -1539,6 +1539,8 @@ function fillFromPrevious(form, previous) {
     form.dataset.assisted = "true";
     const label = form.elements.weight.labels?.[0]?.firstChild;
     if (label) label.textContent = "Assist kg ";
+    const name = form.elements.weight.getAttribute("aria-label");
+    if (name) form.elements.weight.setAttribute("aria-label", name.replace(/ weight in kilograms$/, " assistance in kilograms"));
   }
   form.elements.weight.value = weight === null ? "" : String(Math.abs(weight));
   form.elements.result.value = previous.previousResult;

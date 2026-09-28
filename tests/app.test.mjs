@@ -38,7 +38,9 @@ function setForm(setId, position) {
   formNodes.legend.textContent = `Set ${position}`;
   const form = Object.assign(node(), {
     isConnected: true, dataset: { setId: String(setId), entryId: '3' },
-    elements: { weight: Object.assign(node(), { value: '' }), result: { value: '', required: false },
+    elements: { weight: Object.assign(node(), { value: '', attributes: { 'aria-label': `Bench Press, set ${position} weight in kilograms` },
+      getAttribute(name) { return this.attributes[name]; }, setAttribute(name, value) { this.attributes[name] = value; } }),
+    result: { value: '', required: false },
       completed: Object.assign(node(), { checked: false }) },
     querySelector: (selector) => formNodes[selector],
     checkValidity: () => !form.elements.result.required || form.elements.result.value !== '',
@@ -764,6 +766,8 @@ test('tapping Last workout fills the set and saves it without completing it', as
     app.form.querySelector('.fill-previous').events.click();
     await settle();
     assert.equal(app.form.elements.weight.value, shown);
+    assert.equal(app.form.elements.weight.getAttribute('aria-label'),
+      `Bench Press, set 1 ${previous.weight < 0 ? 'assistance' : 'weight'} in kilograms`);
     assert.equal(app.form.elements.result.value, String(previous.result));
     assert.deepEqual(bodies, [{ weight: saved, result: previous.result, completed: false }]);
   }
