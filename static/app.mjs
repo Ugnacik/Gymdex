@@ -1339,7 +1339,7 @@ function renderPicker(query = "") {
   search.setSelectionRange(search.value.length, search.value.length);
   search.addEventListener("input", (event) => renderPickerResults(event.target.value));
   renderPickerResults(query);
-  document.querySelector("#close-picker").addEventListener("click", closePicker);
+  document.querySelector("#close-picker").addEventListener("click", () => closePicker());
 }
 
 function renderPickerResults(query) {
@@ -1422,7 +1422,7 @@ function renderCustomExerciseForm(query = "") {
       <button class="primary accent" type="submit">Create exercise</button>
     </form>`;
   sheet.querySelector("#back-to-picker").addEventListener("click", () => renderPicker(query));
-  sheet.querySelector("#close-picker").addEventListener("click", closePicker);
+  sheet.querySelector("#close-picker").addEventListener("click", () => closePicker());
   const equipment = [];
   const nameInput = sheet.querySelector('[name="name"]');
   // The typed Exercise name decides which suggestions are offered; see exerciseSuggestions().

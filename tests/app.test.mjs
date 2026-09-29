@@ -746,6 +746,25 @@ test('Change machine saves set drafts, then switches the exercise to the machine
   assert.equal(app.nodes['#toast'].textContent, 'Machine changed to Sled · Technogym · Upstairs.');
 });
 
+test('Close in the picker and the custom exercise form returns focus to Add exercise', async () => {
+  const app = await harness();
+  const { sheetNodes } = await openPickerSheet(app, suggestionCatalog);
+  // A browser passes the click event to the listener.
+  app.env.document.querySelector = ((querySelector) => (selector) => {
+    if (typeof selector !== 'string') throw new SyntaxError(`'${selector}' is not a valid selector`);
+    return querySelector(selector);
+  })(app.env.document.querySelector);
+  app.nodes['#close-picker'].events.click({ type: 'click' });
+  assert.equal(app.nodes['#picker'], undefined);
+  assert.equal(app.nodes['#open-picker'].focused, true);
+
+  await app.nodes['#open-picker'].events.click();
+  app.nodes['#open-picker'].focused = false;
+  app.nodes['#create-exercise'].events.click();
+  sheetNodes['#close-picker'].events.click({ type: 'click' });
+  assert.equal(app.nodes['#open-picker'].focused, true);
+});
+
 test('Change machine waits for a set that cannot be saved, and Cancel changes nothing', async () => {
   const app = await harness(storage(), { workout_exercises: [legPressEntry] });
   pickerSheet(app);
