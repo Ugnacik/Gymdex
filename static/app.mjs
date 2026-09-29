@@ -1391,6 +1391,11 @@ function variationChoices(variations) {
   return variations.length && !variations.some((value) => value.toLowerCase() === "standard") ? ["Standard"] : [];
 }
 
+// A blank Variation name becomes Standard, so Standard is suggested only while it is free.
+function variationPlaceholder(known) {
+  return known.variations.some((value) => value.toLowerCase() === "standard") ? "e.g. Wide grip" : "Standard";
+}
+
 // Names the typed Exercise's existing Variations under the Variation field, so a taken name is not retyped.
 function variationHelp(known, choices) {
   if (!known.variations.length) return "";
@@ -1428,7 +1433,7 @@ function renderCustomExerciseForm(query = "") {
   // The typed Exercise name decides which suggestions are offered; see exerciseSuggestions().
   let known = exerciseSuggestions(nameInput.value ?? query);
   const variation = new ChoiceField(sheet.querySelector("#variation-field"), { id: "variation-name", name: "variation_name",
-    title: "Variation", placeholder: "Standard", describedBy: "variation-help", options: variationChoices(known.variations) });
+    title: "Variation", placeholder: variationPlaceholder(known), describedBy: "variation-help", options: variationChoices(known.variations) });
   const help = sheet.querySelector("#variation-help");
   const showVariationHelp = () => {
     help.textContent = variationHelp(known, variation.options);
@@ -1441,6 +1446,7 @@ function renderCustomExerciseForm(query = "") {
     options: unadded(), onEnter: () => addEquipment() });
   nameInput.addEventListener("input", () => {
     known = exerciseSuggestions(nameInput.value);
+    variation.placeholder = variationPlaceholder(known);
     variation.setOptions(variationChoices(known.variations));
     showVariationHelp();
     entry.setOptions(unadded());
@@ -1585,7 +1591,7 @@ async function saveMachine(event, change, { manufacturer, label }) {
     closePicker(change.focus);
     await load();
     document.querySelector(change.focus)?.focus();
-    showToast(`Machine changed to ${configurationLabel(saved)}.`);
+    showToast(`Changed to ${configurationLabel(saved)}.`);
   } catch (error) {
     if (submit) submit.disabled = false;
     showToast(error.message);

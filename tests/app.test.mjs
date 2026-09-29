@@ -625,6 +625,8 @@ test('the custom exercise form offers the typed Exercise its variations and equi
   assert.equal(variationField.querySelector('#variation-name').hidden, false);
   assert.equal(help.hidden, false);
   assert.equal(help.textContent, 'Leg Press already has: Single Leg, Standard. Enter a new variation name.');
+  // A blank name would mean Standard, which is taken, so the placeholder no longer suggests it.
+  assert.match(variationField.innerHTML, /<input id="variation-name"[^>]*placeholder="e\.g\. Wide grip"/);
   type(variationField, 'variation-name', 'Wide');
   assert.deepEqual(optionValues(equipmentField, 'equipment-entry-choice'), ['Choose equipment', 'Barbell', 'Machine', 'Sled', 'Other…']);
   assert.doesNotMatch(equipmentField.innerHTML, /Eleiko|Technogym/);
@@ -657,6 +659,7 @@ test('the custom exercise form offers the typed Exercise its variations and equi
   name.value = 'Leg Pressing';
   name.events.input();
   assert.equal(help.hidden, true);
+  assert.match(variationField.innerHTML, /<input id="variation-name"[^>]*placeholder="Standard"/);
   assert.equal(variationField.querySelector('#variation-name-choice'), null);
 });
 
@@ -743,7 +746,7 @@ test('Change machine saves set drafts, then switches the exercise to the machine
   assert.equal(app.nodes['#picker'], undefined, 'the sheet closes');
   assert.match(app.nodes['#app'].innerHTML, /<p class="meta">Sled · Technogym · Upstairs<\/p>/);
   assert.match(app.nodes['#app'].innerHTML, /data-set-id="2"/);
-  assert.equal(app.nodes['#toast'].textContent, 'Machine changed to Sled · Technogym · Upstairs.');
+  assert.equal(app.nodes['#toast'].textContent, 'Changed to Sled · Technogym · Upstairs.');
 });
 
 test('Close in the picker and the custom exercise form returns focus to Add exercise', async () => {
