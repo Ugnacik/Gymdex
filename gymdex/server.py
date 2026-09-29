@@ -25,6 +25,19 @@ def text_field(payload: dict, name: str) -> str:
     return value
 
 
+# /api/manage/<segment>/<id> names a db item kind; db.MANAGED_KINDS decides what each supports.
+MANAGE_SEGMENTS = {
+    "gyms": "gym", "configurations": "configuration", "exercises": "exercise", "variations": "variation",
+}
+
+
+def manage_kind(parts: list[str], length: int) -> str | None:
+    """The item kind of a /api/manage/<segment>/<id>[/...] path with the given part count."""
+    if len(parts) == length and parts[:2] == ["api", "manage"]:
+        return MANAGE_SEGMENTS.get(parts[2])
+    return None
+
+
 def id_field(payload: dict, name: str) -> int:
     value = payload.get(name)
     if type(value) is not int or not 0 < value <= 2**63 - 1:
@@ -50,6 +63,8 @@ class GymdexHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.path == "/api/bootstrap":
             return self._with_db(lambda connection: db.bootstrap(connection))
+        if parsed.path == "/api/manage":
+            return self._with_db(lambda connection: db.manage_overview(connection))
         if parsed.path == "/api/history":
             query = parse_qs(parsed.query)
             return self._with_db(lambda connection: db.workout_history(
@@ -73,6 +88,12 @@ class GymdexHandler(BaseHTTPRequestHandler):
                 manufacturer=query["manufacturer"][0] if "manufacturer" in query else None,
                 label=query["label"][0] if "label" in query else None,
             ))
+        if parsed.path == "/api/routines":
+            try:
+                gym_id = int(parse_qs(parsed.query).get("gym_id", [""])[0])
+            except ValueError:
+                return self._json_error("A valid gym_id is required.", HTTPStatus.BAD_REQUEST)
+            return self._with_db(lambda connection: db.routines_for_gym(connection, gym_id))
         if parsed.path == "/api/export/workouts.csv":
             from gymdex.export import workout_csv
             with closing(db.connect(self.server.db_path)) as connection, connection:
@@ -86,7 +107,9 @@ class GymdexHandler(BaseHTTPRequestHandler):
                 gym_id = int(query.get("gym_id", [""])[0])
             except ValueError:
                 return self._json_error("A valid gym_id is required.", HTTPStatus.BAD_REQUEST)
-            return self._with_db(lambda connection: db.catalog_for_gym(connection, gym_id))
+            # Progress lists archived Variations too; the picker does not.
+            include_archived = query.get("include_archived", [""])[0] == "1"
+            return self._with_db(lambda connection: db.catalog_for_gym(connection, gym_id, include_archived))
         self._serve_static(parsed.path)
 
     def do_POST(self) -> None:
@@ -119,10 +142,37 @@ class GymdexHandler(BaseHTTPRequestHandler):
                 status=HTTPStatus.CREATED,
             )
 
+        if parsed.path == "/api/routines":
+            return self._with_db(
+                lambda connection: db.create_routine(
+                    connection, id_field(payload, "gym_id"), payload.get("name"), payload.get("exercises"),
+                ),
+                status=HTTPStatus.CREATED,
+            )
+
         parts = parsed.path.strip("/").split("/")
+        if len(parts) == 4 and parts[:2] == ["api", "routines"] and parts[3] == "start":
+            return self._with_db(
+                lambda connection: db.start_routine(connection, int(parts[2])),
+                status=HTTPStatus.CREATED,
+            )
+        if len(parts) == 4 and parts[:2] == ["api", "history"] and parts[3] == "routine":
+            return self._with_db(
+                lambda connection: db.save_workout_as_routine(connection, int(parts[2]), payload.get("name")),
+                status=HTTPStatus.CREATED,
+            )
+        kind = manage_kind(parts, 5)
+        if kind and parts[4] == "restore":
+            return self._with_db(lambda connection: db.restore_item(connection, kind, int(parts[3])))
         if len(parts) == 4 and parts[:2] == ["api", "history"] and parts[3] == "repeat":
             return self._with_db(
                 lambda connection: db.repeat_workout(connection, int(parts[2])),
+                status=HTTPStatus.CREATED,
+            )
+        if (len(parts) == 6 and parts[:2] == ["api", "history"]
+                and parts[3] == "exercises" and parts[5] == "sets"):
+            return self._with_db(
+                lambda connection: db.add_completed_set(connection, int(parts[2]), int(parts[4])),
                 status=HTTPStatus.CREATED,
             )
         if len(parts) == 4 and parts[:2] == ["api", "workout-exercises"] and parts[3] == "sets":
@@ -158,12 +208,47 @@ class GymdexHandler(BaseHTTPRequestHandler):
         active_set = len(parts) == 3 and parts[:2] == ["api", "sets"]
         history_set = (len(parts) == 5 and parts[:2] == ["api", "history"]
                        and parts[3] == "sets")
-        if not active_set and not history_set:
+        workout_exercise = len(parts) == 3 and parts[:2] == ["api", "workout-exercises"]
+        note = (len(parts) == 4 and parts[3] == "note"
+                and parts[1] in ("workouts", "workout-exercises") and parts[0] == "api")
+        kind = manage_kind(parts, 4)
+        routine = len(parts) == 3 and parts[:2] == ["api", "routines"]
+        configuration = (len(parts) == 6 and parts[:2] == ["api", "workouts"]
+                         and parts[3] == "exercises" and parts[5] == "configuration")
+        if not (active_set or history_set or workout_exercise or note or kind or routine or configuration):
             return self._json_error("Route not found.", HTTPStatus.NOT_FOUND)
         try:
             payload = self._read_json()
         except ValueError:
             return self._json_error("The request body must be a JSON object.", HTTPStatus.BAD_REQUEST)
+        if routine:
+            return self._with_db(lambda connection: db.update_routine(connection, int(parts[2]), payload))
+        if configuration:
+            try:
+                workout_id, exercise_id = int(parts[2]), int(parts[4])
+            except ValueError:
+                return self._json_error("Active workout exercise not found.", HTTPStatus.NOT_FOUND)
+            return self._with_db(lambda connection: db.change_workout_exercise_configuration(
+                connection, workout_id, exercise_id, text_field(payload, "equipment"),
+                text_field(payload, "manufacturer"), text_field(payload, "label"),
+            ))
+        if kind == "variation" and "equipment" in payload:
+            return self._with_db(lambda connection: db.set_variation_equipment(
+                connection, int(parts[3]), payload["equipment"],
+            ))
+        if kind:
+            return self._with_db(lambda connection: db.rename_item(
+                connection, kind, int(parts[3]), payload.get("name"),
+            ))
+        if note:
+            save_note = db.set_workout_note if parts[1] == "workouts" else db.set_workout_exercise_note
+            return self._with_db(lambda connection: save_note(
+                connection, int(parts[2]), payload.get("note"),
+            ))
+        if workout_exercise:
+            return self._with_db(lambda connection: db.move_workout_exercise(
+                connection, int(parts[2]), payload.get("position"),
+            ))
         if history_set:
             return self._with_db(lambda connection: db.correct_completed_set(
                 connection, int(parts[2]), int(parts[4]), payload,
@@ -172,8 +257,21 @@ class GymdexHandler(BaseHTTPRequestHandler):
 
     def do_DELETE(self) -> None:
         parts = urlparse(self.path).path.strip("/").split("/")
+        kind = manage_kind(parts, 4)
+        if kind:
+            return self._with_db(lambda connection: db.remove_item(connection, kind, int(parts[3])))
         if len(parts) == 3 and parts[:2] == ["api", "workouts"]:
             return self._with_db(lambda connection: db.cancel_workout(connection, int(parts[2])))
+        if len(parts) == 3 and parts[:2] == ["api", "routines"]:
+            return self._with_db(lambda connection: db.delete_routine(connection, int(parts[2])))
+        if len(parts) == 3 and parts[:2] == ["api", "workout-exercises"]:
+            return self._with_db(lambda connection: db.remove_workout_exercise(connection, int(parts[2])))
+        if len(parts) == 3 and parts[:2] == ["api", "history"]:
+            return self._with_db(lambda connection: db.delete_completed_workout(connection, int(parts[2])))
+        if len(parts) == 5 and parts[:2] == ["api", "history"] and parts[3] == "sets":
+            return self._with_db(lambda connection: db.delete_completed_set(
+                connection, int(parts[2]), int(parts[4]),
+            ))
         if len(parts) != 3 or parts[:2] != ["api", "sets"]:
             return self._json_error("Route not found.", HTTPStatus.NOT_FOUND)
         self._with_db(lambda connection: db.delete_set(connection, int(parts[2])))
@@ -186,6 +284,9 @@ class GymdexHandler(BaseHTTPRequestHandler):
             return self._json_error(str(error), HTTPStatus.BAD_REQUEST)
         except LookupError as error:
             return self._json_error(str(error), HTTPStatus.NOT_FOUND)
+        except OverflowError:
+            # An id beyond SQLite's 64-bit INTEGER range cannot name any row.
+            return self._json_error("Item not found.", HTTPStatus.NOT_FOUND)
         except RuntimeError as error:
             return self._json_error(str(error), HTTPStatus.CONFLICT)
         except sqlite3.IntegrityError:
@@ -235,8 +336,10 @@ class GymdexHandler(BaseHTTPRequestHandler):
             path = STATIC / "index.html"
         body = path.read_bytes()
         mime_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        if mime_type.startswith("text/") or mime_type.endswith(("json", "javascript")):
+            mime_type += "; charset=utf-8"
         self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", f"{mime_type}; charset=utf-8")
+        self.send_header("Content-Type", mime_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-cache")
         self.send_header("X-Content-Type-Options", "nosniff")

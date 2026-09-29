@@ -46,6 +46,12 @@ export class DraftStore {
     return draft;
   }
 
+  // Note drafts share the workout's key space as "note:<target>", so removeWorkout clears them too.
+  getNote(workoutId, key) {
+    const draft = this.read(this.key(workoutId, key));
+    return draft && typeof draft.note === "string" ? draft : null;
+  }
+
   put(workoutId, setId, values) {
     const draft = { ...values, revision: `${Date.now()}-${Math.random()}` };
     this.write(this.key(workoutId, setId), draft);

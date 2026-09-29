@@ -11,7 +11,7 @@ function deferred() {
   const promise = new Promise((done) => { resolve = done; });
   return { promise, resolve };
 }
-function fixture(drafts = new DraftStore(() => disk)) {
+function fixture(drafts = new DraftStore(() => disk), initial = data()) {
   const timers = new Map();
   let clock = 0;
   const requests = [];
@@ -19,7 +19,7 @@ function fixture(drafts = new DraftStore(() => disk)) {
     if (options.method === 'PUT') return { id: 2, ...JSON.parse(options.body) };
     return { ok: true };
   } };
-  const editor = new WorkoutEditor({ data: data(), drafts,
+  const editor = new WorkoutEditor({ data: initial, drafts,
     request: (path, options) => { requests.push({ path, ...options }); return env.request(path, options); },
     schedule: (callback) => { timers.set(++clock, callback); return clock; },
     clear: (id) => timers.delete(id), online: () => env.online,
@@ -168,12 +168,35 @@ test('finish waits for the latest revision and freezes edits, retries and duplic
 test('declined or failed terminal requests leave the workout editable', async () => {
   for (const operation of ['finish', 'cancel']) {
     const { editor, env } = fixture();
-    assert.equal(await editor[operation](() => false), false);
+    assert.equal(await editor[operation](async () => false), false);
     env.request = async () => { throw new Error('Offline'); };
     await assert.rejects(editor[operation](), /Offline/);
     assert.equal(editor.busy, false);
     assert.equal(editor.data.active_workout.id, 1);
     assert.equal(editor.edit(2, values), true);
+  }
+});
+
+test('finish and cancel hold the workout busy while the confirmation sheet waits for an answer', async () => {
+  for (const operation of ['finish', 'cancel']) {
+    for (const accepted of [false, true]) {
+      const { editor, requests, timers } = fixture();
+      editor.edit(2, values);
+      const answer = deferred();
+      let savedBeforeAsking;
+      const ending = editor[operation](() => { savedBeforeAsking = requests.length; return answer.promise; });
+      await new Promise((resolve) => setImmediate(resolve));
+      // Finish saves drafts before asking; cancel asks first and discards them.
+      assert.equal(savedBeforeAsking, operation === 'finish' ? 1 : 0);
+      assert.equal(editor.busy, true);
+      assert.equal(timers.size, 0);
+      assert.equal(editor.edit(2, { ...values, result: '9' }), false);
+      assert.equal(await editor.finish(), false);
+      answer.resolve(accepted);
+      assert.equal(await ending, accepted);
+      assert.equal(editor.busy, false);
+      assert.equal(requests.some(({ method }) => method === 'DELETE' || method === 'POST'), accepted);
+    }
   }
 });
 
@@ -258,4 +281,137 @@ test('failed removal preserves drafts, and finish waits for an in-flight removal
   await removal;
   assert.equal(await finish, true);
   assert.deepEqual(calls, ['/api/sets/2', '/api/workouts/1/complete']);
+});
+
+test('removing a set applies the renumbered positions and keeps the other sets\' drafts', async () => {
+  const threeSets = { active_workout: { id: 1, gym_id: 1 }, gyms: [], workout_exercises: [{ id: 3, sets: [
+    { id: 2, position: 1 }, { id: 5, position: 2 }, { id: 6, position: 3 }] }] };
+  const { editor, env, drafts, requests } = fixture(undefined, threeSets);
+  editor.edit(6, values);
+  env.request = async (path, options) => options.method === 'DELETE'
+    ? { ok: true, sets: [{ id: 2, position: 1 }, { id: 6, position: 2 }] }
+    : { id: 6, position: 2, ...JSON.parse(options.body) };
+  assert.equal(await editor.remove(5), true);
+  const positions = (entry) => entry.sets.map((set) => [set.id, set.position]);
+  assert.deepEqual(positions(editor.data.workout_exercises[0]), [[2, 1], [6, 2]]);
+  assert.deepEqual(positions(drafts.cachedWorkout().workout_exercises[0]), [[2, 1], [6, 2]]);
+  // Drafts are keyed by set id, so the renumbered set keeps its draft and saves to its own id.
+  assert.equal(editor.status(6).values.result, '8');
+  assert.equal(await editor.save(6), true);
+  assert.deepEqual(requests.map(({ method, path }) => `${method} ${path}`), ['DELETE /api/sets/5', 'PUT /api/sets/6']);
+  assert.deepEqual(positions(editor.data.workout_exercises[0]), [[2, 1], [6, 2]]);
+});
+
+const blank = (id) => ({ id, weight: null, result: null, completed: false });
+const twoExercises = () => ({ active_workout: { id: 1, gym_id: 1 }, gyms: [], workout_exercises: [
+  { id: 3, position: 1, sets: [blank(2)] }, { id: 4, position: 2, sets: [blank(5), blank(6)] }] });
+const echoSets = async (path, options) => options.method === 'PUT' && path.startsWith('/api/sets/')
+  ? { id: Number(path.split('/').pop()), ...JSON.parse(options.body) } : { ok: true };
+
+test('removing an exercise saves other drafts first and discards its own for good', async () => {
+  const { editor, env, drafts, requests, timers } = fixture(undefined, twoExercises());
+  env.request = echoSets;
+  editor.edit(2, values);
+  editor.edit(5, { ...values, result: '' });
+  editor.edit(6, values);
+  assert.equal(await editor.removeExercise(4, async () => false), false);
+  assert.deepEqual(requests, []);
+  assert.equal(timers.size, 3, 'declining keeps autosave queued');
+  assert.equal(await editor.removeExercise(4), true);
+  assert.deepEqual(requests.map(({ method, path }) => `${method} ${path}`),
+    ['PUT /api/sets/2', 'DELETE /api/workout-exercises/4']);
+  assert.deepEqual(editor.data.workout_exercises.map((entry) => [entry.id, entry.position]), [[3, 1]]);
+  assert.deepEqual(drafts.cachedWorkout().workout_exercises.map((entry) => entry.id), [3]);
+  assert.equal(drafts.get(1, 5), null);
+  assert.equal(drafts.get(1, 6), null);
+  assert.equal(editor.status(5), null);
+  assert.equal(editor.pending, false);
+  await editor.retry();
+  assert.equal(requests.length, 2);
+  assert.equal(editor.busy, false);
+});
+
+test('moving an exercise saves drafts first and applies the server order', async () => {
+  const { editor, env, drafts, requests } = fixture(undefined, twoExercises());
+  editor.edit(2, { ...values, result: '' });
+  assert.equal(await editor.moveExercise(4, 1), false, 'an invalid draft must be corrected first');
+  assert.deepEqual(requests, []);
+  editor.edit(2, values);
+  env.request = async (path, options) => path === '/api/workout-exercises/4'
+    ? { workout_exercises: [{ id: 4, position: 1 }, { id: 3, position: 2 }] } : echoSets(path, options);
+  assert.equal(await editor.moveExercise(4, 1), true);
+  assert.deepEqual(requests.map(({ method, path }) => `${method} ${path}`),
+    ['PUT /api/sets/2', 'PUT /api/workout-exercises/4']);
+  assert.deepEqual(JSON.parse(requests[1].body), { position: 1 });
+  assert.deepEqual(editor.data.workout_exercises.map((entry) => [entry.id, entry.position]), [[4, 1], [3, 2]]);
+  assert.deepEqual(drafts.cachedWorkout().workout_exercises.map((entry) => entry.id), [4, 3]);
+  env.request = async () => { throw new Error('Offline'); };
+  await assert.rejects(editor.moveExercise(3, 1), /Offline/);
+  await assert.rejects(editor.removeExercise(3), /Offline/);
+  assert.deepEqual(editor.data.workout_exercises.map((entry) => entry.id), [4, 3]);
+  assert.equal(editor.busy, false);
+  assert.equal(editor.edit(2, values), true);
+});
+
+const noted = () => ({ active_workout: { id: 1, gym_id: 1, note: '' }, gyms: [], workout_exercises: [
+  { id: 3, position: 1, note: 'Old', sets: [blank(2)] }, { id: 4, position: 2, note: '', sets: [blank(5)] }] });
+const echoNotes = async (path, options) => path.endsWith('/note')
+  ? { id: Number(path.split('/')[3]), note: JSON.parse(options.body).note.trim() } : echoSets(path, options);
+
+test('a note is kept on the phone, restores in another editor, and autosaves after a typing pause', async () => {
+  const { editor, drafts, timers, requests, env } = fixture(undefined, noted());
+  env.request = echoNotes;
+  assert.deepEqual(editor.noteStatus('exercise:3'), { note: 'Old', dirty: false, saving: false, blocked: false, message: '', error: false });
+  assert.equal(editor.editNote('workout', 'Felt strong '), true);
+  assert.equal(editor.pending, true);
+  const restored = fixture(drafts, noted()).editor;
+  assert.equal(restored.noteStatus('workout').note, 'Felt strong ');
+  assert.equal(restored.noteStatus('workout').dirty, true);
+  assert.equal(timers.size, 1);
+  await [...timers.values()][0]();
+  assert.deepEqual(requests.map(({ method, path, body }) => [method, path, JSON.parse(body)]),
+    [['PUT', '/api/workouts/1/note', { note: 'Felt strong ' }]]);
+  assert.equal(editor.noteStatus('workout').dirty, false);
+  assert.equal(editor.noteStatus('workout').note, 'Felt strong');
+  assert.equal(editor.pending, false);
+  assert.equal(drafts.cachedWorkout().active_workout.note, 'Felt strong');
+  assert.equal(fixture(drafts, noted()).editor.noteStatus('workout').dirty, false);
+  editor.editNote('exercise:4', 'Seat 4');
+  await editor.saveNote('exercise:4');
+  assert.deepEqual(requests.at(-1).path, '/api/workout-exercises/4/note');
+  assert.equal(editor.data.workout_exercises[1].note, 'Seat 4');
+  assert.equal(editor.noteStatus('exercise:99'), null);
+});
+
+test('a note typed without signal retries on reconnect and is saved before finishing', async () => {
+  const { editor, env, requests } = fixture(undefined, noted());
+  env.request = async () => { throw new Error('Cannot reach the server.'); };
+  editor.editNote('exercise:3', 'Grip slipped');
+  assert.equal(await editor.saveNote('exercise:3'), false);
+  assert.match(editor.noteStatus('exercise:3').message, /Will retry automatically/);
+  assert.equal(editor.noteStatus('exercise:3').dirty, true);
+  env.request = echoNotes;
+  await editor.retry();
+  assert.equal(editor.noteStatus('exercise:3').dirty, false);
+  assert.equal(editor.data.workout_exercises[0].note, 'Grip slipped');
+  editor.editNote('workout', 'Good session');
+  assert.equal(await editor.finish(), true);
+  assert.deepEqual(requests.slice(-2).map(({ method, path }) => `${method} ${path}`),
+    ['PUT /api/workouts/1/note', 'POST /api/workouts/1/complete']);
+});
+
+test('a rejected note waits for an edit, and removing an exercise discards its note draft', async () => {
+  const { editor, env, drafts, requests } = fixture(undefined, noted());
+  env.request = async () => { throw Object.assign(new Error('Notes must be 1000 characters or fewer.'), { status: 400 }); };
+  editor.editNote('exercise:4', 'Too long');
+  assert.equal(await editor.saveNote('exercise:4'), false);
+  assert.equal(editor.noteStatus('exercise:4').blocked, true);
+  await editor.retry();
+  assert.equal(requests.length, 1);
+  env.request = echoNotes;
+  assert.equal(await editor.removeExercise(4), true);
+  assert.deepEqual(requests.slice(1).map(({ method, path }) => `${method} ${path}`), ['DELETE /api/workout-exercises/4']);
+  assert.equal(editor.noteStatus('exercise:4'), null);
+  assert.equal(fixture(drafts, noted()).editor.noteStatus('exercise:4').dirty, false);
+  assert.equal(editor.pending, false);
 });

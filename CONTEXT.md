@@ -24,6 +24,10 @@ _Avoid_: Gear, variation
 The collection of Exercises available to add to a Workout.
 _Avoid_: Exercise library
 
+**Custom Exercise Variation**:
+An Exercise Variation created by the user, not supplied by the starter Exercise Catalog.
+_Avoid_: User exercise
+
 **Muscle Group**:
 A body area that an Exercise Variation is intentionally selected to train. Incidental muscle involvement does not qualify a Variation for that Muscle Group.
 _Avoid_: Category, body part
@@ -31,6 +35,21 @@ _Avoid_: Category, body part
 **Tracking Type**:
 The kind of result recorded for each Set of an Exercise Variation. The initial Tracking Types are Repetitions and Duration.
 _Avoid_: Exercise type, measurement mode
+
+**Gym**:
+A place where the user trains. Each Workout happens at exactly one Gym.
+
+**Exercise Configuration**:
+An Exercise Variation with one Equipment value and an optional manufacturer and machine label, remembered for one Gym when first added to a Workout there. The most recently used ones are offered as Recent.
+_Avoid_: Profile, machine setup, recent entry
+
+**Archived**:
+The state of a used Gym, Exercise Configuration or Custom Exercise Variation that is no longer offered for new Workouts but remains in everything already recorded. It can be restored. Never-used items are deleted instead.
+_Avoid_: Hidden, inactive, soft-deleted
+
+**Routine**:
+A saved plan for one Gym: an ordered list of Exercise Configurations, each with a number of Sets to start with. It stores no Weights, Repetitions, Durations or Notes. Starting a Routine creates an Active Workout with that many empty Sets per Workout Exercise; Workouts do not refer back to it.
+_Avoid_: Template, plan, program
 
 **Workout**:
 A time-bounded record of performed exercises and their sets.
@@ -40,11 +59,15 @@ _Avoid_: Training, session
 The single Workout currently being recorded. At most one Active Workout may exist.
 
 **Completed Workout**:
-A finished Workout retained in history. Its recorded details may still be corrected.
+A finished Workout retained in history. Its recorded Sets may still be corrected, added, or deleted, and the whole Completed Workout may be deleted. New Workout Exercises cannot be added to it.
 
 **Workout Exercise**:
 A particular Exercise Variation and one relevant Equipment value recorded at one position within a Workout. The same combination may appear more than once, and each occurrence preserves the details used in that Workout even when the catalog changes later.
 _Avoid_: Archived Exercise, logged exercise
+
+**Note**:
+Optional free text attached to one Workout or one Workout Exercise, recording what its sets do not, such as how the session felt or why a load dropped. A Note describes only that occurrence and is never copied to another Workout.
+_Avoid_: Comment, remark, memo
 
 **Set**:
 A recorded effort of one Exercise Variation within a Workout. A Set records the result required by the Variation's Tracking Type, may record weight, and counts as performed only after the user marks it complete.

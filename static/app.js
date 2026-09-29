@@ -1,4 +1,7 @@
 import { createApp } from "./app.mjs";
+import { followVisualViewport } from "./keyboard.mjs";
+
+followVisualViewport({ window, document });
 
 createApp({
   window,
@@ -8,4 +11,5 @@ createApp({
   setTimeout: window.setTimeout.bind(window),
   clearTimeout: window.clearTimeout.bind(window),
   setInterval: window.setInterval.bind(window),
+  clearInterval: window.clearInterval.bind(window),
 }).load();

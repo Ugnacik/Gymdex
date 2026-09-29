@@ -1,8 +1,133 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from gymdex import db
+
+
+# The starter Exercise Catalog as it shipped before it was extended.
+OLD_CATALOG = (
+    ("Bench Press", "Standard", "repetitions", ("Barbell", "Dumbbell", "Machine")),
+    ("Bench Press", "Incline", "repetitions", ("Barbell", "Dumbbell", "Machine")),
+    ("Squat", "Back Squat", "repetitions", ("Barbell", "Machine")),
+    ("Deadlift", "Conventional", "repetitions", ("Barbell",)),
+    ("Lat Pulldown", "Standard", "repetitions", ("Machine", "Cable")),
+    ("Row", "Seated", "repetitions", ("Cable", "Machine")),
+    ("Shoulder Press", "Seated", "repetitions", ("Dumbbell", "Machine")),
+    ("Biceps Curl", "Standing", "repetitions", ("Dumbbell", "Barbell", "Cable")),
+    ("Triceps Pushdown", "Standard", "repetitions", ("Cable", "Rope")),
+    ("Plank", "Front Plank", "duration", ("Bodyweight",)),
+    ("Pull-up", "Assisted", "repetitions", ("Machine",), True),
+    ("Dip", "Assisted", "repetitions", ("Machine",), True),
+)
+
+
+class CatalogUpgradeTests(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.path = Path(self.temp_dir.name) / "old.sqlite3"
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def catalog(self, connection, gym_id):
+        return {
+            (item["exercise_name"], item["variation_name"]): item
+            for item in db.catalog_for_gym(connection, gym_id)["catalog"]
+        }
+
+    def test_startup_adds_new_catalog_entries_without_disturbing_existing_ones(self):
+        connection = db.connect(self.path)
+        with mock.patch.object(db, "CATALOG", OLD_CATALOG):
+            db.initialize(connection)
+        gym = db.create_gym(connection, "Home")
+        leg_press = db.create_exercise(
+            connection, "Leg Press", "Standard", "repetitions", ["Plate-loaded"]
+        )
+        hip_thrust = db.create_exercise(
+            connection, "hip thrust", "standard", "repetitions", ["Smith Machine"]
+        )
+        bench = self.catalog(connection, gym["id"])[("Bench Press", "Standard")]
+        workout = db.start_workout(connection, gym["id"])
+        db.add_workout_exercise(connection, workout["id"], bench["id"], "Barbell")
+        db.complete_workout(connection, workout["id"])
+        before = self.catalog(connection, gym["id"])
+        connection.close()
+
+        for _ in range(2):
+            connection = db.connect(self.path)
+            db.initialize(connection)
+            after = self.catalog(connection, gym["id"])
+            connection.close()
+
+            for key, item in before.items():
+                with self.subTest(kept=key):
+                    self.assertEqual(after[key], item)
+            self.assertEqual(after[("Pull-up", "Standard")]["equipment"], ["Bodyweight"])
+            self.assertEqual(after[("Leg Curl", "Lying")]["equipment"], ["Machine"])
+            self.assertEqual(
+                [item["id"] for item in after.values() if item["exercise_name"] == "Leg Press"],
+                [leg_press["id"]],
+            )
+            self.assertEqual(after[("Leg Press", "Standard")]["equipment"], ["Plate-loaded"])
+            self.assertEqual(
+                [item["id"] for item in after.values()
+                 if item["exercise_name"].casefold() == "hip thrust"],
+                [hip_thrust["id"]],
+            )
+            self.assertEqual(len(after), len(db.CATALOG))
+
+    def test_version_three_database_gains_archive_columns_and_marks_custom_variations(self):
+        connection = db.connect(self.path)
+        with mock.patch.object(db, "CATALOG", OLD_CATALOG):
+            db.initialize(connection)
+        # Created before Leg Press was a starter entry; seeding later skips it (NOCASE match).
+        early = db.create_exercise(connection, "leg press", "standard", "repetitions", ["Sled"])
+        db.initialize(connection)
+        custom = db.create_exercise(connection, "Bench Press", "Close Grip", "repetitions", ["Barbell"])
+        gym = db.create_gym(connection, "Home")
+        workout = db.start_workout(connection, gym["id"])
+        db.add_workout_exercise(connection, workout["id"], custom["id"], "Barbell")
+        db.complete_workout(connection, workout["id"])
+        # A version 3 database has none of the migration 4 columns.
+        for table in ("gyms", "gym_exercise_profiles", "exercise_variations"):
+            connection.execute(f"ALTER TABLE {table} DROP COLUMN archived_at")
+        connection.execute("ALTER TABLE exercise_variations DROP COLUMN custom")
+        connection.execute("PRAGMA user_version = 3")
+        connection.commit()
+
+        db.initialize(connection)
+        db.initialize(connection)
+
+        self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 5)
+        for table in ("gyms", "gym_exercise_profiles", "exercise_variations"):
+            with self.subTest(table=table):
+                # Nothing is archived after the upgrade.
+                self.assertEqual(connection.execute(
+                    f"SELECT COUNT(*) FROM {table} WHERE archived_at IS NOT NULL"
+                ).fetchone()[0], 0)
+        custom_ids = {row["id"] for row in connection.execute(
+            "SELECT id FROM exercise_variations WHERE custom = 1"
+        )}
+        # Only the variation outside the starter catalog is custom; the early lowercase
+        # Leg Press matches a starter entry case-insensitively and counts as catalog.
+        self.assertEqual(custom_ids, {custom["id"]})
+        self.assertNotIn(early["id"], custom_ids)
+        self.assertEqual(db.bootstrap(connection)["gyms"], [{"id": gym["id"], "name": "Home"}])
+        self.assertEqual(db.workout_history(connection)["workouts"][0]["id"], workout["id"])
+        connection.close()
+
+    def test_new_databases_mark_only_created_variations_as_custom(self):
+        connection = db.connect(self.path)
+        db.initialize(connection)
+        created = db.create_exercise(connection, "Sled Push", "", "duration", ["Sled"])
+        custom_ids = [row["id"] for row in connection.execute(
+            "SELECT id FROM exercise_variations WHERE custom = 1"
+        )]
+        self.assertEqual(custom_ids, [created["id"]])
+        self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 5)
+        connection.close()
 
 
 class DatabaseTests(unittest.TestCase):
@@ -53,6 +178,56 @@ class DatabaseTests(unittest.TestCase):
         catalog = db.catalog_for_gym(self.connection, gym["id"])["catalog"]
         curl = next(item for item in catalog if item["exercise_name"] == "Biceps Curl")
         self.assertEqual(curl["equipment"], ["Dumbbell", "Barbell", "Cable"])
+
+    def test_starter_catalog_offers_common_movements_with_relevant_equipment(self):
+        gym = db.create_gym(self.connection, "Home")
+        catalog = {
+            (item["exercise_name"], item["variation_name"]): item
+            for item in db.catalog_for_gym(self.connection, gym["id"])["catalog"]
+        }
+        expected = {
+            ("Pull-up", "Standard"): ["Bodyweight"],
+            ("Dip", "Standard"): ["Bodyweight"],
+            ("Push-up", "Standard"): ["Bodyweight"],
+            ("Leg Press", "Standard"): ["Machine"],
+            ("Leg Curl", "Seated"): ["Machine"],
+            ("Leg Curl", "Lying"): ["Machine"],
+            ("Leg Extension", "Standard"): ["Machine"],
+            ("Lunge", "Standard"): ["Dumbbell", "Barbell", "Bodyweight"],
+            ("Deadlift", "Romanian"): ["Barbell", "Dumbbell"],
+            ("Hip Thrust", "Standard"): ["Barbell", "Machine"],
+            ("Lateral Raise", "Standard"): ["Dumbbell", "Cable", "Machine"],
+            ("Face Pull", "Standard"): ["Cable"],
+            ("Calf Raise", "Standing"): ["Machine", "Bodyweight", "Dumbbell"],
+            ("Calf Raise", "Seated"): ["Machine"],
+            ("Chest Fly", "Standard"): ["Machine", "Cable", "Dumbbell"],
+            ("Crunch", "Standard"): ["Bodyweight", "Cable", "Machine"],
+            ("Leg Raise", "Hanging"): ["Bodyweight"],
+        }
+        for key, equipment in expected.items():
+            with self.subTest(exercise=key):
+                self.assertIn(key, catalog)
+                self.assertEqual(catalog[key]["equipment"], equipment)
+                self.assertEqual(catalog[key]["tracking_type"], "repetitions")
+                self.assertEqual(catalog[key]["assisted"], 0)
+
+    def test_bodyweight_variation_records_optional_added_load(self):
+        gym = db.create_gym(self.connection, "Home")
+        pull_up = next(
+            item for item in db.catalog_for_gym(self.connection, gym["id"])["catalog"]
+            if (item["exercise_name"], item["variation_name"]) == ("Pull-up", "Standard")
+        )
+        workout = db.start_workout(self.connection, gym["id"])
+        db.add_workout_exercise(self.connection, workout["id"], pull_up["id"], "Bodyweight")
+        set_id = db.bootstrap(self.connection)["workout_exercises"][0]["sets"][0]["id"]
+        unloaded = db.update_set(
+            self.connection, set_id, {"weight": None, "result": 8, "completed": True}
+        )
+        loaded = db.update_set(
+            self.connection, set_id, {"weight": 10, "result": 8, "completed": True}
+        )
+        self.assertIsNone(unloaded["weight"])
+        self.assertEqual(loaded["weight"], 10)
 
     def test_recent_profile_is_reused_in_one_operation(self):
         gym = db.create_gym(self.connection, "Main Gym")

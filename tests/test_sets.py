@@ -74,17 +74,101 @@ class SetTests(unittest.TestCase):
         self.save(item, result=None, weight=None, completed=False)
         self.assertIsNone(self.first_set()['result'])
 
-    def test_set_order_removal_and_missing_ids(self):
+    def test_removing_a_set_renumbers_the_remaining_sets_and_missing_ids_are_not_found(self):
+        first = self.first_set()
         second = db.add_set(self.connection, self.entry['id'])
         third = db.add_set(self.connection, self.entry['id'])
-        db.delete_set(self.connection, second['id'])
+        # Like history, the remaining sets close the gap, and the new positions are returned.
+        self.assertEqual(db.delete_set(self.connection, second['id']), {
+            'ok': True, 'sets': [{'id': first['id'], 'position': 1}, {'id': third['id'], 'position': 2}],
+        })
         fourth = db.add_set(self.connection, self.entry['id'])
-        self.assertEqual([s['position'] for s in db.sets_for_exercise(self.connection, self.entry['id'])], [1, 3, 4])
+        self.assertEqual([(s['id'], s['position']) for s in db.sets_for_exercise(self.connection, self.entry['id'])],
+                         [(first['id'], 1), (third['id'], 2), (fourth['id'], 3)])
         self.assertNotEqual(fourth['id'], second['id'])
         for action in [lambda: db.add_set(self.connection, 999), lambda: db.delete_set(self.connection, second['id']), lambda: self.save(second)]:
             with self.assertRaises(LookupError):
                 action()
-        self.assertEqual(third['position'], 3)
+
+    def test_added_set_copies_the_set_above_without_completing_it(self):
+        self.save(self.first_set(), result=8, weight=42.5, completed=True)
+        last = db.add_set(self.connection, self.entry['id'])
+        self.save(last, result=6, weight=40, completed=False)
+        added = db.add_set(self.connection, self.entry['id'])
+        self.assertEqual((added['position'], added['weight'], added['result'], added['completed']), (3, 40, 6, 0))
+        self.assertEqual(db.sets_for_exercise(self.connection, self.entry['id'])[2], added)
+        plank = self.add_exercise(self.plank, 'Bodyweight')
+        self.save(self.first_set(plank), result=60, weight=None)
+        copied = db.add_set(self.connection, plank['id'])
+        self.assertEqual((copied['weight'], copied['result'], copied['completed']), (None, 60, 0))
+
+    def test_added_set_copies_assisted_counterweight_as_negative(self):
+        catalog = db.catalog_for_gym(self.connection, self.gym['id'])['catalog']
+        pull_up = next(v for v in catalog if v['exercise_name'] == 'Pull-up' and v['variation_name'] == 'Assisted')
+        entry = self.add_exercise(pull_up, 'Machine')
+        self.save(self.first_set(entry), result=8, weight=25)
+        self.assertEqual(db.add_set(self.connection, entry['id'])['weight'], -25)
+
+    def test_added_set_after_removing_every_set_starts_empty(self):
+        self.save(self.first_set())
+        db.delete_set(self.connection, self.first_set()['id'])
+        added = db.add_set(self.connection, self.entry['id'])
+        self.assertEqual((added['position'], added['weight'], added['result'], added['completed']), (1, None, None, 0))
+
+    def test_removing_workout_exercise_deletes_its_sets_and_closes_the_gap(self):
+        self.save(self.first_set())
+        middle = self.add_exercise(self.plank, 'Bodyweight')
+        db.add_set(self.connection, middle['id'])
+        last = self.add_exercise(self.press, 'Dumbbell')
+        self.assertEqual(db.remove_workout_exercise(self.connection, middle['id']), {'ok': True})
+        entries = db.bootstrap(self.connection)['workout_exercises']
+        self.assertEqual([(e['id'], e['position']) for e in entries], [(self.entry['id'], 1), (last['id'], 2)])
+        self.assertEqual(entries[0]['sets'][0]['result'], 8)
+        self.assertEqual(db.sets_for_exercise(self.connection, middle['id']), [])
+        self.assertEqual(self.add_exercise(self.plank, 'Bodyweight')['position'], 3)
+
+    def test_moving_workout_exercise_shifts_the_others(self):
+        middle = self.add_exercise(self.plank, 'Bodyweight')
+        last = self.add_exercise(self.press, 'Dumbbell')
+        order = lambda: [e['id'] for e in db.bootstrap(self.connection)['workout_exercises']]
+        moved = db.move_workout_exercise(self.connection, last['id'], 1)
+        self.assertEqual(moved, {'workout_exercises': [
+            {'id': last['id'], 'position': 1}, {'id': self.entry['id'], 'position': 2},
+            {'id': middle['id'], 'position': 3}]})
+        db.move_workout_exercise(self.connection, last['id'], 2)
+        self.assertEqual(order(), [self.entry['id'], last['id'], middle['id']])
+        db.move_workout_exercise(self.connection, last['id'], 2)
+        self.assertEqual(order(), [self.entry['id'], last['id'], middle['id']])
+        for position in [0, 4, -1, True, 1.0, '2', None]:
+            with self.subTest(position=position), self.assertRaises(ValueError):
+                db.move_workout_exercise(self.connection, last['id'], position)
+        self.assertEqual(order(), [self.entry['id'], last['id'], middle['id']])
+
+    def test_completed_workout_rejects_exercise_removal_and_reordering(self):
+        second = self.add_exercise(self.plank, 'Bodyweight')
+        db.complete_workout(self.connection, self.workout['id'])
+        for action in [lambda: db.remove_workout_exercise(self.connection, second['id']),
+                       lambda: db.move_workout_exercise(self.connection, second['id'], 1),
+                       lambda: db.remove_workout_exercise(self.connection, 999)]:
+            with self.assertRaises(LookupError):
+                action()
+        detail = db.completed_workout(self.connection, self.workout['id'])
+        self.assertEqual([e['id'] for e in detail['workout_exercises']], [self.entry['id'], second['id']])
+
+    def test_deletion_and_renumbering_helpers_work_on_completed_workouts(self):
+        second = self.add_exercise(self.plank, 'Bodyweight')
+        third = self.add_exercise(self.press, 'Dumbbell')
+        sets = [self.first_set(third)] + [db.add_set(self.connection, third['id']) for _ in range(3)]
+        db.complete_workout(self.connection, self.workout['id'])
+        with self.connection:
+            db.delete_workout_exercise(self.connection, second['id'])
+            self.connection.execute('DELETE FROM workout_sets WHERE id = ?', (sets[1]['id'],))
+            db.renumber_positions(self.connection, 'workout_sets', third['id'])
+        detail = db.completed_workout(self.connection, self.workout['id'])
+        self.assertEqual([(e['id'], e['position']) for e in detail['workout_exercises']],
+                         [(self.entry['id'], 1), (third['id'], 2)])
+        self.assertEqual([(s['id'], s['position']) for s in detail['workout_exercises'][1]['sets']],
+                         [(sets[0]['id'], 1), (sets[2]['id'], 2), (sets[3]['id'], 3)])
 
     def test_completed_workout_rejects_set_mutations(self):
         item = self.first_set()
@@ -115,6 +199,38 @@ class SetTests(unittest.TestCase):
         self.add_exercise(self.press, 'Barbell')
         self.assertEqual(db.bootstrap(self.connection)['workout_exercises'][0]['previous_sets'], [])
 
+    def finish_with_completed_sets(self, count, entry=None):
+        entry = entry or self.entry
+        self.save(self.first_set(entry), result=8, weight=40)
+        for result in range(7, 8 - count, -1):
+            self.save(db.add_set(self.connection, entry['id']), result=result, weight=40)
+        db.complete_workout(self.connection, self.workout['id'])
+        self.workout = db.start_workout(self.connection, self.gym['id'])
+
+    def test_added_exercise_gets_one_empty_slot_per_set_of_last_matching_workout(self):
+        self.finish_with_completed_sets(3)
+        entry = self.add_exercise(self.press, 'Barbell')
+        slots = db.sets_for_exercise(self.connection, entry['id'])
+        self.assertEqual([(s['position'], s['weight'], s['result'], s['completed']) for s in slots],
+                         [(1, None, None, 0), (2, None, None, 0), (3, None, None, 0)])
+
+    def test_added_exercise_slots_only_count_the_same_gym_equipment_and_machine(self):
+        self.finish_with_completed_sets(3)
+        self.assertEqual(len(db.sets_for_exercise(self.connection, self.add_exercise(self.press, 'Dumbbell')['id'])), 1)
+        self.assertEqual(len(db.sets_for_exercise(self.connection, self.add_exercise(self.press, 'Barbell', 'Different', 'Machine')['id'])), 1)
+        db.cancel_workout(self.connection, self.workout['id'])
+        other = db.create_gym(self.connection, 'Other gym')
+        self.workout = db.start_workout(self.connection, other['id'])
+        self.assertEqual(len(db.sets_for_exercise(self.connection, self.add_exercise(self.press, 'Barbell')['id'])), 1)
+
+    def test_added_exercise_without_completed_history_gets_one_empty_slot(self):
+        self.save(db.add_set(self.connection, self.entry['id']), result=5, completed=False)
+        db.complete_workout(self.connection, self.workout['id'])
+        self.workout = db.start_workout(self.connection, self.gym['id'])
+        slots = db.sets_for_exercise(self.connection, self.add_exercise(self.press, 'Barbell')['id'])
+        self.assertEqual([(s['weight'], s['result'], s['completed']) for s in slots], [(None, None, 0)])
+        self.assertEqual(len(db.sets_for_exercise(self.connection, self.add_exercise(self.plank, 'Bodyweight')['id'])), 1)
+
     def test_migration_preserves_existing_workout_and_is_repeatable(self):
         self.connection.execute('DROP TABLE workout_sets')
         self.connection.execute('ALTER TABLE workout_exercises DROP COLUMN tracking_type_snapshot')
@@ -139,7 +255,7 @@ class SetTests(unittest.TestCase):
         self.connection.commit()
         db.initialize(self.connection)
         db.initialize(self.connection)
-        self.assertEqual(self.connection.execute('PRAGMA user_version').fetchone()[0], 2)
+        self.assertGreaterEqual(self.connection.execute('PRAGMA user_version').fetchone()[0], 2)
         catalog = db.catalog_for_gym(self.connection, self.gym['id'])['catalog']
         self.assertEqual({(v['exercise_name'], v['variation_name']) for v in catalog if v['assisted']},
                          {('Pull-up', 'Assisted'), ('Dip', 'Assisted')})
@@ -205,11 +321,40 @@ class SetTests(unittest.TestCase):
         status, saved = self.request('PUT', f'/api/sets/{item["id"]}', dict(result=12, weight=None, completed=True))
         self.assertEqual(status, 200)
         self.assertEqual(saved['completed'], 1)
+        status, copied = self.request('POST', f'/api/workout-exercises/{self.entry["id"]}/sets', {})
+        self.assertEqual((status, copied['result'], copied['completed']), (201, 12, 0))
         for payload in [[], None, dict(result=0, weight=None, completed=True)]:
             self.assertEqual(self.request('PUT', f'/api/sets/{item["id"]}', payload)[0], 400)
         self.assertEqual(self.request('PUT', '/api/sets/invalid', {})[0], 400)
         self.assertEqual(self.request('DELETE', f'/api/sets/{item["id"]}')[0], 200)
         self.assertEqual(self.request('DELETE', f'/api/sets/{item["id"]}')[0], 404)
+
+    def test_workout_exercise_move_and_remove_routes(self):
+        second = self.add_exercise(self.plank, 'Bodyweight')
+        path = f'/api/workout-exercises/{second["id"]}'
+        status, body = self.request('PUT', path, dict(position=1))
+        self.assertEqual(status, 200)
+        self.assertEqual([item['id'] for item in body['workout_exercises']], [second['id'], self.entry['id']])
+        for payload in [dict(position=3), dict(position='1'), dict(), []]:
+            with self.subTest(payload=payload):
+                self.assertEqual(self.request('PUT', path, payload)[0], 400)
+        self.assertEqual(self.request('PUT', '/api/workout-exercises/999', dict(position=1))[0], 404)
+        self.assertEqual(self.request('DELETE', path), (200, {'ok': True}))
+        self.assertEqual(self.request('DELETE', path)[0], 404)
+        self.assertEqual(self.request('DELETE', '/api/workout-exercises/invalid')[0], 400)
+        self.assertEqual([e['position'] for e in db.bootstrap(self.connection)['workout_exercises']], [1])
+
+    def test_ids_too_large_for_sqlite_are_not_found(self):
+        huge = '99999999999999999999'
+        for method, path, payload in [('DELETE', f'/api/workout-exercises/{huge}', None),
+                                      ('PUT', f'/api/workout-exercises/{huge}', dict(position=1)),
+                                      ('POST', f'/api/workout-exercises/{huge}/sets', {}),
+                                      ('PUT', f'/api/sets/{huge}', dict(result=8, weight=None, completed=True)),
+                                      ('DELETE', f'/api/sets/{huge}', None)]:
+            with self.subTest(method=method, path=path):
+                status, body = self.request(method, path, payload)
+                self.assertEqual(status, 404)
+                self.assertIn('not found', body['error'])
 
     def test_request_field_types_return_json_client_errors(self):
         for path, payload in [('/api/gyms', {'name': None}),

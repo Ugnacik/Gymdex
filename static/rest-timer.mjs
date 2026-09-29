@@ -1,4 +1,7 @@
 export const DEFAULT_REST_DURATION_SECONDS = 90;
+// A countdown found finished later than this, for example when the phone is unlocked
+// minutes after the rest ended, finishes without signalling: the cue would be misleading.
+export const LATE_FINISH_SIGNAL_MS = 30_000;
 
 function validDuration(seconds) {
   if (!Number.isInteger(seconds) || seconds < 1 || seconds > 3600) {
@@ -14,6 +17,7 @@ export class RestTimer {
   #schedule;
   #clear;
   #onChange;
+  #onFinish;
   #timerId = null;
   #status = "idle";
   #durationSeconds;
@@ -22,17 +26,19 @@ export class RestTimer {
 
   constructor({ durationSeconds = DEFAULT_REST_DURATION_SECONDS,
     now = () => Date.now(), schedule = setTimeout, clear = clearTimeout,
-    onChange = () => {} } = {}) {
+    onChange = () => {}, onFinish = () => {} } = {}) {
     this.#durationSeconds = validDuration(durationSeconds);
     this.#now = now;
     this.#schedule = schedule;
     this.#clear = clear;
     this.#onChange = onChange;
+    this.#onFinish = onFinish;
   }
 
   snapshot() {
-    const remainingMs = this.#status === "running"
-      ? Math.max(0, this.#deadline - this.#now()) : this.#remainingMs;
+    // An idle timer shows the interval the next completed set will start.
+    const remainingMs = this.#status === "running" ? Math.max(0, this.#deadline - this.#now())
+      : this.#status === "idle" ? this.#durationSeconds * 1000 : this.#remainingMs;
     return {
       status: this.#status === "running" && remainingMs === 0 ? "finished" : this.#status,
       durationSeconds: this.#durationSeconds,
@@ -54,7 +60,7 @@ export class RestTimer {
     if (this.#status !== "running") return;
     this.#remainingMs = Math.max(0, this.#deadline - this.#now());
     if (this.#remainingMs === 0) {
-      this.#finish();
+      this.#finish(this.#now() - this.#deadline);
       return;
     }
     this.#clearScheduled();
@@ -89,7 +95,7 @@ export class RestTimer {
   refresh() {
     if (this.#status !== "running") return this.snapshot();
     if (this.#deadline <= this.#now()) {
-      this.#finish();
+      this.#finish(this.#now() - this.#deadline);
     } else {
       this.#scheduleNext();
       this.#emit();
@@ -100,14 +106,18 @@ export class RestTimer {
   dispose() {
     this.#clearScheduled();
     this.#onChange = () => {};
+    this.#onFinish = () => {};
   }
 
-  #finish() {
+  #finish(lateMs) {
     this.#clearScheduled();
     this.#status = "finished";
     this.#deadline = null;
     this.#remainingMs = 0;
     this.#emit();
+    // Called at most once per countdown, when a running interval is found to have
+    // reached zero no more than LATE_FINISH_SIGNAL_MS after its deadline.
+    if (lateMs <= LATE_FINISH_SIGNAL_MS) this.#onFinish(this.snapshot());
   }
 
   #scheduleNext() {
