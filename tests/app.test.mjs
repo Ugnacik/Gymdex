@@ -198,6 +198,8 @@ test('earlier negative sets and restored assistance drafts stay assisted on unas
   assert.match(restored.nodes['#app'].innerHTML, /data-assisted="true"/);
   const plain = await harness();
   assert.match(plain.nodes['#app'].innerHTML, /data-assisted="false"[\s\S]*>kg <input name="weight"/);
+  // A number input would drop a decimal comma, so weight is text with the decimal keypad.
+  assert.match(plain.nodes['#app'].innerHTML, /<input name="weight" type="text" inputmode="decimal" pattern="[^"]*\[\.,\][^"]*" autocomplete="off"/);
 });
 
 test('finish and cancel keep an acknowledged terminal state when bootstrap fails', async () => {

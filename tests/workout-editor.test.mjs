@@ -54,6 +54,13 @@ test('autosave sends assistance and clears the draft only after acknowledgement'
   assert.equal(drafts.cachedWorkout().workout_exercises[0].sets[0].weight, -12.5);
 });
 
+test('a weight typed with a decimal comma saves as a decimal', async () => {
+  const { editor, requests } = fixture();
+  editor.edit(2, { ...values, assistance: false, weight: '62,5' });
+  assert.equal(await editor.flush(), true);
+  assert.equal(JSON.parse(requests[0].body).weight, 62.5);
+});
+
 test('lost connection preserves editable drafts and retries on reconnect', async () => {
   const { editor, env, drafts } = fixture();
   env.request = async () => { throw new Error('Cannot reach the server.'); };
@@ -117,7 +124,8 @@ test('a rejection of an older revision does not block a newer edit', async () =>
 
 test('invalid input prevents flush and finish without discarding drafts', async () => {
   for (const invalid of [{ result: '' }, { result: '1.5' }, { result: '-1' },
-    { result: '1000001' }, { weight: '-1' }, { weight: 'Infinity' }, { weight: '100001' }]) {
+    { result: '1000001' }, { weight: '-1' }, { weight: 'Infinity' }, { weight: '100001' },
+    { weight: '62,5,1' }, { weight: '1e3' }, { weight: 'abc' }]) {
     const { editor, requests } = fixture();
     editor.edit(2, { ...values, ...invalid });
     assert.equal(await editor.flush(), false);

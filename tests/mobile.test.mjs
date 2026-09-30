@@ -72,6 +72,12 @@ test('assistance uses a positive keyboard entry and preserves optional weight', 
   assert.equal(setPayload({ ...values, result: '' }).result, null);
 });
 
+test('weights accept a decimal comma as well as a decimal point', () => {
+  assert.equal(setPayload({ ...values, assistance: false, weight: '62,5' }).weight, 62.5);
+  assert.equal(setPayload({ ...values, assistance: false, weight: ' 62.5 ' }).weight, 62.5);
+  assert.equal(setPayload({ ...values, weight: '7,5' }).weight, -7.5);
+});
+
 test('worker upgrade installs the current shell and removes the previous offline version', async () => {
   const handlers = {};
   const cachesByName = new Map([

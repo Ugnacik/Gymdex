@@ -277,7 +277,8 @@ Each newly added exercise starts with one empty, not completed set for every
 set in its Last workout reference (see below), or one empty set when there is
 none. The rows already exist on the server, so they can be filled in by typing
 or by tapping "Last workout" even if the gym signal drops. Enter kilograms and
-reps, or seconds for duration exercises. Weight is optional. Assisted variations,
+reps, or seconds for duration exercises. Weight is optional and takes a decimal
+point or comma (62.5 or 62,5). Assisted variations,
 such as Assisted Pull-up, label the weight Assist kg: enter the machine's
 counterweight as a positive amount and Gymdex stores it as a negative value.
 Checking Done beside the inputs saves the set as completed right away.

@@ -79,7 +79,7 @@ try {
   await page.locator('[data-start-routine]').click();
   await page.locator('.set-form').first().waitFor();
   check('Routine starts with correct empty slots', await page.locator('.set-form').count() === 5
-    && await page.locator('.set-form input[type=number]').evaluateAll(inputs => inputs.every(input => input.value === '')));
+    && await page.locator('.set-form input[name=weight], .set-form input[name=result]').evaluateAll(inputs => inputs.every(input => input.value === '')));
   await page.locator('#rest-enabled').check();
   await page.evaluate(() => scrollTo(0, 0));
   await screenshot('compact-workout-mobile');
