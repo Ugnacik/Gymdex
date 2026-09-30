@@ -447,6 +447,23 @@ scrolling with the keyboard open. Sheets and dialogs shrink to the part of the
 screen above the keyboard and keep the field you are typing in visible; check
 Equipment options in Create custom exercise, a rename in Manage, and naming a
 routine.
+
+Without a phone, use the Android emulator (it needs the Android SDK in
+`~/Android/Sdk` with an AVD named `gymdex_pixel`; override with `ANDROID_HOME`
+and `AVD`):
+
+```bash
+scripts/android-emulator.sh
+```
+
+It boots the emulator, starts Gymdex on `data/emulator.sqlite3` if nothing is
+listening on port 8080, and opens it in the emulator's Chrome at
+`http://localhost:8080` through `adb reverse`, so the service worker registers
+as it does over HTTPS. The emulator's own network toggle does not cut this
+connection; for the offline check run `adb reverse --remove tcp:8080`, and
+`adb reverse tcp:8080 tcp:8080` to reconnect. Inspect the page from desktop Chrome at
+`chrome://inspect`.
+
 When changing cached app assets, also bump the cache version in `static/sw.js`
 so a newly installed worker refreshes the offline copy. Close existing app tabs
 and reopen to activate a waiting worker update.
