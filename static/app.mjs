@@ -46,6 +46,10 @@ const state = {
   data: null,
   selectedGymId: null,
   picker: null,
+  pickerContext: null,
+  summary: null,
+  collapsedExercises: new Set(),
+  exerciseOptions: new Set(),
   selectedExercise: null,
   selectedEquipment: null,
   unavailable: !navigator.onLine,
@@ -153,6 +157,49 @@ function showToast(message) {
   showToast.timer = setTimeout(() => { toast.hidden = true; }, 3200);
 }
 
+function renderFinishSummary() {
+  const summary = state.summary;
+  return `<section class="finish-summary" aria-labelledby="finish-summary-title">
+    <h1 id="finish-summary-title" tabindex="-1">Workout complete</h1>
+    <p>${escapeHtml(summary.workout.gym_name)} · ${summary.duration}</p>
+    <p class="finish-totals">${summary.exercises} exercise${summary.exercises === 1 ? "" : "s"} with completed sets · ${summary.sets} completed set${summary.sets === 1 ? "" : "s"}</p>
+    <div class="summary-actions"><button class="secondary" id="summary-routine">Save as routine</button><button class="secondary" id="summary-history">View workout</button></div>
+    <button class="text-button" id="dismiss-summary">Done</button>
+  </section>`;
+}
+
+async function saveWorkoutRoutine(workout) {
+  const saved = await askText(`Save this workout as a routine at ${workout.gym_name}`, {
+    label: "Routine name", confirmLabel: "Save routine",
+    value: `${workout.gym_name} ${new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short" }).format(parseServerTime(workout.started_at))}`,
+    submit: (name) => api(`/api/history/${workout.id}/routine`, { method: "POST", body: JSON.stringify({ name }) }),
+  });
+  if (!saved) return;
+  state.data.routines = [...(state.data.routines ?? []).filter(item => item.id !== saved.id),
+    { id: saved.id, gym_id: saved.gym_id, name: saved.name, exercise_count: saved.exercises.length }]
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+  if (!state.data.active_workout) renderStart();
+  const skippedNote = saved.skipped ? ` ${saved.skipped} archived exercise${saved.skipped === 1 ? "" : "s"} skipped.` : "";
+  showToast(`Routine ${saved.name} saved with ${saved.exercises.length} exercise${saved.exercises.length === 1 ? "" : "s"}.${skippedNote}`);
+}
+
+async function saveRoutineChoice(configuration) {
+  const context = state.pickerContext;
+  if (!context || context.saving) return;
+  context.saving = true;
+  const buttons = document.querySelectorAll('#picker button');
+  buttons.forEach(button => { button.disabled = true; });
+  try {
+    const saved = await api(`/api/routines/${context.routine.id}/exercises`, {
+      method: "POST", body: JSON.stringify(configuration),
+    });
+    closePicker();
+    await context.onSave(saved);
+    showToast("Exercise added to routine.");
+  } catch (error) { showToast(error.message); }
+  finally { context.saving = false; buttons.forEach(button => { button.disabled = false; }); }
+}
+
 async function load() {
   try {
     state.data = await api("/api/bootstrap");
@@ -203,7 +250,8 @@ function renderStart() {
   app.innerHTML = `
     <main class="shell">
       ${renderHeader("No active workout")}
-      <section class="intro">
+      ${state.summary ? renderFinishSummary() : ""}
+      <section class="intro" ${state.summary ? "hidden" : ""}>
         <h1>Start where you train.</h1>
         <p>Choose your gym to find your machines and recent exercises.</p>
       </section>
@@ -220,6 +268,11 @@ function renderStart() {
       <div class="bottom-action"><button class="primary accent" id="start-workout" ${state.selectedGymId ? "" : "disabled"}>Start workout</button></div>
     </main>`;
 
+  document.querySelector("#dismiss-summary")?.addEventListener("click", () => { state.summary = null; renderStart(); });
+  document.querySelector("#summary-history")?.addEventListener("click", () => openHistory(state.summary.workout.id));
+  document.querySelector("#summary-routine")?.addEventListener("click", async () => {
+    await saveWorkoutRoutine(state.summary.workout);
+  });
   document.querySelectorAll("[data-gym-id]").forEach((button) => {
     button.addEventListener("click", () => {
       state.selectedGymId = Number(button.dataset.gymId);
@@ -229,7 +282,7 @@ function renderStart() {
   });
   document.querySelector("#add-gym-form").addEventListener("submit", createGym);
   document.querySelector("#start-workout").addEventListener("click", startWorkout);
-  document.querySelector("#open-history").addEventListener("click", openHistory);
+  document.querySelector("#open-history").addEventListener("click", () => openHistory());
   document.querySelector("#open-progress").addEventListener("click", () => openProgress());
   document.querySelector("#open-manage").addEventListener("click", openManage);
 }
@@ -254,6 +307,9 @@ async function startWorkout() {
 // Repeat and Start routine answer with the new Active Workout and how many exercises they
 // left out because their Variation or Exercise Configuration is archived.
 async function showStartedWorkout({ skipped = 0, ...started }, notice) {
+  state.summary = null;
+  state.collapsedExercises.clear();
+  state.exerciseOptions.clear();
   state.data.active_workout = started;
   state.data.workout_exercises = [];
   state.selectedGymId = started.gym_id;
@@ -275,6 +331,7 @@ function openRoutinesScreen() {
   const gym = state.data.gyms.find((item) => item.id === state.selectedGymId);
   if (!gym) return;
   return openRoutines({ document, api, ask, askText, showToast, escapeHtml, exerciseDisplayName, configurationLabel,
+    openCatalog: openRoutineCatalog,
     // The start screen lists the routines, so it refreshes once the screen closes.
     onClose: () => load() }, gym);
 }
@@ -299,15 +356,24 @@ function renderWorkout() {
       <div class="section-title"><h2>Exercises</h2><span>${entries.length}</span></div>
       <section class="exercise-list">
         ${entries.length ? entries.map((entry, index) => `
-          <article class="exercise-entry" data-entry-id="${entry.id}">
-            <div class="history-exercise-heading"><h3>${escapeHtml(exerciseDisplayName(entry))}</h3><button type="button" class="text-button" data-active-progress="${entry.variation_id}" data-progress-equipment="${escapeHtml(entry.equipment)}" data-progress-manufacturer="${escapeHtml(entry.manufacturer || "")}" data-progress-label="${escapeHtml(entry.label || "")}">View progress</button><button type="button" class="remove-exercise" data-remove-exercise="${entry.id}" aria-label="Remove ${escapeHtml(exerciseDisplayName(entry))}"><span aria-hidden="true">×</span></button></div>
-            <div class="machine-line"><p class="meta">${escapeHtml(configurationLabel(entry))}</p><button type="button" class="text-button" data-change-machine="${entry.id}" aria-label="Change machine for ${escapeHtml(exerciseDisplayName(entry))}">Change machine</button></div>
-            ${renderNote(`exercise:${entry.id}`, "Note", `Note for ${exerciseDisplayName(entry)}`)}
-            <p class="set-hint">${entry.tracking_type === "duration" ? "Duration in seconds" : "Repetitions"}. ${entry.assisted ? "Assist kg is the counterweight and is optional." : "Weight is optional."}</p>
-            <div class="sets-list">${entry.sets.map((set, index) => renderSet(entry, set, index)).join("")}</div>
-            <button class="secondary add-set" data-add-set="${entry.id}">Add set</button>
-            ${renderExerciseTools(entry, index, entries.length)}
-          </article>`).join("") : `<div class="empty"><h3>No exercises yet</h3><p>Add a recent choice in one tap, or search the catalog.</p></div>`}
+          <details class="exercise-entry workout-exercise" data-entry-id="${entry.id}" ${state.collapsedExercises.has(entry.id) ? "" : "open"}>
+            <summary class="exercise-summary"><h3>${escapeHtml(exerciseDisplayName(entry))}</h3><span data-exercise-count="${entry.id}">${entry.sets.filter(set => set.completed).length}/${entry.sets.length} done</span></summary>
+            <div class="exercise-body">
+              <p class="meta">${escapeHtml(configurationLabel(entry))}</p>
+              <div class="sets-list">${entry.sets.map((set, index) => renderSet(entry, set, index)).join("")}</div>
+              <button class="secondary add-set" data-add-set="${entry.id}">Add set</button>
+              <details class="exercise-options" data-options-id="${entry.id}" ${state.exerciseOptions.has(entry.id) || state.editor?.noteStatus(`exercise:${entry.id}`)?.dirty ? "open" : ""}><summary>Exercise options</summary>
+                <p class="set-hint">${entry.tracking_type === "duration" ? "Duration in seconds" : "Repetitions"}. ${entry.assisted ? "Assist kg is the counterweight and is optional." : "Weight is optional."}</p>
+                ${renderNote(`exercise:${entry.id}`, "Note", `Note for ${exerciseDisplayName(entry)}`)}
+                <div class="exercise-tools">
+                  <button type="button" class="text-button" data-active-progress="${entry.variation_id}" data-progress-equipment="${escapeHtml(entry.equipment)}" data-progress-manufacturer="${escapeHtml(entry.manufacturer || "")}" data-progress-label="${escapeHtml(entry.label || "")}">View progress</button>
+                  <button type="button" class="text-button" data-change-machine="${entry.id}" aria-label="Change machine for ${escapeHtml(exerciseDisplayName(entry))}">Change machine</button>
+                  <button type="button" class="text-button manage-remove" data-remove-exercise="${entry.id}" aria-label="Remove ${escapeHtml(exerciseDisplayName(entry))}">Remove exercise</button>
+                </div>
+                ${renderExerciseTools(entry, index, entries.length)}
+              </details>
+            </div>
+          </details>`).join("") : `<div class="empty"><h3>No exercises yet</h3><p>Add a recent choice in one tap, or search the catalog.</p></div>`}
       </section>
       <button class="primary accent add-exercise" id="open-picker">Add exercise</button>
       <div class="workout-actions">
@@ -316,10 +382,20 @@ function renderWorkout() {
       </div>
     </main>`;
   document.querySelector("#open-picker").addEventListener("click", openPicker);
-  document.querySelector("#open-history").addEventListener("click", openHistory);
+  document.querySelector("#open-history").addEventListener("click", () => openHistory());
   document.querySelector("#open-progress").addEventListener("click", () => openProgress());
   document.querySelectorAll("[data-finish-workout]").forEach((button) => button.addEventListener("click", finishWorkout));
   document.querySelector("#cancel-workout").addEventListener("click", cancelWorkout);
+  document.querySelectorAll(".workout-exercise").forEach((card) => card.addEventListener("toggle", () => {
+    const id = Number(card.dataset.entryId);
+    if (card.open) state.collapsedExercises.delete(id);
+    else state.collapsedExercises.add(id);
+  }));
+  document.querySelectorAll("[data-options-id]").forEach((options) => options.addEventListener("toggle", () => {
+    const id = Number(options.dataset.optionsId);
+    if (options.open) state.exerciseOptions.add(id);
+    else state.exerciseOptions.delete(id);
+  }));
   document.querySelectorAll(".set-form").forEach(bindSet);
   document.querySelectorAll("[data-note-target]").forEach(bindNote);
   document.querySelectorAll("[data-add-set]").forEach((button) => button.addEventListener("click", () => addSet(button)));
@@ -416,15 +492,18 @@ function renderExerciseTools(entry, index, count) {
 function renderRestTimer() {
   const duration = state.restTimer.snapshot().durationSeconds;
   return `<section class="rest-timer" aria-labelledby="rest-title">
-    <div class="rest-heading"><h2 id="rest-title">Rest timer</h2><label class="rest-switch"><input id="rest-enabled" type="checkbox" ${state.restEnabled ? "checked" : ""} /> On</label></div>
+    <div class="rest-heading"><h2 id="rest-title">Rest</h2><label class="rest-switch"><input id="rest-enabled" type="checkbox" ${state.restEnabled ? "checked" : ""} /> On</label></div>
     <div id="rest-controls" ${state.restEnabled ? "" : "hidden"}>
+      <div class="rest-readout"><strong id="rest-clock" role="timer" aria-live="off"></strong><span id="rest-status" role="status"></span></div>
+      <div class="rest-actions"><button type="button" class="secondary" id="rest-start">Start</button><button type="button" class="secondary" id="rest-pause">Pause</button></div>
+    </div>
+    <details class="rest-settings"><summary>Timer settings</summary>
       <label class="field rest-duration">Rest after a set<select id="rest-duration">
         ${[30, 60, 90, 120, 180].map((seconds) => `<option value="${seconds}" ${duration === seconds ? "selected" : ""}>${seconds < 60 ? `${seconds} seconds` : `${seconds / 60} ${seconds === 60 ? "minute" : "minutes"}`}</option>`).join("")}
         ${[30, 60, 90, 120, 180].includes(duration) ? "" : `<option value="${duration}" selected>${duration} seconds</option>`}
       </select></label>
-      <div class="rest-readout"><strong id="rest-clock" role="timer" aria-live="off"></strong><span id="rest-status" role="status"></span></div>
-      <div class="rest-actions"><button type="button" class="secondary" id="rest-start">Start</button><button type="button" class="secondary" id="rest-pause">Pause</button><button type="button" class="text-button" id="rest-stop">Reset</button></div>
-    </div>
+      <button type="button" class="text-button" id="rest-stop">Reset timer</button>
+    </details>
   </section>`;
 }
 
@@ -558,7 +637,7 @@ function renderHistoryNote(target, note = "", label, subject = "") {
     </form>`;
 }
 
-function openHistory() {
+function openHistory(initialWorkoutId = null) {
   if (state.editor?.busy || document.querySelector("#history")) return;
   // Keep the active workout DOM and its local drafts intact beneath the dialog.
   const dialog = document.createElement("dialog");
@@ -566,7 +645,7 @@ function openHistory() {
   dialog.className = "history-dialog";
   dialog.setAttribute("aria-labelledby", "history-title");
   dialog.innerHTML = `
-    <div class="sheet-header"><h2 id="history-title">Workout history</h2><button class="text-button" id="close-history" autofocus>Close</button></div>
+    <div class="sheet-header"><div><h2 id="history-title">Workout history</h2><button class="text-button" id="history-back" hidden>Back to history</button></div><button class="text-button" id="close-history" autofocus>Close</button></div>
     <div id="history-list-view">
       <form id="history-filters" class="history-filters">
         <label class="field">Gym<select name="gym_id"><option value="">All gyms</option>${gymOptions()}</select></label>
@@ -579,7 +658,7 @@ function openHistory() {
       <div class="history-pages"><button class="secondary" id="history-previous">Newer</button><button class="secondary" id="history-next">Older</button></div>
       <a class="secondary export-link" href="/api/export/workouts.csv" download="gymdex-workouts.csv">Export workouts as CSV</a>
     </div>
-    <div id="history-detail-view" hidden><button class="text-button" id="history-back">Back to history</button><div id="history-detail" tabindex="-1"></div></div>`;
+    <div id="history-detail-view" hidden><div id="history-detail" tabindex="-1"></div></div>`;
   document.body.append(dialog);
   const find = (selector) => dialog.querySelector(selector);
   const listView = find("#history-list-view");
@@ -596,12 +675,13 @@ function openHistory() {
   let request = 0;
   let selectedButton;
   let selectedDetail;
-  let historyChanged = false;
+  let historyChanged = Boolean(initialWorkoutId);
   dialog.addEventListener("close", () => { request++; dialog.remove(); });
   find("#close-history").addEventListener("click", () => dialog.close());
   find("#history-back").addEventListener("click", async () => {
     request++;
     detailView.hidden = true;
+    find("#history-back").hidden = true;
     listView.hidden = false;
     if (historyChanged) {
       const selectedId = selectedButton?.dataset.historyId;
@@ -615,6 +695,8 @@ function openHistory() {
     selectedButton = button;
     listView.hidden = true;
     detailView.hidden = false;
+    find("#history-back").hidden = false;
+    dialog.scrollTop = 0;
     detail.textContent = "Loading workout…";
     find("#history-back").focus();
     try {
@@ -622,7 +704,8 @@ function openHistory() {
       if (version !== request) return;
       selectedDetail = data;
       detail.innerHTML = renderHistoryDetail(data, !state.data.active_workout);
-      detail.focus();
+      detail.focus({ preventScroll: true });
+      dialog.scrollTop = 0;
     } catch (error) {
       if (version === request) detail.textContent = `${error.message} Return to history and select the workout to retry.`;
     }
@@ -647,18 +730,7 @@ function openHistory() {
     }
     if (target.closest("[data-save-routine]") && selectedDetail) {
       const { workout } = selectedDetail;
-      const saved = await askText(`Save this workout as a routine at ${workout.gym_name}`, {
-        label: "Routine name", confirmLabel: "Save routine",
-        value: `${workout.gym_name} ${new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short" }).format(parseServerTime(workout.started_at))}`,
-        submit: (name) => api(`/api/history/${workout.id}/routine`, { method: "POST", body: JSON.stringify({ name }) }),
-      });
-      if (!saved) return;
-      // Listed by name, as bootstrap lists them.
-      state.data.routines = [...(state.data.routines ?? []), { id: saved.id, gym_id: saved.gym_id, name: saved.name, exercise_count: saved.exercises.length }]
-        .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
-      if (!state.data.active_workout) renderStart();
-      const skippedNote = saved.skipped ? ` ${saved.skipped} archived exercise${saved.skipped === 1 ? "" : "s"} skipped.` : "";
-      showToast(`Routine ${saved.name} saved with ${saved.exercises.length} exercise${saved.exercises.length === 1 ? "" : "s"}.${skippedNote}`);
+      await saveWorkoutRoutine(workout);
       return;
     }
     const progress = target.closest("[data-progress-variation]");
@@ -845,7 +917,8 @@ function openHistory() {
   previous.addEventListener("click", () => loadPage(Math.max(0, offset - 20)));
   next.addEventListener("click", () => { if (nextOffset !== null) loadPage(nextOffset); });
   dialog.showModal();
-  loadPage(0);
+  if (initialWorkoutId) showDetail({ dataset: { historyId: initialWorkoutId } });
+  else loadPage(0);
 }
 
 function progressChart(points, metric, unit) {
@@ -857,17 +930,25 @@ function progressChart(points, metric, unit) {
   const high = Math.max(...plotted.map((point) => point.value));
   const span = high - low || 1;
   const xy = plotted.map(({ index, value }) => ({
-    x: points.length === 1 ? 160 : 28 + index * 264 / (points.length - 1),
+    x: points.length === 1 ? 176 : 60 + index * 232 / (points.length - 1),
     y: high === low ? 76 : 126 - (value - low) * 100 / span,
   }));
   const path = xy.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" ");
   const label = metric === "best_weight" ? "Best weight" : `Best ${unit}`;
-  return `<svg class="progress-chart" viewBox="0 0 320 160" role="img" aria-labelledby="progress-chart-title progress-chart-desc">
+  return `<svg class="progress-chart" viewBox="0 0 320 180" role="group" aria-labelledby="progress-chart-title progress-chart-desc">
     <title id="progress-chart-title">${escapeHtml(label)} across ${points.length} workouts</title>
     <desc id="progress-chart-desc">Values range from ${escapeHtml(low)} to ${escapeHtml(high)} ${metric === "best_weight" ? "kilograms" : escapeHtml(unit)}. The table below lists each workout.</desc>
-    <line x1="28" y1="26" x2="292" y2="26" /><line x1="28" y1="126" x2="292" y2="126" />
+    <line x1="60" y1="26" x2="292" y2="26" /><line x1="60" y1="126" x2="292" y2="126" />
     ${xy.length > 1 ? `<polyline points="${path}" />` : ""}
-    ${xy.map((point) => `<circle cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="4.5" />`).join("")}
+    ${xy.map((point, index) => {
+      const source = points[plotted[index].index];
+      return `<g role="button" tabindex="0" data-progress-point="${plotted[index].index}" aria-label="View sets from ${escapeHtml(formatLocalDateTime(source.completed_at))}: ${escapeHtml(plotted[index].value)} ${metric === "best_weight" ? "kg" : escapeHtml(unit)}">
+        <circle class="point-hit" cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="16" />
+        <circle cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="4.5" />
+      </g>`;
+    }).join("")}
+    <text x="60" y="160">${escapeHtml(new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(parseServerTime(points[0].completed_at)))}</text>
+    ${points.length > 1 ? `<text x="292" y="160" text-anchor="end">${escapeHtml(new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(parseServerTime(points.at(-1).completed_at)))}</text>` : ""}
     <text x="4" y="29">${escapeHtml(high)}</text><text x="4" y="129">${escapeHtml(low)}</text>
   </svg>`;
 }
@@ -879,9 +960,11 @@ function renderProgressData(data, metric) {
     <p>${points.length} workout${points.length === 1 ? "" : "s"} with completed sets, oldest to newest.</p>
     ${points.length ? `<label class="field progress-metric">Chart<select id="progress-metric"><option value="best_result" ${metric === "best_result" ? "selected" : ""}>Best ${unit}</option><option value="best_weight" ${metric === "best_weight" ? "selected" : ""}>Best weight</option></select></label>
       ${progressChart(points, metric, unit)}
+      <p class="field-help">Tap a point to see its completed sets. Best weight and best ${unit} may come from different sets.</p>
+      <div id="progress-point-details" class="progress-point-details" role="status"></div>
       <div class="progress-table-wrap"><table class="progress-table"><caption class="visually-hidden">Completed workout progress</caption><thead><tr><th scope="col">Workout</th><th scope="col">Best ${unit}</th><th scope="col">Best weight</th><th scope="col">Sets</th></tr></thead><tbody>
       ${points.map((point) => `<tr><th scope="row">${escapeHtml(formatLocalDateTime(point.completed_at))}</th><td>${point.best_result ?? "—"}</td><td>${point.best_weight === null ? "—" : `${escapeHtml(Math.abs(point.best_weight))} kg${point.best_weight < 0 ? " assistance" : ""}`}</td><td>${point.completed_sets}</td></tr>`).join("")}
-      </tbody></table></div>` : `<div class="empty"><h3>No completed sets yet</h3><p>Complete a set in a workout to see progress here.</p></div>`}`;
+      </tbody></table></div>` : `<div class="empty"><h3>No completed sets yet</h3><p>Finish a workout with completed sets to see progress here.</p></div>`}`;
 }
 
 async function openProgress(initialVariationId = null, initialGymId = null, initialConfig = null) {
@@ -910,6 +993,7 @@ async function openProgress(initialVariationId = null, initialGymId = null, init
   let currentData = null;
   let metric = "best_result";
   let request = 0;
+  let pointRequest = 0;
   dialog.addEventListener("close", () => { request++; dialog.remove(); });
   find("#close-progress").addEventListener("click", () => dialog.close());
   find("#progress-all-configs").addEventListener("click", () => {
@@ -919,10 +1003,39 @@ async function openProgress(initialVariationId = null, initialGymId = null, init
   });
   results.addEventListener("change", (event) => {
     if (event.target.id !== "progress-metric" || !currentData) return;
+    pointRequest++;
     metric = event.target.value;
     results.innerHTML = renderProgressData(currentData, metric);
   });
+  async function showProgressPoint(target) {
+    const point = currentData?.points[Number(target.dataset.progressPoint)];
+    if (!point) return;
+    const version = ++pointRequest;
+    const selectedConfig = config && { ...config };
+    const variationId = currentData.variation_id;
+    const panel = find("#progress-point-details");
+    panel.textContent = "Loading completed sets…";
+    try {
+      const detail = await api(`/api/history/${point.workout_id}`);
+      if (version !== pointRequest || !dialog.open) return;
+      const entries = detail.workout_exercises.filter(entry => entry.variation_id === variationId
+        && (!selectedConfig || ["equipment", "manufacturer", "label"].every(field => (entry[field] ?? "") === (selectedConfig[field] ?? ""))));
+      panel.innerHTML = `<p><strong>${escapeHtml(formatLocalDateTime(point.completed_at))}</strong> · ${escapeHtml(detail.workout.gym_name)}</p>
+        ${entries.map(entry => `<p>${escapeHtml(configurationLabel(entry))}</p><ul>${entry.sets.filter(set => set.completed).map(set =>
+          `<li>${set.result} ${entry.tracking_type === "duration" ? "seconds" : "reps"} · ${set.weight === null ? "No weight recorded" : `${Math.abs(set.weight)} kg${set.weight < 0 ? " assistance" : ""}`}</li>`).join("")}</ul>`).join("") || "<p>No matching completed sets remain.</p>"}`;
+      panel.scrollIntoView?.({ block: "nearest" });
+    } catch (error) { if (version === pointRequest && dialog.open) panel.textContent = error.message; }
+  }
+  results.addEventListener("click", event => {
+    const point = event.target.closest?.("[data-progress-point]");
+    if (point) showProgressPoint(point);
+  });
+  results.addEventListener("keydown", event => {
+    const point = event.target.closest?.("[data-progress-point]");
+    if (point && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); showProgressPoint(point); }
+  });
   async function loadProgress() {
+    pointRequest++;
     const version = ++request;
     const variationId = exercise.value;
     if (!variationId) return;
@@ -1270,6 +1383,10 @@ function syncEditorView() {
     const preview = document.querySelector(`[data-note-preview="${target}"]`);
     if (preview) preview.textContent = status.note;
   });
+  document.querySelectorAll("[data-exercise-count]").forEach((label) => {
+    const entry = state.data.workout_exercises.find(item => item.id === Number(label.dataset.exerciseCount));
+    if (entry) label.textContent = `${entry.sets.filter(set => set.completed).length}/${entry.sets.length} done`;
+  });
   updateSyncStatus();
 }
 
@@ -1289,9 +1406,20 @@ async function endWorkout(cancel) {
   let asked = false;
   // The button is disabled while the sheet asks, so focus returns to it once the workout is editable again.
   const origin = document.activeElement;
-  const confirm = () => (asked = true) && (cancel
+  let summary = null;
+  const confirm = async () => {
+    asked = true;
+    const confirmed = await (cancel
     ? ask("Cancel this workout and discard all its exercises and sets? This cannot be undone.", { confirmLabel: "Cancel workout", danger: true })
     : ask("Finish this workout?", { confirmLabel: "Finish", cancelLabel: "Back" }));
+    if (confirmed && !cancel) summary = {
+      workout: { ...state.data.active_workout },
+      duration: formatElapsed(elapsedMinutes(state.data.active_workout)),
+      sets: state.data.workout_exercises.reduce((count, entry) => count + entry.sets.filter(set => set.completed).length, 0),
+      exercises: state.data.workout_exercises.filter(entry => entry.sets.some(set => set.completed)).length,
+    };
+    return confirmed;
+  };
   try {
     const ended = await (cancel ? editor.cancel(confirm) : editor.finish(confirm));
     if (!ended) {
@@ -1300,8 +1428,13 @@ async function endWorkout(cancel) {
       return;
     }
     state.restTimer.stop();
+    state.summary = summary;
     state.selectedGymId = gymId;
     await load();
+    if (summary) {
+      document.querySelector("#finish-summary-title")?.focus({ preventScroll: true });
+      window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+    }
     showToast(cancel ? "Workout canceled." : "Workout finished.");
   } catch (error) { showToast(error.message); }
 }
@@ -1318,14 +1451,44 @@ async function openPicker() {
 
 // Opens the bottom sheet that Add exercise and Change machine render into (#picker .sheet).
 function openSheet(content) {
-  document.querySelector("#picker")?.remove();
-  const wrapper = document.createElement("div");
-  wrapper.id = "picker";
-  wrapper.className = "sheet-backdrop";
-  wrapper.innerHTML = `<section class="sheet" role="dialog" aria-modal="true" aria-labelledby="picker-title">${content}</section>`;
-  document.querySelector("main")?.setAttribute("inert", "");
-  document.body.append(wrapper);
-  wrapper.addEventListener("click", (event) => { if (event.target === wrapper) closePicker(); });
+  let wrapper = document.querySelector("#picker");
+  if (!wrapper) {
+    const origin = document.activeElement;
+    wrapper = document.createElement("dialog");
+    wrapper.id = "picker";
+    wrapper.className = "sheet-backdrop";
+    wrapper.setAttribute("aria-labelledby", "picker-title");
+    wrapper.cleanup = () => {
+      if (wrapper.cleaned) return;
+      wrapper.cleaned = true;
+      wrapper.remove();
+      state.pickerContext = null;
+      document.querySelector("main")?.removeAttribute("inert");
+      if (origin?.isConnected) origin.focus();
+      else document.querySelector("#open-picker")?.focus();
+    };
+    wrapper.addEventListener("close", () => wrapper.cleanup());
+    wrapper.addEventListener("click", (event) => { if (event.target === wrapper) closePicker(); });
+    wrapper.addEventListener("keydown", (event) => {
+      if (event.key !== "Tab") return;
+      const controls = [...wrapper.querySelectorAll('button, input, select, textarea, summary, a[href], [tabindex]')]
+        .filter(item => !item.disabled && item.tabIndex >= 0 && item.getClientRects().length);
+      const first = controls[0], last = controls.at(-1);
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    });
+    document.body.append(wrapper);
+  }
+  wrapper.innerHTML = `<section class="sheet">${content}</section>`;
+  if (!wrapper.open) wrapper.showModal();
+}
+
+async function openRoutineCatalog(gym, routine, onSave) {
+  state.picker = await api(`/api/catalog?gym_id=${gym.id}`);
+  state.pickerContext = { gym, routine, onSave };
+  state.selectedExercise = null;
+  state.selectedEquipment = null;
+  renderPicker();
 }
 
 function renderPicker(query = "") {
@@ -1347,7 +1510,7 @@ function renderPickerResults(query) {
     `${exerciseDisplayName(item)} ${item.exercise_name} ${item.variation_name}`.toLowerCase().includes(query.toLowerCase())
   );
   document.querySelector("#picker-results").innerHTML = `
-      ${!query && state.picker.recent.length ? `<div class="section-title"><h3>Recent at ${escapeHtml(state.data.active_workout.gym_name)}</h3></div><div class="recent-list">${state.picker.recent.map((item) => `<button class="recent-card" data-profile-id="${item.profile_id}"><strong>${escapeHtml(exerciseDisplayName(item))}</strong><span>${escapeHtml(configurationLabel(item))}</span></button>`).join("")}</div>` : ""}
+      ${!query && state.picker.recent.length ? `<div class="section-title"><h3>Recent at ${escapeHtml(state.pickerContext?.gym.name ?? state.data.active_workout.gym_name)}</h3></div><div class="recent-list">${state.picker.recent.map((item) => `<button class="recent-card" data-profile-id="${item.profile_id}"><strong>${escapeHtml(exerciseDisplayName(item))}</strong><span>${escapeHtml(configurationLabel(item))}</span></button>`).join("")}</div>` : ""}
       <div class="section-title"><h3>${query ? "Results" : "Exercise catalog"}</h3><span>${filtered.length}</span></div>
       <div class="exercise-list">${filtered.map((item) => `<button class="exercise-card" data-variation-id="${item.id}"><strong>${escapeHtml(exerciseDisplayName(item))}</strong><span>${escapeHtml(item.equipment.join(" · "))}</span></button>`).join("") || `<div class="empty"><h3>No matches</h3><p>Create the exercise to add it here.</p></div>`}</div>
       <button class="secondary create-exercise-button" type="button" id="create-exercise">Create custom exercise</button>`;
@@ -1501,12 +1664,20 @@ function renderCustomExerciseForm(query = "") {
 }
 
 function closePicker(focus = "#open-picker") {
-  document.querySelector("#picker")?.remove();
-  document.querySelector("main")?.removeAttribute("inert");
+  const picker = document.querySelector("#picker");
+  picker?.close();
+  // Native close events are queued. Remove the picker before a reload checks for it,
+  // and return focus once, so a late event cannot steal focus from the refreshed card.
+  picker?.cleanup();
   document.querySelector(focus)?.focus();
 }
 
 async function addRecent(profileId) {
+  if (state.pickerContext) {
+    const profile = state.picker.recent.find(item => item.profile_id === profileId);
+    return saveRoutineChoice({ variation_id: profile.variation_id, equipment: profile.equipment,
+      manufacturer: profile.manufacturer, label: profile.label });
+  }
   try {
     await api(`/api/workouts/${state.data.active_workout.id}/exercises`, { method: "POST", body: JSON.stringify({ profile_id: profileId }) });
     closePicker();
@@ -1537,7 +1708,7 @@ function renderConfiguration(change = null) {
     <form id="configuration-form">
       <div class="field choice-field" id="manufacturer-field"></div>
       <div class="field choice-field" id="machine-label-field"></div>
-      <button class="primary accent" type="submit">${change ? "Save" : "Add exercise"}</button>
+      <button class="primary accent" type="submit">${change ? "Save" : state.pickerContext ? "Add to routine" : "Add exercise"}</button>
     </form>`;
   document.querySelector("#back-to-picker")?.addEventListener("click", () => renderPicker());
   document.querySelector("#close-picker").addEventListener("click", () => closePicker(change?.focus));
@@ -1600,6 +1771,12 @@ async function saveMachine(event, change, { manufacturer, label }) {
 
 async function addConfiguredExercise(event, { manufacturer, label }) {
   event.preventDefault();
+  if (state.pickerContext) return saveRoutineChoice({
+    variation_id: state.selectedExercise.id, equipment: state.selectedEquipment,
+    manufacturer: manufacturer.value, label: label.value,
+  });
+  const submit = event.currentTarget.querySelector('[type="submit"]');
+  submit.disabled = true;
   try {
     await api(`/api/workouts/${state.data.active_workout.id}/exercises`, {
       method: "POST",
@@ -1613,7 +1790,7 @@ async function addConfiguredExercise(event, { manufacturer, label }) {
     closePicker();
     await load();
     showToast("Exercise added. It will appear under recent choices next time.");
-  } catch (error) { showToast(error.message); }
+  } catch (error) { submit.disabled = false; showToast(error.message); }
 }
 
 function renderSet(entry, set, index) {
@@ -1732,10 +1909,11 @@ function showInvalidSet(blocked) {
   const form = document.querySelector('.set-form[data-dirty="true"]');
   const note = form ? null : document.querySelector('[data-note-target][data-dirty="true"]');
   if (form) {
+    for (let parent = form.parentElement; parent; parent = parent.parentElement) if (parent.tagName === "DETAILS") parent.open = true;
     form.scrollIntoView({ block: "center" });
     form.reportValidity();
   } else if (note) {
-    note.closest("details").open = true;
+    for (let parent = note.parentElement; parent; parent = parent.parentElement) if (parent.tagName === "DETAILS") parent.open = true;
     note.scrollIntoView({ block: "center" });
     note.focus();
   }
@@ -1798,6 +1976,8 @@ async function removeExercise(entryId) {
       if (confirmed) showInvalidSet("Not removed yet");
       return;
     }
+    state.collapsedExercises.delete(entryId);
+    state.exerciseOptions.delete(entryId);
     render();
     document.querySelector("#open-picker")?.focus();
     showToast(`${name} removed.`);

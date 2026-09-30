@@ -23,7 +23,8 @@ Gymdex supports:
 - saving routines, per gym, and starting a workout from one in a tap;
 - correcting sets and notes, and adding and deleting sets, in completed workouts,
   and deleting a completed workout;
-- viewing exercise progress across completed workouts;
+- viewing exercise progress across completed workouts, with dated charts and selectable points;
+- showing a finish summary with duration, completed sets, and routine/history shortcuts;
 - using an optional rest timer;
 - exporting workout data as CSV and backing up the SQLite database.
 
@@ -35,6 +36,8 @@ times in history, progress, and the active workout use the phone's time zone.
 From and To are whole local days: a workout started at 00:30 belongs to that
 day, not the previous one. Gymdex stores times in UTC, so changing the phone's
 time zone changes how existing times are shown but not the stored workouts.
+
+The History header keeps Close and Back to history visible while you scroll.
 
 Select a workout to see its saved exercise names, equipment, machine details,
 and every recorded set. Unfinished sets are labeled Not completed and do not
@@ -94,9 +97,10 @@ gym brings them back.
 
 - **New routine** asks for a name, then opens the empty routine.
 - Select a routine to change it. **Add exercise** lists the exercise
-  configurations saved at this gym, most recently used first, with a search
-  box. An added exercise starts with 3 sets. To add an exercise never done at
-  this gym, add it to a workout there once, or save a workout as a routine.
+  configurations saved at this gym, with a search box. **Browse exercise catalog**
+  opens the catalog, custom-exercise creation, equipment, and machine details.
+  **Add to routine** saves the configuration and adds it to the plan together;
+  you can build a routine before your first workout. Added exercises start with 3 sets.
 - **Sets** chooses 1 to 20 sets for an exercise. **Move up** and **Move down**
   change its place, and the × removes it after a confirmation.
 - **Rename** changes the name. Routine names are unique within a gym,
@@ -113,7 +117,10 @@ Use **Progress** to choose an exercise and optional gym. The chart and table
 show the best completed result and best weight for each workout. From a workout
 exercise or history detail, **View progress** starts with its exact gym,
 equipment, manufacturer, and machine label, so different machines are not
-mixed. These two best values can come from different sets in the same workout.
+mixed. These two best values can come from different sets in the same workout. The
+chart includes dates; tap a point or focus it and press Enter/Space to see the
+actual completed sets, with their paired weights and reps or duration. Machine
+filters also apply to these details.
 
 ## Exercise catalog
 
@@ -361,6 +368,26 @@ Only completed sets are shown, in order. Tap a set's "Last workout" line to
 copy those values into the set and save them like any other edit; this does not
 mark the set completed.
 
+## Compact workout view and finish summary
+
+Tap an exercise heading to collapse or expand its sets. Completion counts stay
+visible, and collapsing keeps input values and drafts. **Exercise options**
+holds notes, View progress, Change machine, reordering, and removal. Options
+stay open when changing a machine or reordering. A pending note opens its
+options after an offline reload, and a draft blocking Finish expands so it
+can be corrected.
+
+The rest timer keeps its clock and Start/Pause controls compact. Open **Timer
+settings** to change the interval or reset it. The timer still starts after a
+completed set when enabled. Exercise picker sheets support Escape, keep Tab
+focus inside the sheet, and return focus to the opening control.
+
+Finishing shows a summary with elapsed time, exercises with completed sets,
+and completed-set count. **Save as routine** saves that workout as a plan;
+**View workout** opens its history detail. **Done** dismisses the summary.
+The summary is shown for the current page session, while the workout itself
+remains in History.
+
 ## Run locally
 
 Gymdex has no third-party runtime dependencies. It needs Python 3.11 or newer.
@@ -396,6 +423,21 @@ node tests/keyboard.test.mjs
 node tests/confirm-sheet.test.mjs
 node tests/choice-field.test.mjs
 ```
+
+The optional browser regression test uses Playwright, a separate headless
+Chromium browser, a temporary database, and an OS-assigned loopback port. It
+stops its own server/browser afterward. Install the test dependency outside
+the repository and run:
+
+```bash
+npm install --prefix /tmp/gymdex-browser playwright
+/tmp/gymdex-browser/node_modules/.bin/playwright install chromium
+GYMDEX_PLAYWRIGHT_PATH=/tmp/gymdex-browser/node_modules/playwright node tests/browser-smoke.mjs
+```
+
+It prints the screenshot/result directory. Set `GYMDEX_BROWSER_ARTIFACTS` to
+choose a new directory for its test database and artifacts. This does not add
+runtime dependencies to Gymdex.
 
 For a phone smoke test, open Gymdex online, add an exercise and a few sets, then
 disconnect the phone. Edit an existing set and reload. Confirm the values are

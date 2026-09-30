@@ -467,3 +467,76 @@ button:disabled, fieldset:disabled { cursor: wait; opacity: 0.7; }
 .routine-sets { grid-template-columns: auto minmax(0, 7rem); align-items: center; gap: 12px; margin: 12px 0 0; font-size: 0.9rem; font-weight: 650; }
 #routines-message:empty { display: none; }
 #routines-content:focus { outline: none; }
+
+/* Keep sheet navigation reachable while the content scrolls. */
+.history-dialog > .sheet-header, .sheet > .sheet-header {
+  position: sticky;
+  top: -20px;
+  z-index: 2;
+  margin: -20px -20px 12px;
+  padding: 12px 20px;
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--line);
+}
+.sheet > .sheet-header { top: -12px; margin-top: -12px; }
+.history-dialog > .sheet-header h2 { margin: 0; }
+#history-back { min-height: 44px; padding: 0; text-align: left; }
+#history-back[hidden] { display: none; }
+.sheet-backdrop {
+  width: 100%;
+  max-width: none;
+  max-height: none;
+  height: calc(var(--viewport-height, 100dvh));
+  margin: 0;
+  padding: 0;
+  border: 0;
+  color: var(--ink);
+  background: transparent;
+  overflow: hidden;
+}
+.sheet-backdrop:not([open]) { display: none; }
+.sheet-backdrop::backdrop { background: rgba(0, 6, 3, 0.76); }
+.sheet { margin-bottom: 0; }
+
+/* Workout cards keep recording controls ahead of secondary actions. */
+.workout-shell .app-header { margin-bottom: 20px; }
+.workout-shell .sync-status { margin-bottom: 16px; }
+.workout-heading { margin-bottom: 16px; }
+.workout-heading h1 { font-size: clamp(1.4rem, 5vw, 1.8rem); margin-bottom: 6px; }
+.workout-exercise { padding: 14px 16px; }
+.exercise-summary { display: flex; align-items: center; gap: 10px; min-height: 44px; cursor: pointer; list-style: none; }
+.exercise-summary::-webkit-details-marker { display: none; }
+.exercise-summary h3 { flex: 1; min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.exercise-summary > span { flex-shrink: 0; font-size: 0.8rem; color: var(--muted); }
+.exercise-summary::after { content: "+"; color: var(--accent); }
+.workout-exercise[open] > .exercise-summary::after { content: "−"; }
+.exercise-options { margin-top: 8px; }
+.exercise-options > summary, .rest-settings > summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; color: var(--accent); font-size: 0.85rem; }
+.exercise-options .set-hint { margin: 8px 0; }
+.exercise-options .exercise-tools { margin-top: 0; }
+.rest-timer { position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0 12px; padding: 8px 12px; margin-bottom: 12px; }
+.rest-heading { gap: 8px; }
+.rest-heading h2 { font-size: 1rem; }
+#rest-controls { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 0 8px; }
+#rest-controls[hidden] { display: none; }
+.rest-readout { min-height: 44px; align-items: center; gap: 6px; }
+.rest-readout strong { font-size: 1.35rem; }
+.rest-readout #rest-status { font-size: 0.75rem; max-width: 12ch; }
+.rest-actions { gap: 4px; }
+.rest-actions button { padding: 0 10px; }
+.rest-settings { grid-column: 1 / -1; }
+.rest-settings:not([open]) { justify-self: end; }
+.rest-settings > summary { min-height: 36px; }
+.rest-settings .rest-duration { margin-top: 0; }
+.finish-summary { margin: 0 0 24px; padding: 20px; border: 1px solid var(--accent); border-radius: var(--radius-card); background: var(--surface); }
+.finish-summary h1 { font-size: 1.6rem; }
+.finish-totals { color: var(--ink); }
+.summary-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.summary-actions button { flex: 1; }
+.progress-chart [data-progress-point] { cursor: pointer; outline: none; }
+.progress-chart .point-hit { fill: transparent; stroke: none; }
+.progress-chart [data-progress-point]:focus circle:not(.point-hit), .progress-chart [data-progress-point]:hover circle:not(.point-hit) { stroke: var(--ink); stroke-width: 4; }
+.progress-point-details { margin: 8px 0 16px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-control); }
+.progress-point-details:empty { display: none; }
+.progress-point-details p { margin-bottom: 6px; }
+.progress-point-details ul { margin: 0; padding-left: 20px; }
