@@ -323,7 +323,11 @@ def previous_sets(
 def catalog_for_gym(
     connection: sqlite3.Connection, gym_id: int, include_archived: bool = False,
 ) -> dict[str, Any]:
-    """The picker's Variations and Recent. Progress includes archived Variations."""
+    """The picker's Variations, Recent, and every saved Exercise Configuration at the Gym.
+
+    Recent is the eight most recently used configurations; search covers all of Saved.
+    Progress includes archived Variations.
+    """
     catalog_rows = connection.execute(
         """SELECT v.id, e.name AS exercise_name, v.name AS variation_name,
                   v.tracking_type, v.assisted, v.archived_at IS NOT NULL AS archived,
@@ -343,7 +347,7 @@ def catalog_for_gym(
         item["archived"] = bool(item["archived"])
         catalog.append(item)
 
-    recent = rows(
+    saved = rows(
         connection.execute(
             """SELECT p.id AS profile_id, p.variation_id, e.name AS exercise_name,
                       v.name AS variation_name, p.equipment, p.manufacturer, p.label,
@@ -354,12 +358,12 @@ def catalog_for_gym(
                LEFT JOIN workout_exercises we ON we.gym_profile_id = p.id
                WHERE p.gym_id = ? AND p.archived_at IS NULL AND v.archived_at IS NULL
                GROUP BY p.id
-               ORDER BY last_used DESC, use_count DESC, e.name
-               LIMIT 8""",
+               ORDER BY last_used DESC, use_count DESC, e.name""",
             (gym_id,),
         )
     )
-    return {"catalog": catalog, "recent": recent, "suggestions": exercise_suggestions(connection)}
+    return {"catalog": catalog, "recent": saved[:8], "saved": saved,
+            "suggestions": exercise_suggestions(connection)}
 
 
 # Equipment named in the starter Exercise Catalog, offered when creating any Exercise.

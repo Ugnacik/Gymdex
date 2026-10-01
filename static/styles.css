@@ -1213,7 +1213,7 @@ textarea {
 /* ---------- Routines ---------- */
 
 .routine-new, .routine-add { width: 100%; margin: 8px 0 16px; }
-.routines-dialog [data-routine-back], .routines-dialog [data-routine-detail] { min-height: 44px; margin-left: -12px; padding: 0 12px; }
+.routines-dialog [data-routine-back] { min-height: 44px; margin-left: -12px; padding: 0 12px; }
 .routine-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 8px; margin: 8px 0 12px; }
 .routine-heading h3 { min-width: 0; margin: 0; font-size: 1.5rem; font-weight: 700; letter-spacing: -0.035em; overflow-wrap: anywhere; }
 .routine-exercises { display: grid; gap: 10px; margin: 0 0 12px; padding: 0; list-style: none; }

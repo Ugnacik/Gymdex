@@ -9,7 +9,8 @@ Gymdex supports:
 - starting and finishing one active workout, with its elapsed time shown and a
   reminder to finish it after 3 hours;
 - adding recent gym-specific exercise configurations in one tap;
-- searching a starter exercise catalog of common exercises;
+- searching a starter exercise catalog of common exercises, together with the
+  exercise configurations saved at the gym;
 - remembering equipment and machine details separately for each gym;
 - logging sets with optional weight, repetitions or duration, and completion;
 - removing and reordering exercises in the active workout, and changing the
@@ -96,11 +97,13 @@ gym brings them back.
 **Edit** beside Routines opens the Routines screen for the selected gym:
 
 - **New routine** asks for a name, then opens the empty routine.
-- Select a routine to change it. **Add exercise** lists the exercise
-  configurations saved at this gym, with a search box. **Browse exercise catalog**
-  opens the catalog, custom-exercise creation, equipment, and machine details.
-  **Add to routine** saves the configuration and adds it to the plan together;
-  you can build a routine before your first workout. Added exercises start with 3 sets.
+- Select a routine to change it. **Add exercise** opens the same picker as a
+  workout: Recent at this gym, the exercise catalog, and custom-exercise
+  creation. Searching lists matching configurations saved at this gym (one tap
+  adds one) above matching catalog exercises, so there is one search for both.
+  Choosing a catalog exercise asks for equipment and machine details; **Add to
+  routine** saves the configuration and adds it to the plan together, so you can
+  build a routine before your first workout. Added exercises start with 3 sets.
 - **Sets** chooses 1 to 20 sets for an exercise. **Move up** and **Move down**
   change its place, and the × removes it after a confirmation.
 - **Rename** changes the name. Routine names are unique within a gym,

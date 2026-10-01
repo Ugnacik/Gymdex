@@ -3,8 +3,6 @@
 // Routines beside plain Start; the Routines screen creates, edits and deletes them.
 
 export const ROUTINE_MAX_SETS = 20;
-// Sets offered for an exercise added in the Routines screen; the Sets menu changes it.
-export const ROUTINE_DEFAULT_SETS = 3;
 
 const plural = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`;
 
@@ -50,7 +48,6 @@ export function openRoutines(context, gym) {
   const render = () => {
     const routine = current();
     if (view === "list" || !routine) { view = "list"; content.innerHTML = renderList(); }
-    else if (view === "add") { content.innerHTML = renderAdd(routine); renderChoices(""); }
     else content.innerHTML = renderDetail(routine);
   };
 
@@ -84,23 +81,6 @@ export function openRoutines(context, gym) {
         </li>`;
       }).join("")}</ol>` : `<p>No exercises yet.</p>`}
       <button type="button" class="primary accent routine-add" data-add-routine-exercise>Add exercise</button>`;
-  }
-
-  function renderAdd(routine) {
-    return `<button type="button" class="text-button" data-routine-detail>Back to ${escapeHtml(routine.name)}</button>
-      <h3>Add exercise</h3>
-      <p>Choose a saved configuration at ${escapeHtml(gym.name)}, or browse the catalog to add a new exercise.</p>
-      <button type="button" class="secondary routine-add" data-browse-catalog>Browse exercise catalog</button>
-      <input class="search" id="routine-search" type="search" inputmode="search" autocomplete="off" placeholder="Search exercises" aria-label="Search exercises" />
-      <div id="routine-choices" class="recent-list"></div>`;
-  }
-
-  function renderChoices(query) {
-    const wanted = query.trim().toLowerCase();
-    const choices = data.configurations.filter((item) =>
-      `${exerciseDisplayName(item)} ${item.exercise_name} ${item.variation_name} ${configurationLabel(item)}`.toLowerCase().includes(wanted));
-    find("#routine-choices").innerHTML = choices.map((item) => `<button type="button" class="recent-card" data-add-profile="${item.profile_id}"><strong>${escapeHtml(exerciseDisplayName(item))}</strong><span>${escapeHtml(configurationLabel(item))}</span></button>`).join("")
-      || `<p>${data.configurations.length ? "No saved configurations match. Try the exercise catalog." : `No saved configurations at ${escapeHtml(gym.name)} yet. Browse the catalog to choose your first exercise.`}</p>`;
   }
 
   function replaceRoutine(saved) {
@@ -144,34 +124,21 @@ export function openRoutines(context, gym) {
     const open = hit("[data-open-routine]");
     if (open) { openId = Number(open.dataset.openRoutine); view = "detail"; render(); content.focus(); return; }
     if (hit("[data-routine-back]")) { view = "list"; render(); content.focus(); return; }
-    if (hit("[data-routine-detail]")) { view = "detail"; render(); content.focus(); return; }
     const routine = current();
     if (!routine) return;
-    if (hit("[data-browse-catalog]")) {
+    // Add exercise opens the workout's picker: its search covers this Gym's saved
+    // configurations and the catalog together.
+    if (hit("[data-add-routine-exercise]")) {
       busy = true;
       try {
         await openCatalog(gym, routine, (saved) => {
           replaceRoutine(saved);
-          for (const item of saved.exercises) {
-            if (!item.archived && !data.configurations.some(existing => existing.profile_id === item.profile_id)) {
-              data.configurations.push(item);
-            }
-          }
           view = "detail";
           render();
           find("[data-add-routine-exercise]")?.focus();
         });
       } catch (error) { showToast(error.message); }
       finally { busy = false; }
-      return;
-    }
-    if (hit("[data-add-routine-exercise]")) { view = "add"; render(); find("#routine-search")?.focus(); return; }
-    const add = hit("[data-add-profile]");
-    if (add) {
-      const item = data.configurations.find((choice) => choice.profile_id === Number(add.dataset.addProfile));
-      if (!item) return;
-      view = "detail";
-      await saveExercises([...routine.exercises, { ...item, set_count: ROUTINE_DEFAULT_SETS }], `${exerciseDisplayName(item)} added.`);
       return;
     }
     const move = hit("[data-move-routine-exercise]");
@@ -228,9 +195,6 @@ export function openRoutines(context, gym) {
     const index = Number(select.dataset.setCount);
     const exercises = routine.exercises.map((item, position) => position === index ? { ...item, set_count: Number(select.value) } : item);
     if (await saveExercises(exercises)) find(`[data-set-count="${index}"]`)?.focus();
-  });
-  content.addEventListener("input", (event) => {
-    if (event.target.id === "routine-search") renderChoices(event.target.value);
   });
 
   dialog.showModal();

@@ -1941,14 +1941,15 @@ test('the Routines screen edits a routine\'s exercises, set counts and order', a
   const configurations = [{ profile_id: 1, variation_id: 1, exercise_name: 'Bench Press', variation_name: 'Standard', equipment: 'Barbell', manufacturer: '', label: 'Rack <1>' },
     { profile_id: 3, variation_id: 3, exercise_name: 'Squat', variation_name: 'Back Squat', equipment: 'Barbell', manufacturer: '', label: '' }];
   const byProfile = { 1: routineExercise(1, 'Bench Press', 0, { label: 'Rack <1>' }), 2: routineExercise(2, 'Dip', 0, { archived: true }), 3: routineExercise(3, 'Squat', 0, { variation_name: 'Back Squat' }) };
-  const { dialog, nodes, content, requests, click } = await openRoutinesScreen(app, {
+  const routes = {
     'GET /api/routines?gym_id=1': () => ({ routines: [routine], configurations }),
     'PUT /api/routines/4': (body) => {
       if (body.exercises) routine = { ...routine, exercises: body.exercises.map((item) => ({ ...byProfile[item.profile_id], set_count: item.set_count })) };
       return routine;
     },
     'GET /api/bootstrap': () => ({ ...startData([home]), routines: [{ id: 4, gym_id: 1, name: 'Push', exercise_count: routine.exercises.length }] }),
-  });
+  };
+  const { dialog, nodes, content, requests, click } = await openRoutinesScreen(app, routes);
   assert.equal(dialog.open, true);
   assert.match(dialog.innerHTML, /Routines at Home/);
   assert.equal(nodes['#routines-message'].textContent, '');
@@ -1981,15 +1982,38 @@ test('the Routines screen edits a routine\'s exercises, set counts and order', a
   assert.deepEqual(requests.at(-1), ['PUT /api/routines/4', { exercises: [{ profile_id: 1, set_count: 3 }] }]);
   assert.equal(app.nodes['#toast'].textContent, 'Dip removed.');
 
+  // Add exercise opens the workout picker. A search covers the saved configurations and the catalog together.
+  pickerSheet(app);
+  const catalog = { recent: [configurations[0]], saved: configurations, catalog: [
+    { id: 1, exercise_name: 'Bench Press', variation_name: 'Standard', equipment: ['Barbell'] },
+    { id: 3, exercise_name: 'Squat', variation_name: 'Back Squat', equipment: ['Barbell'] }] };
+  Object.assign(routes, {
+    'GET /api/catalog?gym_id=1': catalog,
+    'POST /api/routines/4/exercises': (body) => {
+      routine = { ...routine, exercises: [...routine.exercises, { ...byProfile[body.variation_id], set_count: 3 }] };
+      return routine;
+    },
+  });
   await click('[data-add-routine-exercise]', {});
-  assert.match(content.innerHTML, /id="routine-search"/);
-  assert.match(nodes['#routine-choices'].innerHTML, /data-add-profile="1"[\s\S]*data-add-profile="3"><strong>Back Squat<\/strong><span>Barbell<\/span>/);
-  content.events.input({ target: { id: 'routine-search', value: 'squat' } });
-  assert.doesNotMatch(nodes['#routine-choices'].innerHTML, /data-add-profile="1"/);
-  await click('[data-add-profile]', { addProfile: '3' });
-  assert.deepEqual(requests.at(-1), ['PUT /api/routines/4', { exercises: [{ profile_id: 1, set_count: 3 }, { profile_id: 3, set_count: 3 }] }]);
-  assert.equal(app.nodes['#toast'].textContent, 'Back Squat added.');
-  assert.match(content.innerHTML, /<h3>Push<\/h3>/);
+  let results = app.nodes['#picker-results'].innerHTML;
+  assert.match(results, /<h3>Recent at Home<\/h3>[\s\S]*data-profile-id="1"/);
+  assert.doesNotMatch(results, /data-profile-id="3"/);
+  assert.match(results, /<h3>Exercise catalog<\/h3><span>2<\/span>/);
+  app.nodes['#exercise-search'].events.input({ target: { value: 'squat' } });
+  results = app.nodes['#picker-results'].innerHTML;
+  assert.match(results, /<h3>Saved at Home<\/h3><span>1<\/span>[\s\S]*data-profile-id="3"><strong>Back Squat<\/strong><span>Barbell<\/span>/);
+  assert.doesNotMatch(results, /data-profile-id="1"/);
+  assert.match(results, /<h3>Exercise catalog<\/h3><span>1<\/span>[\s\S]*data-variation-id="3"/);
+  const saved = Object.assign(node(), { dataset: { profileId: '3' } });
+  const querySelectorAll = app.env.document.querySelectorAll;
+  app.env.document.querySelectorAll = (selector) => selector === '[data-profile-id]' ? [saved] : querySelectorAll(selector);
+  app.nodes['#exercise-search'].events.input({ target: { value: 'squat' } });
+  app.env.document.querySelectorAll = querySelectorAll;
+  await saved.events.click();
+  await settle();
+  assert.deepEqual(requests.at(-1), ['POST /api/routines/4/exercises', { variation_id: 3, equipment: 'Barbell', manufacturer: '', label: '' }]);
+  assert.equal(app.nodes['#toast'].textContent, 'Exercise added to routine.');
+  assert.match(content.innerHTML, /<h3>Push<\/h3>[\s\S]*Bench Press[\s\S]*Back Squat/);
 
   dialog.close();
   assert.equal(dialog.removed, true);
