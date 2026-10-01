@@ -240,7 +240,7 @@ function gymOptions(selectedId = null) {
 }
 
 function renderHeader(status = "Ready") {
-  return `<header class="app-header"><div class="brand">Gymdex</div><nav aria-label="App views"><button class="text-button" id="open-progress" ${recordedGyms().length ? "" : "disabled"}>Progress</button><button class="text-button" id="open-history">History</button></nav><div class="status${state.data.active_workout ? " status-active" : ""}">${escapeHtml(status)}</div></header><p id="sync-status" class="sync-status" role="status"></p>`;
+  return `<header class="app-header"><div class="brand-block"><div class="brand">Gymdex</div><div class="status${state.data.active_workout ? " status-active" : ""}">${escapeHtml(status)}</div></div><nav aria-label="App views"><button class="text-button" id="open-progress" ${recordedGyms().length ? "" : "disabled"}>Progress</button><button class="text-button" id="open-history">History</button></nav></header><p id="sync-status" class="sync-status" role="status"></p>`;
 }
 
 function renderStart() {
@@ -491,11 +491,17 @@ function renderExerciseTools(entry, index, count) {
 
 function renderRestTimer() {
   const duration = state.restTimer.snapshot().durationSeconds;
-  return `<section class="rest-timer" aria-labelledby="rest-title">
-    <div class="rest-heading"><h2 id="rest-title">Rest</h2><label class="rest-switch"><input id="rest-enabled" type="checkbox" ${state.restEnabled ? "checked" : ""} /> On</label></div>
+  // One column: title and switch, then clock and controls, then settings. The switch is the
+  // only on/off cue; its accessible name comes from aria-label.
+  return `<section class="rest-timer" aria-labelledby="rest-title" data-rest-state="idle">
+    <div class="rest-heading">
+      <div class="rest-title"><h2 id="rest-title">Rest timer</h2><p class="rest-caption">Counts down after each completed set</p></div>
+      <label class="rest-switch"><input id="rest-enabled" type="checkbox" role="switch" aria-label="Rest timer" ${state.restEnabled ? "checked" : ""} /></label>
+    </div>
     <div id="rest-controls" ${state.restEnabled ? "" : "hidden"}>
       <div class="rest-readout"><strong id="rest-clock" role="timer" aria-live="off"></strong><span id="rest-status" role="status"></span></div>
-      <div class="rest-actions"><button type="button" class="secondary" id="rest-start">Start</button><button type="button" class="secondary" id="rest-pause">Pause</button></div>
+      <div class="rest-actions"><button type="button" class="secondary rest-start" id="rest-start">Start</button><button type="button" class="secondary" id="rest-pause">Pause</button></div>
+      <div class="rest-meter" aria-hidden="true"><span></span></div>
     </div>
     <details class="rest-settings"><summary>Timer settings</summary>
       <label class="field rest-duration">Rest after a set<select id="rest-duration">
@@ -514,6 +520,12 @@ function renderRestTimerState() {
   const minutes = Math.floor(snapshot.remainingSeconds / 60);
   const seconds = String(snapshot.remainingSeconds % 60).padStart(2, "0");
   clock.textContent = `${minutes}:${seconds}`;
+  // Styling hooks only: the card's state and the share of the rest still to go.
+  const card = clock.closest?.(".rest-timer");
+  if (card) {
+    card.dataset.restState = snapshot.status;
+    card.style.setProperty("--rest-left", String(snapshot.durationSeconds ? snapshot.remainingSeconds / snapshot.durationSeconds : 1));
+  }
   document.querySelector("#rest-status").textContent = {
     idle: "Ready after a completed set", running: "Resting", paused: "Paused", finished: "Rest complete",
   }[snapshot.status];

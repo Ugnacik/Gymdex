@@ -84,7 +84,7 @@ test('worker upgrade installs the current shell and removes the previous offline
     ['gymdex-shell-v1', new Map([['/app.js', 'old app']])],
     ['unrelated-cache', new Map()],
   ]);
-  const assets = new Map(await Promise.all(['/', '/index.html', '/styles.css', '/app.js', '/app.mjs', '/workout-editor.mjs', '/drafts.mjs', '/rest-timer.mjs', '/keyboard.mjs', '/confirm-sheet.mjs', '/choice-field.mjs', '/routines.mjs', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png', '/icon-maskable-512.png', '/apple-touch-icon.png'].map(async (path) =>
+  const assets = new Map(await Promise.all(['/', '/index.html', '/styles.css', '/app.js', '/app.mjs', '/workout-editor.mjs', '/drafts.mjs', '/rest-timer.mjs', '/keyboard.mjs', '/confirm-sheet.mjs', '/choice-field.mjs', '/routines.mjs', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png', '/icon-maskable-512.png', '/apple-touch-icon.png', '/fonts/Geist-Variable.woff2'].map(async (path) =>
     [path, await readFile(new URL('../static/' + (path === '/' ? 'index.html' : path.slice(1)), import.meta.url), 'utf8')])));
   let claimed = false;
   const context = vm.createContext({
