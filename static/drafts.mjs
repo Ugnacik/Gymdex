@@ -103,9 +103,20 @@ export class DraftStore {
   }
 }
 
+// Weight fields are text so a decimal comma survives (Chrome's number inputs drop it
+// in English locales). Blank is null; anything but digits with one "." or "," is NaN.
+export const WEIGHT_PATTERN = "\\s*(\\d+([.,]\\d*)?|[.,]\\d+)\\s*";
+
+export function parseWeight(text) {
+  const value = text.trim();
+  if (value === "") return null;
+  return new RegExp(`^(?:${WEIGHT_PATTERN})$`).test(value) ? Number(value.replace(",", ".")) : NaN;
+}
+
 export function setPayload(values) {
+  const weight = parseWeight(values.weight);
   return {
-    weight: values.weight === "" ? null : Math.abs(Number(values.weight)) * (values.assistance ? -1 : 1),
+    weight: weight === null ? null : Math.abs(weight) * (values.assistance ? -1 : 1),
     result: values.result === "" ? null : Number(values.result),
     completed: values.completed,
   };

@@ -939,6 +939,43 @@ def update_routine(connection: sqlite3.Connection, routine_id: int, payload: dic
         return _describe_routine(connection, routine_id)
 
 
+def add_routine_exercise(connection: sqlite3.Connection, routine_id: int, variation_id: int,
+                         equipment: str, manufacturer: str = "", label: str = "",
+                         set_count: int = 3) -> dict[str, Any]:
+    """Choose a configuration and append it without creating a workout.
+
+    The configuration and routine entry are saved together; failures leave neither behind.
+    """
+    if type(set_count) is not int or not 1 <= set_count <= ROUTINE_MAX_SETS:
+        raise ValueError(f"Sets must be a whole number from 1 to {ROUTINE_MAX_SETS}.")
+    with connection:
+        connection.execute("BEGIN IMMEDIATE")
+        routine = _require_routine(connection, routine_id)
+        require_unarchived_gym(routine["gym_name"], routine["archived_at"])
+        count = connection.execute(
+            "SELECT COUNT(*) FROM routine_exercises WHERE routine_id = ?", (routine_id,),
+        ).fetchone()[0]
+        if count >= ROUTINE_MAX_EXERCISES:
+            raise ValueError(f"A routine lists up to {ROUTINE_MAX_EXERCISES} exercises.")
+        variation = connection.execute(
+            "SELECT name, archived_at FROM exercise_variations WHERE id = ?", (variation_id,),
+        ).fetchone()
+        if not variation:
+            raise LookupError("Exercise variation not found.")
+        _require_unarchived_variation(variation["name"], variation["archived_at"])
+        profile = _choose_configuration(connection, routine["gym_id"], variation_id,
+                                        equipment, manufacturer, label)
+        position = connection.execute(
+            "SELECT COALESCE(MAX(position), 0) + 1 FROM routine_exercises WHERE routine_id = ?",
+            (routine_id,),
+        ).fetchone()[0]
+        connection.execute(
+            "INSERT INTO routine_exercises(routine_id, position, profile_id, set_count) VALUES (?, ?, ?, ?)",
+            (routine_id, position, profile["id"], set_count),
+        )
+        return _describe_routine(connection, routine_id)
+
+
 def delete_routine(connection: sqlite3.Connection, routine_id: int) -> dict[str, bool]:
     """Delete a Routine and its exercises. No Workout refers to a Routine."""
     with connection:

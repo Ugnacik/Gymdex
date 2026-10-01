@@ -151,6 +151,15 @@ class GymdexHandler(BaseHTTPRequestHandler):
             )
 
         parts = parsed.path.strip("/").split("/")
+        if len(parts) == 4 and parts[:2] == ["api", "routines"] and parts[3] == "exercises":
+            return self._with_db(
+                lambda connection: db.add_routine_exercise(
+                    connection, int(parts[2]), id_field(payload, "variation_id"),
+                    text_field(payload, "equipment"), text_field(payload, "manufacturer"),
+                    text_field(payload, "label"), payload.get("set_count", 3),
+                ),
+                status=HTTPStatus.CREATED,
+            )
         if len(parts) == 4 and parts[:2] == ["api", "routines"] and parts[3] == "start":
             return self._with_db(
                 lambda connection: db.start_routine(connection, int(parts[2])),

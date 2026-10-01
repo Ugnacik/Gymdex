@@ -24,6 +24,7 @@ function storage() {
 }
 function node() {
   return { innerHTML: '', textContent: '', hidden: false, disabled: false, events: {},
+    showModal() { this.open = true; }, close() { this.open = false; this.events.close?.(); },
     classList: { toggle() {} }, addEventListener(event, callback) { this.events[event] = callback; },
     focus() { this.focused = true; }, setAttribute() {}, removeAttribute() {},
     querySelectorAll() {
@@ -106,7 +107,7 @@ async function harness(disk = storage(), initialData = {}, { now = Date.parse('2
       previous_sets: [], sets: [{ id: 2, position: 1, weight: null, result: null, completed: false }] }], ...initialData };
   const env = {
     // Gymdex asks in its own confirmation sheet: some in-app browsers answer window.confirm() with false unseen.
-    window: { localStorage: disk, addEventListener() {}, confirm: () => { throw new Error('window.confirm() is not used'); } },
+    window: { localStorage: disk, addEventListener() {}, scrollTo(options) { this.scrollPosition = options; }, confirm: () => { throw new Error('window.confirm() is not used'); } },
     // Answers the confirmation sheet; tests replace it to record the questions and decline.
     ask: async () => true,
     // Answers the text sheet; tests replace it to name a routine through its submit().
@@ -197,6 +198,8 @@ test('earlier negative sets and restored assistance drafts stay assisted on unas
   assert.match(restored.nodes['#app'].innerHTML, /data-assisted="true"/);
   const plain = await harness();
   assert.match(plain.nodes['#app'].innerHTML, /data-assisted="false"[\s\S]*>kg <input name="weight"/);
+  // A number input would drop a decimal comma, so weight is text with the decimal keypad.
+  assert.match(plain.nodes['#app'].innerHTML, /<input name="weight" type="text" inputmode="decimal" pattern="[^"]*\[\.,\][^"]*" autocomplete="off"/);
 });
 
 test('finish and cancel keep an acknowledged terminal state when bootstrap fails', async () => {
@@ -220,6 +223,25 @@ test('finish and cancel keep an acknowledged terminal state when bootstrap fails
     assert.equal(new DraftStore(() => app.disk).cachedWorkout().active_workout, null);
     assert.equal(app.nodes.main.inert, false);
   }
+});
+
+test('finish summary uses acknowledged set edits and survives a failed bootstrap refresh', async () => {
+  const app = await harness();
+  app.env.fetch = async (path, options) => {
+    if (path === '/api/sets/2') return response({ id: 2, position: 1, ...JSON.parse(options.body) });
+    if (path === '/api/workouts/1/complete') return response({ ok: true });
+    throw new Error('Refresh unavailable');
+  };
+  app.form.elements.weight.value = '42.5';
+  app.form.elements.result.value = '8';
+  app.form.elements.completed.checked = true;
+  app.form.events.input();
+  await app.nodes['#finish'].events.click();
+  assert.match(app.nodes['#app'].innerHTML, /Workout complete/);
+  assert.match(app.nodes['#app'].innerHTML, /Home · 25 min/);
+  assert.match(app.nodes['#app'].innerHTML, /1 exercise with completed sets · 1 completed set/);
+  assert.deepEqual(app.env.window.scrollPosition, { top: 0, left: 0, behavior: 'instant' });
+  assert.equal(new DraftStore(() => app.disk).cachedWorkout().active_workout, null);
 });
 
 test('a stalled HTTP save times out without disabling entry or discarding its draft', async () => {
@@ -501,7 +523,7 @@ function pickerSheet(app) {
   };
   sheet.querySelector = (selector) => sheetNodes[selector];
   Object.assign(app.nodes, { '#picker .sheet': sheet, '#exercise-search': Object.assign(node(), { value: '', setSelectionRange() {} }),
-    '#close-picker': node(), '#back-to-picker': node(), '#configuration-form': node(),
+    '#close-picker': node(), '#back-to-picker': node(), '#configuration-form': Object.assign(node(), { querySelector: () => node() }),
     '#manufacturer-field': choiceContainer(), '#machine-label-field': choiceContainer() });
   app.env.document.createElement = () => wrapper;
   app.env.document.body = { append: () => { app.nodes['#picker'] = wrapper; } };
@@ -699,7 +721,7 @@ const legPressEntry = { id: 3, variation_id: 17, exercise_name: 'Leg Press', var
 
 test('Change machine saves set drafts, then switches the exercise to the machine chosen in its sheet', async () => {
   const app = await harness(storage(), { workout_exercises: [legPressEntry] });
-  assert.match(app.nodes['#app'].innerHTML, /<div class="machine-line"><p class="meta">Machine · Cybex<\/p><button type="button" class="text-button" data-change-machine="3" aria-label="Change machine for Single Leg Leg Press">Change machine<\/button><\/div>/);
+  assert.match(app.nodes['#app'].innerHTML, /<p class="meta">Machine · Cybex<\/p>[\s\S]*data-change-machine="3" aria-label="Change machine for Single Leg Leg Press">Change machine<\/button>/);
   const { sheet } = pickerSheet(app);
   const changed = { ...structuredClone(legPressEntry), equipment: 'Sled', manufacturer: 'Technogym', label: 'Upstairs',
     sets: [{ id: 2, position: 1, weight: 100, result: null, completed: false }] };
@@ -1084,15 +1106,15 @@ function clickIn(app, selector, dataset) {
   return app.nodes['#app'].events.click({ target: { closest: (wanted) => wanted === selector ? button : null } });
 }
 
-test('each exercise offers move up and move down with the ends disabled, and × in its corner to remove it', async () => {
+test('each exercise offers move up and move down with the ends disabled, and removal in its options', async () => {
   const app = await harness(storage(), { workout_exercises: [pressEntry, plankEntry] });
   const html = app.nodes['#app'].innerHTML;
   assert.match(html, /data-move-exercise="3" data-move-to="0" aria-label="Move Bench Press up" disabled>Move up/);
   assert.match(html, /data-move-exercise="3" data-move-to="2" aria-label="Move Bench Press down" >Move down/);
   assert.match(html, /data-move-exercise="4" data-move-to="1" aria-label="Move Front Plank up" >Move up/);
   assert.match(html, /data-move-exercise="4" data-move-to="3" aria-label="Move Front Plank down" disabled>Move down/);
-  assert.match(html, /<div class="history-exercise-heading"><h3>Front Plank<\/h3>[\s\S]*?<button type="button" class="remove-exercise" data-remove-exercise="4" aria-label="Remove Front Plank"><span aria-hidden="true">×<\/span><\/button><\/div>/);
-  assert.doesNotMatch(html, />Remove</, 'the × replaces the Remove button beside Move up and Move down');
+  assert.match(html, /<summary class="exercise-summary"><h3>Front Plank<\/h3>[\s\S]*?<details class="exercise-options"[^>]*><summary>Exercise options<\/summary>[\s\S]*?data-remove-exercise="4" aria-label="Remove Front Plank">Remove exercise<\/button>/);
+  assert.doesNotMatch(html, />Remove</, 'removal has a specific exercise label');
 });
 
 test('removing an exercise asks first, then drops it and its drafts from the workout', async () => {
@@ -1238,9 +1260,9 @@ test('workout and exercise notes stay collapsed, keep drafts on the phone, and a
   const html = app.nodes['#app'].innerHTML;
   assert.match(html, /<details class="note"[^>]*>\s*<summary[^>]*>[\s\S]*?Workout note[\s\S]*?<textarea data-note-target="workout"[^>]*maxlength="1000"[^>]*>Slept &lt;5h<\/textarea>/);
   assert.match(html, /Add note[\s\S]*?<textarea data-note-target="exercise:3"[^>]*aria-label="Note for Bench Press"[^>]*><\/textarea>/);
-  assert.doesNotMatch(html, /<details[^>]*\bopen\b/, 'notes are collapsed so the recording path stays short');
-  const order = ['id="workout-elapsed"', 'data-note-target="workout"', 'class="rest-timer"', '<p class="meta">', 'data-note-target="exercise:3"',
-    'class="sets-list"', 'data-add-set="3"', 'class="exercise-tools"', 'id="open-picker"', 'data-finish-workout'].map((marker) => html.indexOf(marker));
+  assert.doesNotMatch(html, /<details class="note"[^>]*\bopen\b/, 'notes are collapsed so the recording path stays short');
+  const order = ['id="workout-elapsed"', 'data-note-target="workout"', 'class="rest-timer"', '<p class="meta">', 'class="sets-list"', 'data-add-set="3"',
+    'data-note-target="exercise:3"', 'class="exercise-tools"', 'id="open-picker"', 'data-finish-workout'].map((marker) => html.indexOf(marker));
   assert.ok(order.every((index, i) => index >= 0 && (i === 0 || index > order[i - 1])), `unexpected order ${order}`);
 
   const requests = [];

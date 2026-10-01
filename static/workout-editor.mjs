@@ -1,13 +1,13 @@
-import { setPayload } from "./drafts.mjs";
+import { parseWeight, setPayload } from "./drafts.mjs";
 
 export const NOTE_MAX_LENGTH = 1000;
 
 const noteKey = (target) => `note:${target}`;
 
 function validValues(values) {
-  const weight = Number(values.weight);
+  const weight = parseWeight(values.weight);
   const result = Number(values.result);
-  return (values.weight === "" || (Number.isFinite(weight) && weight >= 0 && weight <= 100000))
+  return (weight === null || (Number.isFinite(weight) && weight >= 0 && weight <= 100000))
     && (values.result === "" ? !values.completed : Number.isInteger(result) && result >= 1 && result <= 1000000);
 }
 

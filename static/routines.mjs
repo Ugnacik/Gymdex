@@ -21,7 +21,7 @@ export function renderRoutineStarts(routines, gym, escapeHtml) {
 // Opens the Routines screen for one Gym. context supplies the app's api, ask, askText,
 // showToast and text helpers; onClose runs after the screen closes when something changed.
 export function openRoutines(context, gym) {
-  const { document, api, ask, askText, showToast, escapeHtml, exerciseDisplayName, configurationLabel, onClose } = context;
+  const { document, api, ask, askText, showToast, escapeHtml, exerciseDisplayName, configurationLabel, onClose, openCatalog } = context;
   if (document.querySelector("#routines")) return;
   const dialog = document.createElement("dialog");
   dialog.id = "routines";
@@ -89,7 +89,8 @@ export function openRoutines(context, gym) {
   function renderAdd(routine) {
     return `<button type="button" class="text-button" data-routine-detail>Back to ${escapeHtml(routine.name)}</button>
       <h3>Add exercise</h3>
-      <p>Exercise configurations saved at ${escapeHtml(gym.name)}, most recently used first. To add a new one, add it to a workout here once.</p>
+      <p>Choose a saved configuration at ${escapeHtml(gym.name)}, or browse the catalog to add a new exercise.</p>
+      <button type="button" class="secondary routine-add" data-browse-catalog>Browse exercise catalog</button>
       <input class="search" id="routine-search" type="search" inputmode="search" autocomplete="off" placeholder="Search exercises" aria-label="Search exercises" />
       <div id="routine-choices" class="recent-list"></div>`;
   }
@@ -99,7 +100,7 @@ export function openRoutines(context, gym) {
     const choices = data.configurations.filter((item) =>
       `${exerciseDisplayName(item)} ${item.exercise_name} ${item.variation_name} ${configurationLabel(item)}`.toLowerCase().includes(wanted));
     find("#routine-choices").innerHTML = choices.map((item) => `<button type="button" class="recent-card" data-add-profile="${item.profile_id}"><strong>${escapeHtml(exerciseDisplayName(item))}</strong><span>${escapeHtml(configurationLabel(item))}</span></button>`).join("")
-      || `<p>${data.configurations.length ? "No matches." : `No exercise configurations at ${escapeHtml(gym.name)} yet. Add exercises to a workout here first.`}</p>`;
+      || `<p>${data.configurations.length ? "No saved configurations match. Try the exercise catalog." : `No saved configurations at ${escapeHtml(gym.name)} yet. Browse the catalog to choose your first exercise.`}</p>`;
   }
 
   function replaceRoutine(saved) {
@@ -146,6 +147,24 @@ export function openRoutines(context, gym) {
     if (hit("[data-routine-detail]")) { view = "detail"; render(); content.focus(); return; }
     const routine = current();
     if (!routine) return;
+    if (hit("[data-browse-catalog]")) {
+      busy = true;
+      try {
+        await openCatalog(gym, routine, (saved) => {
+          replaceRoutine(saved);
+          for (const item of saved.exercises) {
+            if (!item.archived && !data.configurations.some(existing => existing.profile_id === item.profile_id)) {
+              data.configurations.push(item);
+            }
+          }
+          view = "detail";
+          render();
+          find("[data-add-routine-exercise]")?.focus();
+        });
+      } catch (error) { showToast(error.message); }
+      finally { busy = false; }
+      return;
+    }
     if (hit("[data-add-routine-exercise]")) { view = "add"; render(); find("#routine-search")?.focus(); return; }
     const add = hit("[data-add-profile]");
     if (add) {

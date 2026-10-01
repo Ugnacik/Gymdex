@@ -64,6 +64,70 @@ class RoutineTests(unittest.TestCase):
 
     # Migration 5
 
+    def test_catalog_exercise_can_be_planned_before_the_first_workout(self):
+        routine = db.create_routine(self.connection, self.home['id'], 'First plan')
+        status, saved = self.request('POST', f"/api/routines/{routine['id']}/exercises", {
+            'variation_id': self.press['id'], 'equipment': 'Dumbbell',
+            'manufacturer': '  Acme  ', 'label': ' Rack   2 ', 'set_count': 4,
+        })
+        self.assertEqual(status, 201)
+        self.assertEqual(self.summary(saved), [('Bench Press', 'Rack 2', 4)])
+        self.assertEqual(saved['exercises'][0]['manufacturer'], 'Acme')
+        self.assertEqual(self.connection.execute('SELECT COUNT(*) FROM workouts').fetchone()[0], 0)
+        started = db.start_routine(self.connection, routine['id'])
+        self.assertEqual(len(db.bootstrap(self.connection)['workout_exercises'][0]['sets']), 4)
+        self.assertEqual(started['gym_id'], self.home['id'])
+
+    def test_catalog_append_reuses_the_configuration_and_keeps_existing_plan(self):
+        routine = db.create_routine(self.connection, self.home['id'], 'Plan')
+        db.add_routine_exercise(self.connection, routine['id'], self.press['id'], 'Barbell')
+        saved = db.add_routine_exercise(self.connection, routine['id'], self.press['id'], 'Barbell', set_count=1)
+        self.assertEqual([e['set_count'] for e in saved['exercises']], [3, 1])
+        self.assertEqual(len({e['profile_id'] for e in saved['exercises']}), 1)
+
+    def test_invalid_catalog_appends_leave_the_plan_and_configurations_unchanged(self):
+        routine = db.create_routine(self.connection, self.home['id'], 'Plan')
+        for change in ({'equipment': 'Rope'}, {'variation_id': 999999},
+                       {'set_count': True}, {'set_count': 0}, {'set_count': 21}):
+            payload = dict(variation_id=self.press['id'], equipment='Barbell')
+            payload.update(change)
+            with self.subTest(change=change):
+                status, _ = self.request('POST', f"/api/routines/{routine['id']}/exercises", payload)
+                self.assertIn(status, (400, 404))
+                self.assertEqual(db.routines_for_gym(self.connection, self.home['id'])['routines'][0]['exercises'], [])
+                self.assertEqual(self.connection.execute('SELECT COUNT(*) FROM gym_exercise_profiles').fetchone()[0], 0)
+
+    def test_archived_gym_or_variation_cannot_be_added_from_the_catalog(self):
+        routine = db.create_routine(self.connection, self.home['id'], 'Plan')
+        self.connection.execute("UPDATE gyms SET archived_at = CURRENT_TIMESTAMP WHERE id = ?", (self.home['id'],))
+        self.connection.commit()
+        with self.assertRaises(RuntimeError):
+            db.add_routine_exercise(self.connection, routine['id'], self.press['id'], 'Barbell')
+        db.restore_item(self.connection, 'gym', self.home['id'])
+        self.connection.execute("UPDATE exercise_variations SET archived_at = CURRENT_TIMESTAMP WHERE id = ?", (self.press['id'],))
+        self.connection.commit()
+        with self.assertRaises(RuntimeError):
+            db.add_routine_exercise(self.connection, routine['id'], self.press['id'], 'Barbell')
+        self.assertEqual(self.connection.execute('SELECT COUNT(*) FROM gym_exercise_profiles').fetchone()[0], 0)
+
+    def test_append_handles_positions_left_by_deleted_configurations(self):
+        routine = db.create_routine(self.connection, self.home['id'], 'Plan')
+        first = db.add_routine_exercise(self.connection, routine['id'], self.press['id'], 'Barbell')
+        db.add_routine_exercise(self.connection, routine['id'], self.plank['id'], 'Bodyweight')
+        db.remove_item(self.connection, 'configuration', first['exercises'][0]['profile_id'])
+        saved = db.add_routine_exercise(self.connection, routine['id'], self.press['id'], 'Dumbbell')
+        self.assertEqual([e['position'] for e in saved['exercises']], [1, 2])
+        self.assertEqual([e['equipment'] for e in saved['exercises']], ['Bodyweight', 'Dumbbell'])
+
+    def test_full_routine_refuses_a_new_configuration(self):
+        routine = db.create_routine(self.connection, self.home['id'], 'Plan')
+        saved = db.add_routine_exercise(self.connection, routine['id'], self.press['id'], 'Barbell')
+        db.update_routine(self.connection, routine['id'], {'exercises': [
+            {'profile_id': saved['exercises'][0]['profile_id'], 'set_count': 1}] * 50})
+        with self.assertRaises(ValueError):
+            db.add_routine_exercise(self.connection, routine['id'], self.plank['id'], 'Bodyweight')
+        self.assertEqual(self.connection.execute('SELECT COUNT(*) FROM gym_exercise_profiles').fetchone()[0], 1)
+
     def test_version_four_database_gains_empty_routine_tables_and_keeps_its_workouts(self):
         workout, _, _ = self.completed_workout()
         self.connection.execute('DROP TABLE routine_exercises')
