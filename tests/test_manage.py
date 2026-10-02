@@ -215,6 +215,19 @@ class ManageConfigurationTests(unittest.TestCase):
         db.complete_workout(self.connection, workout['id'])
         return workout
 
+    def test_the_picker_searches_every_saved_configuration_beyond_recent(self):
+        labels = [f'Rack {number}' for number in range(1, 11)]
+        self.completed_workout_with(*labels)
+        catalog = db.catalog_for_gym(self.connection, self.home['id'])
+        self.assertEqual(len(catalog['recent']), 8)
+        self.assertEqual(sorted(item['label'] for item in catalog['saved']), sorted(labels))
+        self.assertEqual(catalog['saved'][:8], catalog['recent'])
+
+        db.remove_item(self.connection, 'configuration', self.configuration_id(label='Rack 1'))
+
+        saved = db.catalog_for_gym(self.connection, self.home['id'])['saved']
+        self.assertNotIn('Rack 1', {item['label'] for item in saved})
+
     def test_a_used_configuration_is_archived_and_makes_room_in_recent(self):
         labels = [f'Rack {number}' for number in range(1, 10)]
         workout = self.completed_workout_with(*labels)

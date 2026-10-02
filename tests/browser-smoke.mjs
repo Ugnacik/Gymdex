@@ -51,7 +51,6 @@ try {
   await page.getByRole('textbox', { name: 'Routine name' }).fill('First plan');
   await page.getByRole('button', { name: 'Create routine', exact: true }).click();
   await page.locator('[data-add-routine-exercise]').click();
-  await page.locator('[data-browse-catalog]').click();
   await page.locator('#exercise-search').fill('Bench');
   await page.getByRole('button', { name: 'Bench Press Barbell · Dumbbell · Machine', exact: true }).click();
   await page.getByRole('button', { name: 'Dumbbell', exact: true }).click();
@@ -64,7 +63,11 @@ try {
   check('Routine built without a workout', (await read('/api/history')).workouts.length === 0
     && (await read('/api/bootstrap')).active_workout === null);
   await page.locator('[data-add-routine-exercise]').click();
-  await page.locator('[data-browse-catalog]').click();
+  await page.locator('#exercise-search').fill('bench');
+  check('Routine search lists saved configurations beside the catalog',
+    await page.locator('#picker-results h3', { hasText: 'Saved at Browser Test Gym' }).isVisible()
+    && await page.locator('#picker-results [data-profile-id]', { hasText: 'Acme · Rack 1' }).isVisible()
+    && await page.locator('#picker-results [data-variation-id]', { hasText: 'Bench Press' }).first().isVisible());
   await page.locator('#exercise-search').fill('Long Custom Duration Exercise For Browser Testing');
   await page.locator('#create-exercise').click();
   await page.getByRole('radio', { name: 'Duration in seconds' }).check();

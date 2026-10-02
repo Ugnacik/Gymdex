@@ -1517,14 +1517,24 @@ function renderPicker(query = "") {
   document.querySelector("#close-picker").addEventListener("click", () => closePicker());
 }
 
+// Without a query: Recent, then the whole catalog. A query searches the Gym's saved
+// configurations and the catalog together, so nothing needs a second search elsewhere.
 function renderPickerResults(query) {
+  const wanted = query.trim().toLowerCase();
   const filtered = state.picker.catalog.filter((item) =>
-    `${exerciseDisplayName(item)} ${item.exercise_name} ${item.variation_name}`.toLowerCase().includes(query.toLowerCase())
+    `${exerciseDisplayName(item)} ${item.exercise_name} ${item.variation_name}`.toLowerCase().includes(wanted)
   );
+  const gymName = escapeHtml(state.pickerContext?.gym.name ?? state.data.active_workout.gym_name);
+  const configurations = wanted
+    ? (state.picker.saved ?? state.picker.recent).filter((item) =>
+      `${exerciseDisplayName(item)} ${item.exercise_name} ${item.variation_name} ${configurationLabel(item)}`.toLowerCase().includes(wanted))
+    : state.picker.recent;
   document.querySelector("#picker-results").innerHTML = `
-      ${!query && state.picker.recent.length ? `<div class="section-title"><h3>Recent at ${escapeHtml(state.pickerContext?.gym.name ?? state.data.active_workout.gym_name)}</h3></div><div class="recent-list">${state.picker.recent.map((item) => `<button class="recent-card" data-profile-id="${item.profile_id}"><strong>${escapeHtml(exerciseDisplayName(item))}</strong><span>${escapeHtml(configurationLabel(item))}</span></button>`).join("")}</div>` : ""}
-      <div class="section-title"><h3>${query ? "Results" : "Exercise catalog"}</h3><span>${filtered.length}</span></div>
-      <div class="exercise-list">${filtered.map((item) => `<button class="exercise-card" data-variation-id="${item.id}"><strong>${escapeHtml(exerciseDisplayName(item))}</strong><span>${escapeHtml(item.equipment.join(" · "))}</span></button>`).join("") || `<div class="empty"><h3>No matches</h3><p>Create the exercise to add it here.</p></div>`}</div>
+      ${configurations.length ? `<div class="section-title"><h3>${wanted ? "Saved" : "Recent"} at ${gymName}</h3>${wanted ? `<span>${configurations.length}</span>` : ""}</div><div class="recent-list">${configurations.map((item) => `<button class="recent-card" data-profile-id="${item.profile_id}"><strong>${escapeHtml(exerciseDisplayName(item))}</strong><span>${escapeHtml(configurationLabel(item))}</span></button>`).join("")}</div>` : ""}
+      <div class="section-title"><h3>Exercise catalog</h3><span>${filtered.length}</span></div>
+      <div class="exercise-list">${filtered.map((item) => `<button class="exercise-card" data-variation-id="${item.id}"><strong>${escapeHtml(exerciseDisplayName(item))}</strong><span>${escapeHtml(item.equipment.join(" · "))}</span></button>`).join("") || (wanted && configurations.length
+        ? `<p class="picker-note">No catalog exercises match. Create a custom exercise if none of the saved ones fit.</p>`
+        : `<div class="empty"><h3>No matches</h3><p>Create the exercise to add it here.</p></div>`)}</div>
       <button class="secondary create-exercise-button" type="button" id="create-exercise">Create custom exercise</button>`;
   document.querySelectorAll("[data-profile-id]").forEach((button) => button.addEventListener("click", () => addRecent(Number(button.dataset.profileId))));
   document.querySelectorAll("[data-variation-id]").forEach((button) => button.addEventListener("click", () => chooseExercise(Number(button.dataset.variationId))));
@@ -1686,7 +1696,7 @@ function closePicker(focus = "#open-picker") {
 
 async function addRecent(profileId) {
   if (state.pickerContext) {
-    const profile = state.picker.recent.find(item => item.profile_id === profileId);
+    const profile = (state.picker.saved ?? state.picker.recent).find(item => item.profile_id === profileId);
     return saveRoutineChoice({ variation_id: profile.variation_id, equipment: profile.equipment,
       manufacturer: profile.manufacturer, label: profile.label });
   }

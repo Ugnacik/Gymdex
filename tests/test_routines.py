@@ -245,14 +245,6 @@ class RoutineTests(unittest.TestCase):
         with self.assertRaises(LookupError):
             db.delete_routine(self.connection, routine['id'])
 
-    def test_the_routines_screen_offers_the_gyms_unarchived_configurations_most_recent_first(self):
-        self.completed_workout()
-        self.completed_workout(gym=self.other)
-        db.remove_item(self.connection, 'configuration', self.profile_id('', self.plank))
-        configurations = db.routines_for_gym(self.connection, self.home['id'])['configurations']
-        self.assertEqual([(item['profile_id'], item['exercise_name'], item['label']) for item in configurations],
-                         [(self.profile_id(), 'Bench Press', 'Rack 1')])
-
     # Starting
 
     def test_starting_a_routine_starts_a_workout_with_its_set_count_of_empty_slots(self):
@@ -354,7 +346,7 @@ class RoutineTests(unittest.TestCase):
 
         status, listing = self.request('GET', f'/api/routines?gym_id={self.home["id"]}')
         self.assertEqual((status, [item['name'] for item in listing['routines']]), (200, ['Monday']))
-        self.assertEqual(len(listing['configurations']), 2)
+        self.assertNotIn('configurations', listing)
         self.assertEqual(self.request('GET', '/api/routines?gym_id=x')[0], 400)
         self.assertEqual(self.request('GET', '/api/routines?gym_id=9999')[0], 404)
 
