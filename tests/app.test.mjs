@@ -1942,7 +1942,7 @@ test('the Routines screen edits a routine\'s exercises, set counts and order', a
     { profile_id: 3, variation_id: 3, exercise_name: 'Squat', variation_name: 'Back Squat', equipment: 'Barbell', manufacturer: '', label: '' }];
   const byProfile = { 1: routineExercise(1, 'Bench Press', 0, { label: 'Rack <1>' }), 2: routineExercise(2, 'Dip', 0, { archived: true }), 3: routineExercise(3, 'Squat', 0, { variation_name: 'Back Squat' }) };
   const routes = {
-    'GET /api/routines?gym_id=1': () => ({ routines: [routine], configurations }),
+    'GET /api/routines?gym_id=1': () => ({ routines: [routine] }),
     'PUT /api/routines/4': (body) => {
       if (body.exercises) routine = { ...routine, exercises: body.exercises.map((item) => ({ ...byProfile[item.profile_id], set_count: item.set_count })) };
       return routine;
@@ -2004,6 +2004,14 @@ test('the Routines screen edits a routine\'s exercises, set counts and order', a
   assert.match(results, /<h3>Saved at Home<\/h3><span>1<\/span>[\s\S]*data-profile-id="3"><strong>Back Squat<\/strong><span>Barbell<\/span>/);
   assert.doesNotMatch(results, /data-profile-id="1"/);
   assert.match(results, /<h3>Exercise catalog<\/h3><span>1<\/span>[\s\S]*data-variation-id="3"/);
+  // A search matching only a saved configuration does not claim there are no matches.
+  app.nodes['#exercise-search'].events.input({ target: { value: 'rack' } });
+  results = app.nodes['#picker-results'].innerHTML;
+  assert.match(results, /<h3>Saved at Home<\/h3><span>1<\/span>[\s\S]*data-profile-id="1"/);
+  assert.match(results, /No catalog exercises match/);
+  assert.doesNotMatch(results, /No matches/);
+  app.nodes['#exercise-search'].events.input({ target: { value: 'zzz' } });
+  assert.match(app.nodes['#picker-results'].innerHTML, /<h3>No matches<\/h3>/);
   const saved = Object.assign(node(), { dataset: { profileId: '3' } });
   const querySelectorAll = app.env.document.querySelectorAll;
   app.env.document.querySelectorAll = (selector) => selector === '[data-profile-id]' ? [saved] : querySelectorAll(selector);
@@ -2026,7 +2034,7 @@ test('the Routines screen creates, renames and deletes routines through in-app s
   const app = await harness(storage(), { ...startData([home]), routines: [] });
   let routines = [];
   const { content, requests, click } = await openRoutinesScreen(app, {
-    'GET /api/routines?gym_id=1': () => ({ routines, configurations: [] }),
+    'GET /api/routines?gym_id=1': () => ({ routines }),
     'POST /api/routines': (body) => body.name === 'push' ? reply(409, { error: 'Home already has a routine named Push.' })
       : { id: 7, gym_id: 1, name: body.name, exercises: [] },
     'PUT /api/routines/7': (body) => ({ id: 7, gym_id: 1, name: body.name, exercises: [] }),

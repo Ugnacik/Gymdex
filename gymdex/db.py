@@ -817,25 +817,9 @@ def _require_routine(connection: sqlite3.Connection, routine_id: int) -> sqlite3
 
 
 def routines_for_gym(connection: sqlite3.Connection, gym_id: int) -> dict[str, Any]:
-    """A Gym's Routines and the Exercise Configurations that can be added to them.
-
-    Configurations are offered like Recent, most recently used first, but without a limit.
-    """
+    """A Gym's Routines. Exercises are added through the picker's catalog_for_gym."""
     _require_gym(connection, gym_id)
-    configurations = rows(connection.execute(
-        """SELECT p.id AS profile_id, p.variation_id, e.name AS exercise_name,
-                  v.name AS variation_name, v.tracking_type, p.equipment, p.manufacturer, p.label,
-                  MAX(we.added_at) AS last_used
-           FROM gym_exercise_profiles p
-           JOIN exercise_variations v ON v.id = p.variation_id
-           JOIN exercises e ON e.id = v.exercise_id
-           LEFT JOIN workout_exercises we ON we.gym_profile_id = p.id
-           WHERE p.gym_id = ? AND p.archived_at IS NULL AND v.archived_at IS NULL
-           GROUP BY p.id
-           ORDER BY last_used IS NULL, last_used DESC, e.name, v.name, p.equipment, p.manufacturer, p.label""",
-        (gym_id,),
-    ))
-    return {"routines": _routine_rows(connection, gym_id), "configurations": configurations}
+    return {"routines": _routine_rows(connection, gym_id)}
 
 
 def _clean_routine_exercises(connection: sqlite3.Connection, gym_id: int,

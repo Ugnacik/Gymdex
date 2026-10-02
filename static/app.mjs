@@ -1532,7 +1532,9 @@ function renderPickerResults(query) {
   document.querySelector("#picker-results").innerHTML = `
       ${configurations.length ? `<div class="section-title"><h3>${wanted ? "Saved" : "Recent"} at ${gymName}</h3>${wanted ? `<span>${configurations.length}</span>` : ""}</div><div class="recent-list">${configurations.map((item) => `<button class="recent-card" data-profile-id="${item.profile_id}"><strong>${escapeHtml(exerciseDisplayName(item))}</strong><span>${escapeHtml(configurationLabel(item))}</span></button>`).join("")}</div>` : ""}
       <div class="section-title"><h3>Exercise catalog</h3><span>${filtered.length}</span></div>
-      <div class="exercise-list">${filtered.map((item) => `<button class="exercise-card" data-variation-id="${item.id}"><strong>${escapeHtml(exerciseDisplayName(item))}</strong><span>${escapeHtml(item.equipment.join(" · "))}</span></button>`).join("") || `<div class="empty"><h3>No matches</h3><p>Create the exercise to add it here.</p></div>`}</div>
+      <div class="exercise-list">${filtered.map((item) => `<button class="exercise-card" data-variation-id="${item.id}"><strong>${escapeHtml(exerciseDisplayName(item))}</strong><span>${escapeHtml(item.equipment.join(" · "))}</span></button>`).join("") || (wanted && configurations.length
+        ? `<p class="picker-note">No catalog exercises match. Create a custom exercise if none of the saved ones fit.</p>`
+        : `<div class="empty"><h3>No matches</h3><p>Create the exercise to add it here.</p></div>`)}</div>
       <button class="secondary create-exercise-button" type="button" id="create-exercise">Create custom exercise</button>`;
   document.querySelectorAll("[data-profile-id]").forEach((button) => button.addEventListener("click", () => addRecent(Number(button.dataset.profileId))));
   document.querySelectorAll("[data-variation-id]").forEach((button) => button.addEventListener("click", () => chooseExercise(Number(button.dataset.variationId))));
