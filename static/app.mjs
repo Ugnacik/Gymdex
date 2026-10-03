@@ -356,24 +356,26 @@ function renderWorkout() {
       <div class="section-title"><h2>Exercises</h2><span>${entries.length}</span></div>
       <section class="exercise-list">
         ${entries.length ? entries.map((entry, index) => `
-          <details class="exercise-entry workout-exercise" data-entry-id="${entry.id}" ${state.collapsedExercises.has(entry.id) ? "" : "open"}>
-            <summary class="exercise-summary"><h3>${escapeHtml(exerciseDisplayName(entry))}</h3><span data-exercise-count="${entry.id}">${entry.sets.filter(set => set.completed).length}/${entry.sets.length} done</span></summary>
-            <div class="exercise-body">
-              <p class="meta">${escapeHtml(configurationLabel(entry))}</p>
-              <div class="sets-list">${entry.sets.map((set, index) => renderSet(entry, set, index)).join("")}</div>
-              <button class="secondary add-set" data-add-set="${entry.id}">Add set</button>
-              <details class="exercise-options" data-options-id="${entry.id}" ${state.exerciseOptions.has(entry.id) || state.editor?.noteStatus(`exercise:${entry.id}`)?.dirty ? "open" : ""}><summary>Exercise options</summary>
-                <p class="set-hint">${entry.tracking_type === "duration" ? "Duration in seconds" : "Repetitions"}. ${entry.assisted ? "Assist kg is the counterweight and is optional." : "Weight is optional."}</p>
-                ${renderNote(`exercise:${entry.id}`, "Note", `Note for ${exerciseDisplayName(entry)}`)}
-                <div class="exercise-tools">
-                  <button type="button" class="text-button" data-active-progress="${entry.variation_id}" data-progress-equipment="${escapeHtml(entry.equipment)}" data-progress-manufacturer="${escapeHtml(entry.manufacturer || "")}" data-progress-label="${escapeHtml(entry.label || "")}">View progress</button>
-                  <button type="button" class="text-button" data-change-machine="${entry.id}" aria-label="Change machine for ${escapeHtml(exerciseDisplayName(entry))}">Change machine</button>
-                  <button type="button" class="text-button manage-remove" data-remove-exercise="${entry.id}" aria-label="Remove ${escapeHtml(exerciseDisplayName(entry))}">Remove exercise</button>
-                </div>
-                ${renderExerciseTools(entry, index, entries.length)}
-              </details>
-            </div>
-          </details>`).join("") : `<div class="empty"><h3>No exercises yet</h3><p>Add a recent choice in one tap, or search the catalog.</p></div>`}
+          <article class="exercise-entry workout-exercise-card">
+            ${renderNote(`exercise:${entry.id}`, "Note", `Note for ${exerciseDisplayName(entry)}`)}
+            <details class="workout-exercise" data-entry-id="${entry.id}" ${state.collapsedExercises.has(entry.id) ? "" : "open"}>
+              <summary class="exercise-summary"><h3>${escapeHtml(exerciseDisplayName(entry))}</h3><span data-exercise-count="${entry.id}">${entry.sets.filter(set => set.completed).length}/${entry.sets.length} done</span></summary>
+              <div class="exercise-body">
+                <p class="meta">${escapeHtml(configurationLabel(entry))}</p>
+                <div class="sets-list">${entry.sets.map((set, index) => renderSet(entry, set, index)).join("")}</div>
+                <button class="secondary add-set" data-add-set="${entry.id}">Add set</button>
+                <details class="exercise-options" data-options-id="${entry.id}" ${state.exerciseOptions.has(entry.id) ? "open" : ""}><summary>Exercise options</summary>
+                  <p class="set-hint">${entry.tracking_type === "duration" ? "Duration in seconds" : "Repetitions"}. ${entry.assisted ? "Assist kg is the counterweight and is optional." : "Weight is optional."}</p>
+                  <div class="exercise-tools">
+                    <button type="button" class="text-button" data-active-progress="${entry.variation_id}" data-progress-equipment="${escapeHtml(entry.equipment)}" data-progress-manufacturer="${escapeHtml(entry.manufacturer || "")}" data-progress-label="${escapeHtml(entry.label || "")}">View progress</button>
+                    <button type="button" class="text-button" data-change-machine="${entry.id}" aria-label="Change machine for ${escapeHtml(exerciseDisplayName(entry))}">Change machine</button>
+                    <button type="button" class="text-button manage-remove" data-remove-exercise="${entry.id}" aria-label="Remove ${escapeHtml(exerciseDisplayName(entry))}">Remove exercise</button>
+                  </div>
+                  ${renderExerciseTools(entry, index, entries.length)}
+                </details>
+              </div>
+            </details>
+          </article>`).join("") : `<div class="empty"><h3>No exercises yet</h3><p>Add a recent choice in one tap, or search the catalog.</p></div>`}
       </section>
       <button class="primary accent add-exercise" id="open-picker">Add exercise</button>
       <div class="workout-actions">
@@ -606,9 +608,9 @@ function renderHistoryDetail(data, canRepeat) {
         <button class="secondary history-save-routine" type="button" data-save-routine="${workout.id}">Save as routine</button>`}
     <div class="exercise-list">${entries.length ? entries.map((entry) => `
       <article class="exercise-entry">
+        ${renderHistoryNote(`exercise:${entry.id}`, entry.note, "note", ` for ${exerciseDisplayName(entry)}`)}
         <div class="history-exercise-heading"><h3>${escapeHtml(exerciseDisplayName(entry))}</h3>${entry.variation_id ? `<button type="button" class="text-button" data-progress-variation="${entry.variation_id}" data-progress-equipment="${escapeHtml(entry.equipment)}" data-progress-manufacturer="${escapeHtml(entry.manufacturer || "")}" data-progress-label="${escapeHtml(entry.label || "")}">View progress</button>` : ""}</div>
         <p class="meta">${escapeHtml(configurationLabel(entry))}</p>
-        ${renderHistoryNote(`exercise:${entry.id}`, entry.note, "note", ` for ${exerciseDisplayName(entry)}`)}
         ${entry.sets.length ? `<ol class="history-sets">${entry.sets.map((set, index) => {
           const weight = set.weight === null ? "No weight recorded" : `${Math.abs(set.weight)} kg${set.weight < 0 ? " assistance" : ""}`;
           const result = set.result === null ? "No result recorded" : `${set.result} ${entry.tracking_type === "duration" ? "seconds" : "reps"}`;

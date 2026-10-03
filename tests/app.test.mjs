@@ -1261,8 +1261,8 @@ test('workout and exercise notes stay collapsed, keep drafts on the phone, and a
   assert.match(html, /<details class="note"[^>]*>\s*<summary[^>]*>[\s\S]*?Workout note[\s\S]*?<textarea data-note-target="workout"[^>]*maxlength="1000"[^>]*>Slept &lt;5h<\/textarea>/);
   assert.match(html, /Add note[\s\S]*?<textarea data-note-target="exercise:3"[^>]*aria-label="Note for Bench Press"[^>]*><\/textarea>/);
   assert.doesNotMatch(html, /<details class="note"[^>]*\bopen\b/, 'notes are collapsed so the recording path stays short');
-  const order = ['id="workout-elapsed"', 'data-note-target="workout"', 'class="rest-timer"', '<p class="meta">', 'class="sets-list"', 'data-add-set="3"',
-    'data-note-target="exercise:3"', 'class="exercise-tools"', 'id="open-picker"', 'data-finish-workout'].map((marker) => html.indexOf(marker));
+  const order = ['id="workout-elapsed"', 'data-note-target="workout"', 'class="rest-timer"', 'data-note-target="exercise:3"',
+    'class="exercise-summary"', '<p class="meta">', 'class="sets-list"', 'data-add-set="3"', 'class="exercise-tools"', 'id="open-picker"', 'data-finish-workout'].map((marker) => html.indexOf(marker));
   assert.ok(order.every((index, i) => index >= 0 && (i === 0 || index > order[i - 1])), `unexpected order ${order}`);
 
   const requests = [];
@@ -1304,7 +1304,7 @@ test('history detail shows notes as text and saves an added exercise note', asyn
   await nodes['#history-results'].buttons[0].events.click();
   let html = nodes['#history-detail'].innerHTML;
   assert.match(html, /<p class="note-text">Line one\n&lt;b&gt;bold&lt;\/b&gt;<\/p>/);
-  assert.match(html, /<p class="meta">Barbell<\/p>\s*<button[^>]*data-edit-note="exercise:33"[\s\S]*?No sets recorded/, 'the exercise note sits under the equipment, before the sets');
+  assert.match(html, /data-edit-note="exercise:33"[\s\S]*?<div class="history-exercise-heading"><h3>Bench Press<\/h3>[\s\S]*?<p class="meta">Barbell<\/p>/, 'the exercise note sits above the exercise heading');
   assert.doesNotMatch(html, /<b>/);
   assert.match(html, /data-edit-note="workout"[^>]*>Edit workout note</);
   assert.match(html, /data-edit-note="exercise:33"[^>]*aria-label="Add note for Bench Press"[^>]*>Add note</);
