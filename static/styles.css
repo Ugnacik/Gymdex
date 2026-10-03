@@ -112,8 +112,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .status { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: 0.78rem; font-weight: 520; white-space: nowrap; }
 .status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--surface-3); box-shadow: 0 0 0 1px var(--hairline-strong); }
 .status-active { color: var(--accent); }
-.status-active::before { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); animation: live 2.4s var(--ease-out) infinite; }
-@keyframes live { 50% { box-shadow: 0 0 0 6px rgba(255, 122, 61, 0); } }
+.status-active::before { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 
 /* Progress and History as one segmented pill. */
 .app-header nav {
