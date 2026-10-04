@@ -62,7 +62,7 @@ function readPreviousButton(form, html) {
 // The harness workout started 2026-09-22 10:00 UTC; by default the clock reads 25 minutes later.
 async function harness(disk = storage(), initialData = {}, { now = Date.parse('2026-09-22T10:25:00Z') } = {}) {
   const nodes = Object.fromEntries(['#app', '#toast', '#sync-status', '#picker-results', 'main',
-    '#open-picker', '#open-settings', '#open-history', '#open-progress', '#open-manage', '#cancel-workout', '#finish', '#add-gym-form', '#start-workout', '#create-exercise',
+    '#muscle-group-filter', '#clear-muscle-group-filter', '#open-picker', '#open-settings', '#open-history', '#open-progress', '#open-manage', '#cancel-workout', '#finish', '#add-gym-form', '#start-workout', '#create-exercise',
     '#rest-enabled', '#rest-controls', '#rest-duration', '#rest-clock', '#rest-status', '#rest-start', '#rest-pause', '#rest-stop',
     '#workout-elapsed', '#stale-banner', '#stale-finish', '#stale-keep']
     .map((key) => [key, node()]));
@@ -523,6 +523,7 @@ function pickerSheet(app) {
   };
   sheet.querySelector = (selector) => sheetNodes[selector];
   Object.assign(app.nodes, { '#picker .sheet': sheet, '#exercise-search': Object.assign(node(), { value: '', setSelectionRange() {} }),
+    '#muscle-group-filter': Object.assign(node(), { value: '' }), '#clear-muscle-group-filter': node(),
     '#close-picker': node(), '#back-to-picker': node(), '#configuration-form': Object.assign(node(), { querySelector: () => node() }),
     '#manufacturer-field': choiceContainer(), '#machine-label-field': choiceContainer() });
   app.env.document.createElement = () => wrapper;
@@ -542,6 +543,86 @@ async function openPickerSheet(app, catalog, respond = () => { throw new Error('
   await app.nodes['#open-picker'].events.click();
   return { sheet, sheetNodes, customForm, requests };
 }
+
+test('Muscle Group and search intersect across Catalog and all saved choices, and Clear retains text', async () => {
+  const app = await harness();
+  const catalog = { muscle_groups: ['Chest', 'Back', 'Shoulders', 'Abs'], catalog: [
+    { id: 1, exercise_name: 'Row', variation_name: 'Seated', equipment: ['Cable'], muscle_groups: ['Back'] },
+    { id: 2, exercise_name: 'Squat', variation_name: 'Back Squat', equipment: ['Barbell'], muscle_groups: ['Glutes', 'Quadriceps'] },
+    { id: 3, exercise_name: 'Face Pull', variation_name: 'Standard', equipment: ['Cable'], muscle_groups: ['Back', 'Shoulders'] },
+    { id: 4, exercise_name: 'Bench Press', variation_name: 'Standard', equipment: ['Barbell'], muscle_groups: ['Chest'] },
+  ], recent: [], saved: [] };
+  const saved = (profile_id, variation_id, name, variation, label) => ({ profile_id, variation_id,
+    exercise_name: name, variation_name: variation, equipment: 'Cable', manufacturer: 'Acme', label });
+  catalog.recent = [saved(10, 1, 'Row', 'Seated', 'Pulley'), saved(20, 2, 'Squat', 'Back Squat', 'Rack')];
+  catalog.saved = [...catalog.recent, saved(11, 1, 'Row', 'Seated', 'Rack upstairs')];
+  await openPickerSheet(app, catalog);
+  const wrapper = app.nodes['#picker'], search = app.nodes['#exercise-search'];
+  const selector = app.nodes['#muscle-group-filter'], clear = app.nodes['#clear-muscle-group-filter'];
+  const initial = wrapper.innerHTML;
+  const results = () => app.nodes['#picker-results'].innerHTML;
+  const query = value => { search.value = value; search.events.input({ target: search }); };
+  const select = value => { selector.value = value; selector.events.change(); };
+  assert.match(initial, /<option value="">All Muscle Groups<\/option><option value="Chest">Chest<\/option>/);
+  assert.match(results(), /Recent at Home/);
+  assert.doesNotMatch(results(), /data-profile-id="11"/);
+  query('bAcK');
+  assert.match(results(), /data-variation-id="1"/);
+  assert.match(results(), /data-variation-id="2"/);
+  assert.match(results(), /data-variation-id="3"/);
+  assert.match(results(), /data-profile-id="11"/);
+  select('Back');
+  assert.match(results(), /data-variation-id="1"/);
+  assert.match(results(), /data-variation-id="3"/);
+  assert.doesNotMatch(results(), /data-variation-id="2"|data-profile-id="20"/);
+  assert.equal(clear.hidden, false);
+  query('rAcK');
+  assert.match(results(), /data-profile-id="11"/);
+  assert.doesNotMatch(results(), /data-profile-id="20"|data-variation-id=/);
+  assert.match(results(), /No catalog exercises match/);
+  assert.doesNotMatch(results(), /<h3>No matches/);
+  clear.events.click();
+  assert.equal(search.value, 'rAcK');
+  assert.equal(selector.value, '');
+  assert.equal(clear.hidden, true);
+  assert.match(results(), /data-profile-id="20"/);
+  select('Shoulders');
+  assert.match(results(), /<h3>No matches/);
+  assert.match(results(), /id="create-exercise"/);
+  query('');
+  assert.match(results(), /data-variation-id="3"/);
+  assert.doesNotMatch(results(), /data-variation-id="1"|data-variation-id="2"|data-variation-id="4"/);
+  select('Abs');
+  assert.match(results(), /<h3>No matches/);
+  select('');
+  assert.match(results(), /Recent at Home/);
+  assert.match(results(), /data-variation-id="4"/);
+  assert.equal(wrapper.innerHTML, initial, 'only results change; controls and search selection remain intact');
+  assert.equal(app.nodes['#exercise-search'], search);
+  assert.equal(app.nodes['#muscle-group-filter'], selector);
+});
+
+test('new picker openings reset Muscle Group and query; creation Back retains both', async () => {
+  const app = await harness();
+  const catalog = { muscle_groups: ['Back'], recent: [], catalog: [
+    { id: 1, exercise_name: 'Row', variation_name: 'Seated', equipment: ['Cable'], muscle_groups: ['Back'] },
+    { id: 2, exercise_name: 'Bench Press', variation_name: 'Standard', equipment: ['Barbell'], muscle_groups: ['Chest'] },
+  ] };
+  const { sheetNodes } = await openPickerSheet(app, catalog);
+  const search = app.nodes['#exercise-search'];
+  search.value = 'Row'; search.events.input({ target: search });
+  app.nodes['#muscle-group-filter'].value = 'Back';
+  app.nodes['#muscle-group-filter'].events.change();
+  app.nodes['#create-exercise'].events.click();
+  sheetNodes['#back-to-picker'].events.click();
+  assert.match(app.nodes['#picker'].innerHTML, /value="Row"/);
+  assert.match(app.nodes['#picker'].innerHTML, /value="Back" selected/);
+  app.nodes['#close-picker'].events.click();
+  await app.nodes['#open-picker'].events.click();
+  assert.doesNotMatch(app.nodes['#picker'].innerHTML, /value="Back" selected/);
+  assert.match(app.nodes['#picker'].innerHTML, /id="exercise-search"[^>]*value=""/);
+  assert.match(app.nodes['#picker-results'].innerHTML, /data-variation-id="2"/);
+});
 
 // Chooses a catalog variation in the picker, which opens its Exercise Configuration form.
 function pickVariation(app, variationId) {
