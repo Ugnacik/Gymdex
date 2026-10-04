@@ -52,6 +52,25 @@ class FeatureTests(unittest.TestCase):
         db.complete_workout(self.connection, workout['id'])
         return workout, entry, set_item
 
+    def test_muscle_group_routes_create_correct_clear_and_validate(self):
+        payload = {'name': 'Targeted custom', 'variation_name': 'Standard',
+                   'tracking_type': 'duration', 'equipment': ['Bodyweight'], 'muscle_groups': ['Abs', 'Back']}
+        status, item = self.request('POST', '/api/exercises', payload)
+        self.assertEqual((status, item['muscle_groups']), (201, ['Back', 'Abs']))
+        catalog = self.request('GET', f'/api/catalog?gym_id={self.gym["id"]}')[1]
+        self.assertEqual(catalog['muscle_groups'], list(db.MUSCLE_GROUPS))
+        self.assertIn(item, catalog['catalog'])
+        path = f'/api/manage/variations/{item["id"]}'
+        status, updated = self.request('PUT', path, {'muscle_groups': ['Shoulders']})
+        self.assertEqual((status, updated['muscle_groups']), (200, ['Shoulders']))
+        self.assertEqual(self.request('PUT', path, {'muscle_groups': []})[1]['muscle_groups'], [])
+        for value in (None, 'Back', ['Unknown'], ['Back', 'Back']):
+            with self.subTest(value=value):
+                self.assertEqual(self.request('PUT', path, {'muscle_groups': value})[0], 400)
+                self.assertEqual(self.request('POST', '/api/exercises', {**payload, 'muscle_groups': value})[0], 400)
+        self.assertEqual(self.request('PUT', '/api/manage/variations/99999', {'muscle_groups': []})[0], 404)
+        self.assertEqual(self.request('PUT', f'/api/manage/variations/{self.press["id"]}', {'muscle_groups': []})[0], 409)
+
     def test_custom_exercise_and_variation_are_available_in_catalog(self):
         status, item = self.request('POST', '/api/exercises', {
             'name': '  Glute   Bridge ', 'variation_name': '',

@@ -109,6 +109,45 @@ CATALOG = (
 )
 
 
+MUSCLE_GROUPS = (
+    "Chest", "Back", "Shoulders", "Biceps", "Triceps", "Forearms", "Abs",
+    "Glutes", "Quadriceps", "Hamstrings", "Calves",
+)
+
+# Intentional training targets, rather than incidental muscle involvement (see CONTEXT.md).
+STARTER_MUSCLE_GROUPS = {
+    ("Bench Press", "Standard"): ("Chest",),
+    ("Bench Press", "Incline"): ("Chest",),
+    ("Squat", "Back Squat"): ("Glutes", "Quadriceps"),
+    ("Deadlift", "Conventional"): ("Glutes", "Hamstrings"),
+    ("Lat Pulldown", "Standard"): ("Back",),
+    ("Row", "Seated"): ("Back",),
+    ("Shoulder Press", "Seated"): ("Shoulders",),
+    ("Biceps Curl", "Standing"): ("Biceps",),
+    ("Triceps Pushdown", "Standard"): ("Triceps",),
+    ("Plank", "Front Plank"): ("Abs",),
+    ("Pull-up", "Assisted"): ("Back",),
+    ("Dip", "Assisted"): ("Chest", "Triceps"),
+    ("Pull-up", "Standard"): ("Back",),
+    ("Dip", "Standard"): ("Chest", "Triceps"),
+    ("Push-up", "Standard"): ("Chest",),
+    ("Leg Press", "Standard"): ("Glutes", "Quadriceps"),
+    ("Leg Curl", "Seated"): ("Hamstrings",),
+    ("Leg Curl", "Lying"): ("Hamstrings",),
+    ("Leg Extension", "Standard"): ("Quadriceps",),
+    ("Lunge", "Standard"): ("Glutes", "Quadriceps"),
+    ("Deadlift", "Romanian"): ("Glutes", "Hamstrings"),
+    ("Hip Thrust", "Standard"): ("Glutes",),
+    ("Lateral Raise", "Standard"): ("Shoulders",),
+    ("Face Pull", "Standard"): ("Back", "Shoulders"),
+    ("Calf Raise", "Standing"): ("Calves",),
+    ("Calf Raise", "Seated"): ("Calves",),
+    ("Chest Fly", "Standard"): ("Chest",),
+    ("Crunch", "Standard"): ("Abs",),
+    ("Leg Raise", "Hanging"): ("Abs",),
+}
+
+
 def connect(path: str | Path) -> sqlite3.Connection:
     db_path = Path(path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -141,6 +180,10 @@ def initialize(connection: sqlite3.Connection) -> None:
                (exercise_id, name, tracking_type, assisted) VALUES (?, ?, ?, ?)""",
             (exercise_id, variation_name, tracking_type, int(any(assisted))),
         ).lastrowid
+        connection.executemany(
+            "INSERT INTO variation_muscle_groups(variation_id, muscle_group) VALUES (?, ?)",
+            [(variation_id, group) for group in STARTER_MUSCLE_GROUPS.get((exercise_name, variation_name), ())],
+        )
         for position, equipment in enumerate(equipment_values):
             connection.execute(
                 """INSERT INTO variation_equipment
@@ -244,6 +287,28 @@ def migrate(connection: sqlite3.Connection) -> None:
                 "CREATE INDEX IF NOT EXISTS routine_exercises_profile ON routine_exercises(profile_id)"
             )
             connection.execute("PRAGMA user_version = 5")
+    if version < 6:
+        with connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute("""CREATE TABLE IF NOT EXISTS variation_muscle_groups (
+                variation_id INTEGER NOT NULL REFERENCES exercise_variations(id) ON DELETE CASCADE,
+                muscle_group TEXT NOT NULL,
+                PRIMARY KEY (variation_id, muscle_group)
+            )""")
+            # Match existing starter rows once; custom rows sharing their names keep their own data.
+            # Before migration 4, same-name custom rows already counted as starter catalog rows.
+            for (exercise_name, variation_name), groups in STARTER_MUSCLE_GROUPS.items():
+                variation = connection.execute(
+                    """SELECT v.id FROM exercise_variations v JOIN exercises e ON e.id = v.exercise_id
+                       WHERE e.name = ? COLLATE NOCASE AND v.name = ? COLLATE NOCASE AND v.custom = 0""",
+                    (exercise_name, variation_name),
+                ).fetchone()
+                if variation:
+                    connection.executemany(
+                        "INSERT OR IGNORE INTO variation_muscle_groups(variation_id, muscle_group) VALUES (?, ?)",
+                        [(variation["id"], group) for group in groups],
+                    )
+            connection.execute("PRAGMA user_version = 6")
 
 
 def rows(cursor: sqlite3.Cursor) -> list[dict[str, Any]]:
@@ -345,6 +410,7 @@ def catalog_for_gym(
         item = dict(row)
         item["equipment"] = item["equipment"].split("|")
         item["archived"] = bool(item["archived"])
+        item["muscle_groups"] = muscle_groups_for_variation(connection, item["id"])
         catalog.append(item)
 
     saved = rows(
@@ -362,7 +428,7 @@ def catalog_for_gym(
             (gym_id,),
         )
     )
-    return {"catalog": catalog, "recent": saved[:8], "saved": saved,
+    return {"catalog": catalog, "recent": saved[:8], "saved": saved, "muscle_groups": list(MUSCLE_GROUPS),
             "suggestions": exercise_suggestions(connection)}
 
 
@@ -379,11 +445,12 @@ def _distinct(values: Any) -> list[str]:
 
 
 def exercise_suggestions(connection: sqlite3.Connection) -> dict[str, Any]:
-    """Values offered by the custom exercise and Exercise Configuration forms, per Exercise.
+    """Values offered globally and per Exercise by the creation and configuration forms.
 
     They are derived from the Exercise's unarchived Variations: their names, their Equipment
     plus the starter Equipment, and the manufacturers and machine labels of their unarchived
     Exercise Configurations at every Gym. Archiving or deleting the source row removes a value.
+    Machine labels name one Exercise's machines, so they are offered only per Exercise.
     """
     exercises: dict[int, dict[str, Any]] = {}
     for row in connection.execute(
@@ -411,6 +478,8 @@ def exercise_suggestions(connection: sqlite3.Connection) -> dict[str, Any]:
         exercises[row["exercise_id"]]["labels"].append(row["label"])
     return {
         "equipment": list(STARTER_EQUIPMENT),
+        **{field: _distinct(value for exercise in exercises.values() for value in exercise[field])
+           for field in ("variations", "manufacturers")},
         "exercises": [
             {**exercise, **{field: _distinct(exercise[field])
                             for field in ("variations", "equipment", "manufacturers", "labels")}}
@@ -561,6 +630,7 @@ def create_exercise(
     tracking_type: str,
     equipment: list[str],
     assisted: bool = False,
+    muscle_groups: object = (),
 ) -> dict[str, Any]:
     """Add a variation to a new or existing exercise in one transaction."""
     if not isinstance(name, str) or not isinstance(variation_name, str):
@@ -576,6 +646,7 @@ def create_exercise(
     if type(assisted) is not bool:
         raise ValueError("Assisted must be true or false.")
     clean_equipment = clean_equipment_list(equipment)
+    groups = clean_muscle_groups(muscle_groups)
 
     with connection:
         connection.execute("BEGIN IMMEDIATE")
@@ -588,6 +659,10 @@ def create_exercise(
             """INSERT INTO exercise_variations(exercise_id, name, tracking_type, assisted, custom)
                VALUES (?, ?, ?, ?, 1)""",
             (exercise["id"], variation_name, tracking_type, int(assisted)),
+        )
+        connection.executemany(
+            "INSERT INTO variation_muscle_groups(variation_id, muscle_group) VALUES (?, ?)",
+            [(cursor.lastrowid, group) for group in groups],
         )
         for position, option in enumerate(clean_equipment):
             connection.execute(
@@ -603,6 +678,7 @@ def create_exercise(
         "assisted": int(assisted),
         "archived": False,
         "equipment": clean_equipment,
+        "muscle_groups": groups,
     }
 
 
@@ -1682,6 +1758,7 @@ def _custom_exercise_rows(connection: sqlite3.Connection) -> list[dict[str, Any]
         exercise["variations"].append({
             **variation, "archived": bool(variation["archived"]), "used": bool(variation["used"]),
             "equipment": equipment,
+            "muscle_groups": muscle_groups_for_variation(connection, variation["id"]),
         })
     return list(exercises.values())
 
@@ -1804,6 +1881,41 @@ MANAGED_KINDS["exercise"] = ManagedKind(
 )
 
 
+def clean_muscle_groups(groups: object) -> list[str]:
+    """Validate optional intentional targets and return them in the fixed display order."""
+    if not isinstance(groups, (list, tuple)) or any(
+        not isinstance(group, str) or group not in MUSCLE_GROUPS for group in groups
+    ):
+        raise ValueError("Muscle Groups must be a list of the offered choices.")
+    if len(set(groups)) != len(groups):
+        raise ValueError("Muscle Groups must be unique.")
+    return [group for group in MUSCLE_GROUPS if group in groups]
+
+
+def muscle_groups_for_variation(connection: sqlite3.Connection, variation_id: int) -> list[str]:
+    groups = {row["muscle_group"] for row in connection.execute(
+        "SELECT muscle_group FROM variation_muscle_groups WHERE variation_id = ?", (variation_id,),
+    )}
+    return [group for group in MUSCLE_GROUPS if group in groups]
+
+
+def set_variation_muscle_groups(
+    connection: sqlite3.Connection, variation_id: int, muscle_groups: object,
+) -> dict[str, Any]:
+    """Replace or clear a Custom Exercise Variation's intentional targets; recorded Sets stay."""
+    groups = clean_muscle_groups(muscle_groups)
+    spec = MANAGED_KINDS["variation"]
+    with connection:
+        connection.execute("BEGIN IMMEDIATE")
+        _require_managed_item(connection, spec, variation_id)
+        connection.execute("DELETE FROM variation_muscle_groups WHERE variation_id = ?", (variation_id,))
+        connection.executemany(
+            "INSERT INTO variation_muscle_groups(variation_id, muscle_group) VALUES (?, ?)",
+            [(variation_id, group) for group in groups],
+        )
+        return spec.describe(connection, variation_id)
+
+
 def set_variation_equipment(
     connection: sqlite3.Connection, variation_id: int, equipment: object,
 ) -> dict[str, Any]:
@@ -1845,6 +1957,7 @@ def manage_overview(connection: sqlite3.Connection) -> dict[str, Any]:
         "gyms": _gym_rows(connection),
         "configurations": _configuration_rows(connection),
         "exercises": _custom_exercise_rows(connection),
+        "muscle_groups": list(MUSCLE_GROUPS),
     }
 
 

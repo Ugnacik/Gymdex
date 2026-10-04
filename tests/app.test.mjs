@@ -2,8 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createApp } from '../static/app.mjs';
 import { DraftStore } from '../static/drafts.mjs';
-import { OTHER } from '../static/choice-field.mjs';
-import { choiceContainer, choose, type } from './fake-choice-field.mjs';
+import { choiceContainer, choose, listed, toggleList, type } from './fake-choice-field.mjs';
 
 // Pin the device time zone so local-time assertions do not depend on the test machine.
 // Central European Summer Time is UTC+2 until 25 October 2026, then UTC+1.
@@ -25,7 +24,7 @@ function storage() {
 function node() {
   return { innerHTML: '', textContent: '', hidden: false, disabled: false, events: {},
     showModal() { this.open = true; }, close() { this.open = false; this.events.close?.(); },
-    classList: { toggle() {} }, addEventListener(event, callback) { this.events[event] = callback; },
+    classList: { toggle() {}, add() {}, remove() {} }, addEventListener(event, callback) { this.events[event] = callback; },
     focus() { this.focused = true; }, setAttribute() {}, removeAttribute() {},
     querySelectorAll() {
       this.buttons = [...this.innerHTML.matchAll(/data-history-id="(\d+)"/g)].map((match) =>
@@ -62,7 +61,7 @@ function readPreviousButton(form, html) {
 // The harness workout started 2026-09-22 10:00 UTC; by default the clock reads 25 minutes later.
 async function harness(disk = storage(), initialData = {}, { now = Date.parse('2026-09-22T10:25:00Z') } = {}) {
   const nodes = Object.fromEntries(['#app', '#toast', '#sync-status', '#picker-results', 'main',
-    '#open-picker', '#open-history', '#open-progress', '#open-manage', '#cancel-workout', '#finish', '#add-gym-form', '#start-workout', '#create-exercise',
+    '#muscle-group-filter', '#clear-muscle-group-filter', '#open-picker', '#open-settings', '#open-history', '#open-progress', '#open-manage', '#cancel-workout', '#finish', '#add-gym-form', '#start-workout', '#create-exercise',
     '#rest-enabled', '#rest-controls', '#rest-duration', '#rest-clock', '#rest-status', '#rest-start', '#rest-pause', '#rest-stop',
     '#workout-elapsed', '#stale-banner', '#stale-finish', '#stale-keep']
     .map((key) => [key, node()]));
@@ -407,6 +406,7 @@ test('filtering exercise search changes only the results container', async () =>
   wrapper.remove = () => { delete app.nodes['#picker']; };
   const search = Object.assign(node(), { value: '', setSelectionRange() {} });
   app.nodes['#exercise-search'] = search;
+  app.nodes['#picker .sheet'] = node();
   app.nodes['#close-picker'] = node();
   app.env.document.createElement = () => wrapper;
   app.env.document.body = { append: () => { app.nodes['#picker'] = wrapper; } };
@@ -510,7 +510,7 @@ test('a finished rest still completes when the browser has no Web Audio', async 
   assert.equal(app.nodes['#rest-status'].textContent, 'Rest complete');
 });
 
-// Stand-ins for the elements of the picker sheet, which Add exercise and Change machine open.
+// Stand-ins for the elements of the picker sheet, which Add exercise and Edit manufacturer / machine open.
 function pickerSheet(app) {
   const wrapper = node();
   wrapper.remove = () => { delete app.nodes['#picker']; };
@@ -523,6 +523,7 @@ function pickerSheet(app) {
   };
   sheet.querySelector = (selector) => sheetNodes[selector];
   Object.assign(app.nodes, { '#picker .sheet': sheet, '#exercise-search': Object.assign(node(), { value: '', setSelectionRange() {} }),
+    '#muscle-group-filter': Object.assign(node(), { value: '' }), '#clear-muscle-group-filter': node(),
     '#close-picker': node(), '#back-to-picker': node(), '#configuration-form': Object.assign(node(), { querySelector: () => node() }),
     '#manufacturer-field': choiceContainer(), '#machine-label-field': choiceContainer() });
   app.env.document.createElement = () => wrapper;
@@ -543,6 +544,91 @@ async function openPickerSheet(app, catalog, respond = () => { throw new Error('
   return { sheet, sheetNodes, customForm, requests };
 }
 
+test('Muscle Group and search intersect across Catalog and all saved choices, and Clear retains text', async () => {
+  const app = await harness();
+  const catalog = { muscle_groups: ['Chest', 'Back', 'Shoulders', 'Abs'], catalog: [
+    { id: 1, exercise_name: 'Row', variation_name: 'Seated', equipment: ['Cable'], muscle_groups: ['Back'] },
+    { id: 2, exercise_name: 'Squat', variation_name: 'Back Squat', equipment: ['Barbell'], muscle_groups: ['Glutes', 'Quadriceps'] },
+    { id: 3, exercise_name: 'Face Pull', variation_name: 'Standard', equipment: ['Cable'], muscle_groups: ['Back', 'Shoulders'] },
+    { id: 4, exercise_name: 'Bench Press', variation_name: 'Standard', equipment: ['Barbell'], muscle_groups: ['Chest'] },
+  ], recent: [], saved: [] };
+  const saved = (profile_id, variation_id, name, variation, label) => ({ profile_id, variation_id,
+    exercise_name: name, variation_name: variation, equipment: 'Cable', manufacturer: 'Acme', label });
+  catalog.recent = [saved(10, 1, 'Row', 'Seated', 'Pulley'), saved(20, 2, 'Squat', 'Back Squat', 'Rack')];
+  catalog.saved = [...catalog.recent, saved(11, 1, 'Row', 'Seated', 'Rack upstairs')];
+  await openPickerSheet(app, catalog);
+  const wrapper = app.nodes['#picker'], search = app.nodes['#exercise-search'];
+  const selector = app.nodes['#muscle-group-filter'], clear = app.nodes['#clear-muscle-group-filter'];
+  const initial = wrapper.innerHTML;
+  const results = () => app.nodes['#picker-results'].innerHTML;
+  const query = value => { search.value = value; search.events.input({ target: search }); };
+  const select = value => { selector.value = value; selector.events.change(); };
+  assert.match(initial, /<option value="">All Muscle Groups<\/option><option value="Chest">Chest<\/option>/);
+  assert.match(results(), /Recent at Home/);
+  assert.doesNotMatch(results(), /data-profile-id="11"/);
+  query('bAcK');
+  assert.match(results(), /data-variation-id="1"/);
+  assert.match(results(), /data-variation-id="2"/);
+  assert.match(results(), /data-variation-id="3"/);
+  assert.match(results(), /data-profile-id="11"/);
+  select('Back');
+  assert.match(results(), /data-variation-id="1"/);
+  assert.match(results(), /data-variation-id="3"/);
+  assert.doesNotMatch(results(), /data-variation-id="2"|data-profile-id="20"/);
+  assert.equal(clear.hidden, false);
+  query('rAcK');
+  assert.match(results(), /data-profile-id="11"/);
+  assert.doesNotMatch(results(), /data-profile-id="20"|data-variation-id=/);
+  assert.match(results(), /No catalog exercises match/);
+  assert.doesNotMatch(results(), /<h3>No matches/);
+  clear.events.click();
+  assert.equal(search.value, 'rAcK');
+  assert.equal(selector.value, '');
+  assert.equal(clear.hidden, true);
+  assert.match(results(), /data-profile-id="20"/);
+  select('Shoulders');
+  assert.match(results(), /<h3>No matches/);
+  assert.match(wrapper.innerHTML, /id="create-exercise"/);
+  assert.doesNotMatch(results(), /id="create-exercise"/);
+  query('');
+  assert.match(results(), /data-variation-id="3"/);
+  assert.doesNotMatch(results(), /data-variation-id="1"|data-variation-id="2"|data-variation-id="4"/);
+  select('Abs');
+  assert.match(results(), /<h3>No matches/);
+  select('');
+  assert.match(results(), /Recent at Home/);
+  assert.match(results(), /data-variation-id="4"/);
+  assert.equal(wrapper.innerHTML, initial, 'only results change; controls and search selection remain intact');
+  assert.equal(app.nodes['#exercise-search'], search);
+  assert.equal(app.nodes['#muscle-group-filter'], selector);
+});
+
+test('new picker openings reset Muscle Group and query; creation Back retains both', async () => {
+  const app = await harness();
+  const catalog = { muscle_groups: ['Back'], recent: [], catalog: [
+    { id: 1, exercise_name: 'Row', variation_name: 'Seated', equipment: ['Cable'], muscle_groups: ['Back'] },
+    { id: 2, exercise_name: 'Bench Press', variation_name: 'Standard', equipment: ['Barbell'], muscle_groups: ['Chest'] },
+  ] };
+  const { sheetNodes } = await openPickerSheet(app, catalog);
+  const search = app.nodes['#exercise-search'];
+  search.value = 'Row'; search.events.input({ target: search });
+  app.nodes['#muscle-group-filter'].value = 'Back';
+  app.nodes['#muscle-group-filter'].events.change();
+  assert.equal(app.nodes['#picker .sheet'].className, 'sheet picker-catalog');
+  app.nodes['#create-exercise'].events.click();
+  assert.equal(app.nodes['#picker .sheet'].className, 'sheet');
+  assert.match(app.nodes['#picker .sheet'].innerHTML, /name="name"[^>]*value="Row"/);
+  sheetNodes['#back-to-picker'].events.click();
+  assert.equal(app.nodes['#picker .sheet'].className, 'sheet picker-catalog');
+  assert.match(app.nodes['#picker'].innerHTML, /value="Row"/);
+  assert.match(app.nodes['#picker'].innerHTML, /value="Back" selected/);
+  app.nodes['#close-picker'].events.click();
+  await app.nodes['#open-picker'].events.click();
+  assert.doesNotMatch(app.nodes['#picker'].innerHTML, /value="Back" selected/);
+  assert.match(app.nodes['#picker'].innerHTML, /id="exercise-search"[^>]*value=""/);
+  assert.match(app.nodes['#picker-results'].innerHTML, /data-variation-id="2"/);
+});
+
 // Chooses a catalog variation in the picker, which opens its Exercise Configuration form.
 function pickVariation(app, variationId) {
   const button = Object.assign(node(), { dataset: { variationId: String(variationId) } });
@@ -553,7 +639,13 @@ function pickVariation(app, variationId) {
   button.events.click();
 }
 
-const optionValues = (container, id) => container.querySelector(`#${id}`)?.options.map((option) => option.text);
+// The values a ChoiceField's chevron lists, closing the list again.
+const optionValues = (container, id) => {
+  toggleList(container, id);
+  const values = listed(container, id);
+  toggleList(container, id);
+  return values;
+};
 
 test('custom exercise creation offers the new variation for the active workout', async () => {
   const app = await harness();
@@ -570,9 +662,8 @@ test('custom exercise creation offers the new variation for the active workout',
   assert.doesNotMatch(sheet.innerHTML, /commas/);
   assert.match(sheet.innerHTML, /<legend>Track by<\/legend>\s*<label class="radio-option"><input type="radio" name="tracking_type" value="repetitions" checked \/> Repetitions<\/label>\s*<label class="radio-option"><input type="radio" name="tracking_type" value="duration" \/> Duration in seconds<\/label>/);
   assert.doesNotMatch(sheet.innerHTML, /<select/);
-  // Without suggestions (an older server), both fields are plain text inputs.
+  // Without suggestions (an older server), equipment remains a plain text input.
   assert.match(equipmentField.innerHTML, /<input id="equipment-entry" maxlength="80"[^>]*aria-describedby="equipment-help"/);
-  assert.equal(sheetNodes['#variation-field'].querySelector('#variation-name-choice'), null);
   type(sheetNodes['#variation-field'], 'variation-name', 'Single Leg');
   const originalFormData = globalThis.FormData;
   globalThis.FormData = class { constructor() { return new Map([['name', 'Leg Press'], ['tracking_type', 'repetitions']]); } };
@@ -601,7 +692,7 @@ test('custom exercise creation offers the new variation for the active workout',
     await customForm.events.submit({ preventDefault() {}, currentTarget: customForm });
   } finally { globalThis.FormData = originalFormData; }
   assert.equal(requests[1][0], '/api/exercises');
-  assert.deepEqual(JSON.parse(requests[1][1].body), { name: 'Leg Press', variation_name: 'Single Leg', tracking_type: 'repetitions', equipment: ['Machine', 'Cable'], assisted: false });
+  assert.deepEqual(JSON.parse(requests[1][1].body), { name: 'Leg Press', variation_name: 'Single Leg', tracking_type: 'repetitions', equipment: ['Machine', 'Cable'], assisted: false, muscle_groups: [] });
   assert.match(sheet.innerHTML, /Single Leg Leg Press/);
   assert.match(sheet.innerHTML, /data-equipment="Machine"/);
 });
@@ -615,6 +706,8 @@ const suggestionCatalog = {
   ],
   suggestions: {
     equipment: ['Barbell', 'Machine'],
+    variations: ['Boy', 'Front Plank', 'Single Leg', 'Standard'],
+    manufacturers: ['Eleiko', 'Hammer Strength', 'Technogym'],
     exercises: [
       { name: 'Bench Press', variations: ['Standard'], equipment: ['Barbell', 'Machine'], manufacturers: ['Eleiko'], labels: ['Rack 2'] },
       { name: 'Leg Press', variations: ['Single Leg', 'Standard'], equipment: ['Barbell', 'Machine', 'Sled'],
@@ -624,92 +717,127 @@ const suggestionCatalog = {
   },
 };
 
-test('the custom exercise form offers the typed Exercise its variations and equipment, and only the starter equipment to a new one', async () => {
+test('custom creation offers global Variation names and keeps Equipment relevant to the Exercise', async () => {
   const app = await harness();
   const { sheetNodes, customForm, requests } = await openPickerSheet(app, suggestionCatalog, () => response({ id: 18,
     exercise_name: 'Leg Press', variation_name: 'Wide', tracking_type: 'duration', equipment: ['Sled', 'Hack'] }, 201));
   const variationField = sheetNodes['#variation-field'];
   const equipmentField = sheetNodes['#equipment-choice'];
   app.nodes['#create-exercise'].events.click();
-  // A new Exercise has no variations yet and is offered the starter equipment.
-  assert.equal(variationField.querySelector('#variation-name-choice'), null);
-  assert.deepEqual(optionValues(equipmentField, 'equipment-entry-choice'), ['Choose equipment', 'Barbell', 'Machine', 'Other…']);
-
-  const help = sheetNodes['#variation-help'];
-  assert.equal(help.hidden, true, 'a new Exercise has no variations to list');
-  assert.match(sheetNodes['#variation-field'].innerHTML, /aria-describedby="variation-help"/);
+  assert.deepEqual(optionValues(variationField, 'variation-name'), ['Standard', 'Boy', 'Front Plank', 'Single Leg']);
+  assert.equal(variationField.querySelector('#variation-name').value, '');
+  assert.match(variationField.innerHTML, /placeholder="Standard"/);
+  assert.deepEqual(optionValues(equipmentField, 'equipment-entry'), ['Barbell', 'Machine']);
   const name = sheetNodes['[name="name"]'];
   name.value = ' leg  press';
   name.events.input();
-  // Every existing name is taken, so the field is just the text box and the taken names are listed below it.
-  assert.equal(variationField.querySelector('#variation-name-choice'), null);
-  assert.doesNotMatch(variationField.innerHTML, /already added|Other…/);
-  assert.equal(variationField.querySelector('#variation-name').hidden, false);
-  assert.equal(help.hidden, false);
-  assert.equal(help.textContent, 'Leg Press already has: Single Leg, Standard. Enter a new variation name.');
-  // A blank name would mean Standard, which is taken, so the placeholder no longer suggests it.
-  assert.match(variationField.innerHTML, /<input id="variation-name"[^>]*placeholder="e\.g\. Wide grip"/);
+  assert.match(sheetNodes['#variation-help'].textContent, /Choose an existing variation to keep its tracking, equipment, Muscle Groups and Assisted settings/);
   type(variationField, 'variation-name', 'Wide');
-  assert.deepEqual(optionValues(equipmentField, 'equipment-entry-choice'), ['Choose equipment', 'Barbell', 'Machine', 'Sled', 'Other…']);
-  assert.doesNotMatch(equipmentField.innerHTML, /Eleiko|Technogym/);
-
-  choose(equipmentField, 'equipment-entry-choice', 'Sled');
-  sheetNodes['#add-equipment'].events.click();
+  assert.deepEqual(optionValues(equipmentField, 'equipment-entry'), ['Barbell', 'Machine', 'Sled']);
+  // Picking a listed option adds it straight away, without raising the keyboard.
+  choose(equipmentField, 'equipment-entry', 'Sled');
   assert.match(sheetNodes['#equipment-chips'].innerHTML, /<span>Sled<\/span>/);
-  assert.deepEqual(optionValues(equipmentField, 'equipment-entry-choice'), ['Choose equipment', 'Barbell', 'Machine', 'Other…'], 'an added value is no longer offered');
-  assert.equal(equipmentField.querySelector('#equipment-entry').hidden, true);
-  choose(equipmentField, 'equipment-entry-choice', OTHER);
+  assert.equal(equipmentField.querySelector('#equipment-entry').focused, false);
+  assert.deepEqual(optionValues(equipmentField, 'equipment-entry'), ['Barbell', 'Machine']);
   type(equipmentField, 'equipment-entry', 'Hack');
   const originalFormData = globalThis.FormData;
   globalThis.FormData = class { constructor() { return new Map([['name', 'leg press'], ['tracking_type', 'duration']]); } };
   try { await customForm.events.submit({ preventDefault() {}, currentTarget: customForm }); }
   finally { globalThis.FormData = originalFormData; }
-  assert.deepEqual(JSON.parse(requests.at(-1)[1].body), { name: 'leg press', variation_name: 'Wide', tracking_type: 'duration', equipment: ['Sled', 'Hack'], assisted: false });
-
-  // An existing Exercise without a Standard variation offers Standard as the default.
-  name.value = 'Plank';
-  name.events.input();
-  assert.deepEqual(optionValues(variationField, 'variation-name-choice'), ['Standard', 'Other…']);
-  assert.equal(help.textContent, 'Plank already has: Front Plank. Choose Standard or Other… for a new variation name.');
-  choose(variationField, 'variation-name-choice', 'Standard');
-  assert.equal(variationField.querySelector('#variation-name').hidden, true);
-  // Back to an Exercise whose names are all taken: the text box shows, with no select left behind.
-  name.value = 'Leg Press';
-  name.events.input();
-  assert.equal(variationField.querySelector('#variation-name-choice'), null);
-  assert.equal(variationField.querySelector('#variation-name').hidden, false);
-  name.value = 'Leg Pressing';
-  name.events.input();
-  assert.equal(help.hidden, true);
-  assert.match(variationField.innerHTML, /<input id="variation-name"[^>]*placeholder="Standard"/);
-  assert.equal(variationField.querySelector('#variation-name-choice'), null);
+  assert.deepEqual(JSON.parse(requests.at(-1)[1].body), { name: 'leg press', variation_name: 'Wide', tracking_type: 'duration', equipment: ['Sled', 'Hack'], assisted: false, muscle_groups: [] });
 });
 
-test('the Exercise Configuration form offers manufacturers and machine labels saved for the same Exercise at any gym', async () => {
+test('a reused Variation name creates a new Exercise, while an existing Variation is selected with its metadata', async () => {
+  const app = await harness();
+  const catalog = structuredClone(suggestionCatalog);
+  catalog.catalog[2].assisted = true;
+  catalog.catalog[2].muscle_groups = ['Abs'];
+  const { sheet, sheetNodes, customForm, requests } = await openPickerSheet(app, catalog, () => response({ id: 40,
+    exercise_name: 'New Exercise', variation_name: 'Boy', tracking_type: 'repetitions', equipment: ['Machine'] }, 201));
+  app.nodes['#create-exercise'].events.click();
+  const variationField = sheetNodes['#variation-field'];
+  choose(variationField, 'variation-name', 'Boy');
+  choose(sheetNodes['#equipment-choice'], 'equipment-entry', 'Machine');
+  const originalFormData = globalThis.FormData;
+  globalThis.FormData = class { constructor() { return new Map([['name', 'New Exercise'], ['tracking_type', 'repetitions']]); } };
+  try { await customForm.events.submit({ preventDefault() {}, currentTarget: customForm }); }
+  finally { globalThis.FormData = originalFormData; }
+  assert.equal(JSON.parse(requests.at(-1)[1].body).variation_name, 'Boy');
+  app.nodes['#create-exercise'].events.click();
+  choose(variationField, 'variation-name', 'Front Plank');
+  globalThis.FormData = class { constructor() { return new Map([['name', ' plank '], ['tracking_type', 'repetitions']]); } };
+  try { await customForm.events.submit({ preventDefault() {}, currentTarget: customForm }); }
+  finally { globalThis.FormData = originalFormData; }
+  assert.equal(requests.filter(([path]) => path === '/api/exercises').length, 1, 'no duplicate or metadata update');
+  assert.match(sheet.innerHTML, /<h2 id="picker-title">Front Plank<\/h2>/);
+  assert.match(sheet.innerHTML, /data-equipment="Bodyweight"/);
+  assert.equal(catalog.catalog[2].tracking_type, 'duration');
+  assert.equal(catalog.catalog[2].assisted, true);
+  assert.deepEqual(catalog.catalog[2].muscle_groups, ['Abs']);
+  await app.nodes['#configuration-form'].events.submit({ preventDefault() {}, currentTarget: app.nodes['#configuration-form'] });
+  const added = requests.find(([path]) => path === '/api/workouts/1/exercises');
+  assert.equal(JSON.parse(added[1].body).variation_id, 30);
+});
+
+test('typing an existing Variation name ignores case and uses it without requiring new Equipment', async () => {
+  const app = await harness();
+  const { sheetNodes, customForm, requests } = await openPickerSheet(app, suggestionCatalog);
+  app.nodes['#create-exercise'].events.click();
+  type(sheetNodes['#variation-field'], 'variation-name', ' single  LEG ');
+  const originalFormData = globalThis.FormData;
+  globalThis.FormData = class { constructor() { return new Map([['name', ' LEG  PRESS '], ['tracking_type', 'duration'], ['assisted', 'on']]); } };
+  try { await customForm.events.submit({ preventDefault() {}, currentTarget: customForm }); }
+  finally { globalThis.FormData = originalFormData; }
+  assert.equal(requests.length, 1, 'only the catalogue was fetched');
+  assert.match(app.nodes['#picker .sheet'].innerHTML, /data-equipment="Sled"/);
+  assert.match(app.nodes['#picker .sheet'].innerHTML, /data-equipment="Machine"/);
+});
+
+test('custom creation sends optional multiple Muscle Groups', async () => {
+  const app = await harness();
+  const catalog = { ...suggestionCatalog, muscle_groups: ['Chest', 'Back', 'Abs'] };
+  const { sheet, sheetNodes, customForm, requests } = await openPickerSheet(app, catalog, () => response({
+    id: 40, exercise_name: 'New Exercise', variation_name: 'Standard', tracking_type: 'repetitions',
+    equipment: ['Machine'], muscle_groups: ['Back', 'Abs'],
+  }, 201));
+  app.nodes['#create-exercise'].events.click();
+  assert.match(sheet.innerHTML, /<summary>Muscle Groups \(optional\)<\/summary>/);
+  assert.match(sheet.innerHTML, /name="muscle_group" value="Back"/);
+  choose(sheetNodes['#equipment-choice'], 'equipment-entry', 'Machine');
+  customForm.querySelectorAll = selector => selector === 'input[name="muscle_group"]:checked'
+    ? [{ value: 'Back' }, { value: 'Abs' }] : [];
+  const originalFormData = globalThis.FormData;
+  globalThis.FormData = class { constructor() { return new Map([['name', 'New Exercise'], ['tracking_type', 'repetitions']]); } };
+  try { await customForm.events.submit({ preventDefault() {}, currentTarget: customForm }); }
+  finally { globalThis.FormData = originalFormData; }
+  assert.deepEqual(JSON.parse(requests.at(-1)[1].body).muscle_groups, ['Back', 'Abs']);
+});
+
+test('the Exercise Configuration form offers manufacturers from all Exercises and machine labels of the same Exercise', async () => {
   const app = await harness();
   const { requests } = await openPickerSheet(app, suggestionCatalog, () => response({ id: 9 }, 201));
   pickVariation(app, 17);
   const manufacturer = app.nodes['#manufacturer-field'];
   const label = app.nodes['#machine-label-field'];
-  assert.deepEqual(optionValues(manufacturer, 'manufacturer-choice'), ['None', 'Hammer Strength', 'Technogym', 'Other…']);
-  assert.deepEqual(optionValues(label, 'machine-label-choice'), ['None', 'Upstairs', 'Other…']);
+  assert.deepEqual(optionValues(manufacturer, 'manufacturer'), ['Eleiko', 'Hammer Strength', 'Technogym']);
+  assert.deepEqual(optionValues(label, 'machine-label'), ['Upstairs']);
   assert.match(manufacturer.innerHTML, /Manufacturer <small>\(optional\)<\/small>/);
-  choose(manufacturer, 'manufacturer-choice', 'Technogym');
-  choose(label, 'machine-label-choice', OTHER);
+  choose(manufacturer, 'manufacturer', 'Technogym');
   type(label, 'machine-label', 'Downstairs');
   await app.nodes['#configuration-form'].events.submit({ preventDefault() {}, currentTarget: app.nodes['#configuration-form'] });
   const added = requests.find(([path]) => path === '/api/workouts/1/exercises');
   assert.deepEqual(JSON.parse(added[1].body), { variation_id: 17, equipment: 'Sled', manufacturer: 'Technogym', label: 'Downstairs' });
 });
 
-test('an Exercise never configured starts with empty machine details and no suggestions', async () => {
+test('an Exercise never configured offers global manufacturers, no machine labels, and starts empty', async () => {
   const app = await harness();
   const { requests } = await openPickerSheet(app, suggestionCatalog, () => response({ id: 9 }, 201));
   pickVariation(app, 30);
   const manufacturer = app.nodes['#manufacturer-field'];
-  assert.equal(manufacturer.querySelector('#manufacturer-choice'), null);
-  assert.equal(app.nodes['#machine-label-field'].querySelector('#machine-label-choice'), null);
-  assert.match(manufacturer.innerHTML, /<label for="manufacturer">/);
+  assert.equal(manufacturer.querySelector('#manufacturer').value, '');
+  assert.deepEqual(optionValues(manufacturer, 'manufacturer'), ['Eleiko', 'Hammer Strength', 'Technogym']);
+  assert.equal(app.nodes['#machine-label-field'].querySelector('#machine-label').value, '');
+  assert.equal(app.nodes['#machine-label-field'].querySelector('#machine-label-toggle').hidden, true, 'no machine labels to list yet');
   await app.nodes['#configuration-form'].events.submit({ preventDefault() {}, currentTarget: app.nodes['#configuration-form'] });
   const added = requests.find(([path]) => path === '/api/workouts/1/exercises');
   assert.deepEqual(JSON.parse(added[1].body), { variation_id: 30, equipment: 'Bodyweight', manufacturer: '', label: '' });
@@ -719,16 +847,22 @@ const legPressEntry = { id: 3, variation_id: 17, exercise_name: 'Leg Press', var
   manufacturer: 'Cybex', label: '', note: 'Seat 4', tracking_type: 'repetitions', previous_sets: [],
   sets: [{ id: 2, position: 1, weight: null, result: null, completed: false }] };
 
-test('Change machine saves set drafts, then switches the exercise to the machine chosen in its sheet', async () => {
+test('Edit manufacturer / machine saves set drafts, then switches the exercise to the machine chosen in its sheet', async () => {
   const app = await harness(storage(), { workout_exercises: [legPressEntry] });
-  assert.match(app.nodes['#app'].innerHTML, /<p class="meta">Machine · Cybex<\/p>[\s\S]*data-change-machine="3" aria-label="Change machine for Single Leg Leg Press">Change machine<\/button>/);
+  assert.match(app.nodes['#app'].innerHTML, /<p class="meta">Machine · Cybex<\/p>[\s\S]*data-change-machine="3" aria-label="Edit manufacturer \/ machine for Single Leg Leg Press">Edit manufacturer \/ machine<\/button>/);
+  const html = app.nodes['#app'].innerHTML;
+  assert.equal((html.match(/data-change-machine="3"/g) ?? []).length, 1);
+  assert.ok(html.indexOf('data-change-machine="3"') < html.indexOf('class="sets-list"'));
+  assert.ok(html.indexOf('data-change-machine="3"') < html.indexOf('class="exercise-options"'));
   const { sheet } = pickerSheet(app);
   const changed = { ...structuredClone(legPressEntry), equipment: 'Sled', manufacturer: 'Technogym', label: 'Upstairs',
+    note: 'Seat 5', previous_sets: [{ position: 1, weight: 70, result: 12 }],
     sets: [{ id: 2, position: 1, weight: 100, result: null, completed: false }] };
   const requests = [];
   app.env.fetch = async (url, options = {}) => {
     requests.push([`${options.method ?? 'GET'} ${url}`, options.body && JSON.parse(options.body)]);
     if (url === '/api/sets/2') return response({ id: 2, position: 1, weight: 100, result: null, completed: false });
+    if (url === '/api/workout-exercises/3/note') return response({ id: 3, note: 'Seat 5' });
     if (url.startsWith('/api/catalog')) return response(structuredClone(suggestionCatalog));
     if (url.endsWith('/configuration')) return response({ id: 3, equipment: 'Sled', manufacturer: 'Technogym', label: 'Upstairs' });
     if (url === '/api/bootstrap') return response({ gyms: [], active_workout: { id: 1, gym_id: 1, gym_name: 'Home', started_at: '2026-09-22 10:00:00' }, workout_exercises: [changed] });
@@ -741,33 +875,37 @@ test('Change machine saves set drafts, then switches the exercise to the machine
   app.env.document.querySelectorAll = (selector) => selector === '[data-equipment]' ? equipmentButtons : querySelectorAll(selector);
   app.form.elements.weight.value = '100';
   app.form.events.input();
+  const note = app.noteField('exercise:3');
+  note.value = 'Seat 5';
+  note.events.input();
 
   await clickIn(app, '[data-change-machine]', { changeMachine: '3' });
-  assert.deepEqual(requests.map(([request]) => request), ['PUT /api/sets/2', 'GET /api/catalog?gym_id=1'], 'the set draft is saved first');
-  assert.match(sheet.innerHTML, /<h2 id="picker-title">Change machine<\/h2><button class="text-button" id="close-picker">Cancel<\/button>/);
+  assert.deepEqual(requests.map(([request]) => request), ['PUT /api/sets/2', 'PUT /api/workout-exercises/3/note', 'GET /api/catalog?gym_id=1'], 'set and note drafts are saved first');
+  assert.match(sheet.innerHTML, /<h2 id="picker-title">Edit manufacturer \/ machine<\/h2><button class="text-button" id="close-picker">Cancel<\/button>/);
   assert.match(sheet.innerHTML, /Single Leg Leg Press keeps its sets and note\./);
   assert.match(sheet.innerHTML, /data-equipment="Sled" aria-pressed="false"[\s\S]*data-equipment="Machine" aria-pressed="true"/);
   assert.match(sheet.innerHTML, /<button class="primary accent" type="submit">Save<\/button>/);
   assert.doesNotMatch(sheet.innerHTML, /back-to-picker/);
   const manufacturer = app.nodes['#manufacturer-field'];
   const label = app.nodes['#machine-label-field'];
-  // Cybex is not among the suggestions here, so it starts typed under Other…; the label starts as None.
-  assert.equal(manufacturer.querySelector('#manufacturer-choice').value, OTHER);
+  // The current details start in the fields, even when they are not among the suggestions.
   assert.equal(manufacturer.querySelector('#manufacturer').value, 'Cybex');
-  assert.equal(label.querySelector('#machine-label-choice').value, '');
-  choose(manufacturer, 'manufacturer-choice', 'Technogym');
-  assert.equal(manufacturer.querySelector('#manufacturer').hidden, true);
-  choose(label, 'machine-label-choice', 'Upstairs');
+  assert.equal(label.querySelector('#machine-label').value, '');
+  choose(manufacturer, 'manufacturer', 'Technogym');
+  assert.equal(manufacturer.querySelector('#manufacturer').value, 'Technogym');
+  choose(label, 'machine-label', 'Upstairs');
   equipmentButtons[0].events.click();
   assert.deepEqual(equipmentButtons.map((button) => button.pressed), ['true', 'false']);
 
   await app.nodes['#configuration-form'].events.submit({ preventDefault() {}, currentTarget: app.nodes['#configuration-form'] });
-  assert.deepEqual(requests.slice(2), [
+  assert.deepEqual(requests.slice(3), [
     ['PUT /api/workouts/1/exercises/3/configuration', { equipment: 'Sled', manufacturer: 'Technogym', label: 'Upstairs' }],
     ['GET /api/bootstrap', undefined]]);
   assert.equal(app.nodes['#picker'], undefined, 'the sheet closes');
   assert.match(app.nodes['#app'].innerHTML, /<p class="meta">Sled · Technogym · Upstairs<\/p>/);
   assert.match(app.nodes['#app'].innerHTML, /data-set-id="2"/);
+  assert.equal(app.noteField('exercise:3').value, 'Seat 5');
+  assert.match(app.nodes['#app'].innerHTML, /data-previous-weight="70" data-previous-result="12"/);
   assert.equal(app.nodes['#toast'].textContent, 'Changed to Sled · Technogym · Upstairs.');
 });
 
@@ -790,7 +928,7 @@ test('Close in the picker and the custom exercise form returns focus to Add exer
   assert.equal(app.nodes['#open-picker'].focused, true);
 });
 
-test('Change machine waits for a set that cannot be saved, and Cancel changes nothing', async () => {
+test('Edit manufacturer / machine waits for a set that cannot be saved, and Cancel changes nothing', async () => {
   const app = await harness(storage(), { workout_exercises: [legPressEntry] });
   pickerSheet(app);
   const requests = [];
@@ -804,7 +942,7 @@ test('Change machine waits for a set that cannot be saved, and Cancel changes no
   await clickIn(app, '[data-change-machine]', { changeMachine: '3' });
   assert.deepEqual(requests, []);
   assert.equal(app.nodes['#picker'], undefined);
-  assert.equal(app.nodes['#toast'].textContent, 'Cannot change the machine yet: fix the highlighted set, then try again.');
+  assert.equal(app.nodes['#toast'].textContent, 'Cannot edit manufacturer or machine yet: fix the highlighted set, then try again.');
 
   app.form.elements.completed.checked = false;
   app.form.events.input();
@@ -815,13 +953,34 @@ test('Change machine waits for a set that cannot be saved, and Cancel changes no
   assert.equal(requests.length, 2);
 });
 
-test('Change machine explains that an archived exercise must be restored first', async () => {
+test('manufacturer editing offline preserves unsaved Sets and Notes until they can be saved', async () => {
+  const app = await harness(storage(), { workout_exercises: [legPressEntry] });
+  pickerSheet(app);
+  app.env.navigator.onLine = false;
+  app.form.elements.weight.value = '85';
+  app.form.events.input();
+  const note = app.noteField('exercise:3');
+  note.value = 'Seat 6';
+  note.events.input();
+  const requests = [];
+  app.env.fetch = async (url) => { requests.push(url); throw new TypeError('Offline'); };
+  await clickIn(app, '[data-change-machine]', { changeMachine: '3' });
+  assert.equal(app.nodes['#picker'], undefined);
+  assert.equal(app.form.elements.weight.value, '85');
+  assert.equal(note.value, 'Seat 6');
+  assert.ok(!requests.some(url => url.startsWith('/api/catalog') || url.endsWith('/configuration')));
+  const reopened = await harness(app.disk, { workout_exercises: [legPressEntry] });
+  assert.equal(reopened.form.elements.weight.value, '85');
+  assert.equal(reopened.noteField('exercise:3').value, 'Seat 6');
+});
+
+test('Edit manufacturer / machine explains that an archived exercise must be restored first', async () => {
   const app = await harness(storage(), { workout_exercises: [{ ...legPressEntry, variation_id: 99 }] });
   pickerSheet(app);
   app.env.fetch = async () => response(structuredClone(suggestionCatalog));
   await clickIn(app, '[data-change-machine]', { changeMachine: '3' });
   assert.equal(app.nodes['#picker'], undefined);
-  assert.equal(app.nodes['#toast'].textContent, 'Single Leg Leg Press is archived. Restore it in Manage to change its machine.');
+  assert.equal(app.nodes['#toast'].textContent, 'Single Leg Leg Press is archived. Restore it in Manage to edit its manufacturer or machine.');
 });
 
 test('progress shows a chart and numeric history for an exercise', async () => {
@@ -1113,7 +1272,7 @@ test('each exercise offers move up and move down with the ends disabled, and rem
   assert.match(html, /data-move-exercise="3" data-move-to="2" aria-label="Move Bench Press down" >Move down/);
   assert.match(html, /data-move-exercise="4" data-move-to="1" aria-label="Move Front Plank up" >Move up/);
   assert.match(html, /data-move-exercise="4" data-move-to="3" aria-label="Move Front Plank down" disabled>Move down/);
-  assert.match(html, /<summary class="exercise-summary"><h3>Front Plank<\/h3>[\s\S]*?<details class="exercise-options"[^>]*><summary>Exercise options<\/summary>[\s\S]*?data-remove-exercise="4" aria-label="Remove Front Plank">Remove exercise<\/button>/);
+  assert.match(html, /<summary class="exercise-summary"><h3 data-reorder-name="4">Front Plank<\/h3>[\s\S]*?<details class="exercise-options"[^>]*><summary>Exercise options<\/summary>[\s\S]*?data-remove-exercise="4" aria-label="Remove Front Plank">Remove exercise<\/button>/);
   assert.doesNotMatch(html, />Remove</, 'removal has a specific exercise label');
 });
 
@@ -1619,7 +1778,7 @@ test('history offers archived gyms as filters and hides Repeat for a workout at 
   assert.match(html, /Restore Annex &lt;b&gt; in Manage to repeat this workout\./);
 });
 
-test('Manage archives, deletes and restores Exercise Configurations', async () => {
+test('Manage uses Delete for all Exercise Configurations and preserves Restore', async () => {
   const app = await harness(storage(), startData([home]));
   const questions = [];
   const labels = [];
@@ -1651,21 +1810,24 @@ test('Manage archives, deletes and restores Exercise Configurations', async () =
   });
   let html = content.innerHTML;
   assert.match(html, /data-section="configurations">\s*<summary><h3>Exercise Configurations<\/h3><span>3<\/span>/);
-  assert.match(html, /Machine · Press &lt;1&gt;[\s\S]*data-manage-remove="configuration:5"[^>]*>Archive<\/button>/);
+  assert.match(html, /Machine · Press &lt;1&gt;[\s\S]*data-manage-remove="configuration:5"[^>]*>Delete<\/button>/);
   assert.match(html, /data-manage-remove="configuration:6"[^>]*>Delete<\/button>/);
   assert.match(html, /Sled · Recent hides it while Heavy Sled Push is archived/);
   assert.match(html, /Archived \(1\)[\s\S]*Home · Machine · Old[\s\S]*data-manage-restore="configuration:8"[^>]*>Restore<\/button>/);
   assert.doesNotMatch(html, /<1>/);
+  assert.match(html, /Delete removes this saved choice without deleting recorded Sets or history/);
+  assert.match(html, /Choosing the same exercise, equipment, manufacturer and label again restores one/);
   // Several configurations of one exercise at a gym are told apart by their equipment details.
   assert.match(html, /<span class="manage-name">Incline Bench Press<\/span><span class="meta">Machine · Press &lt;1&gt;<\/span>/);
-  assert.match(html, /aria-label="Archive Incline Bench Press \(Machine · Press &lt;1&gt;\)"/);
+  assert.match(html, /aria-label="Delete Incline Bench Press \(Machine · Press &lt;1&gt;\)"/);
 
   await click('[data-manage-remove]', { manageRemove: 'configuration:5' });
-  assert.match(questions[0], /^Archive Incline Bench Press \(Machine · Press <1>\)\? It is used in recorded workouts/);
-  assert.equal(app.nodes['#toast'].textContent, 'Incline Bench Press (Machine · Press <1>) archived.');
+  assert.match(questions[0], /^Delete Incline Bench Press \(Machine · Press <1>\)\? Recorded Sets and history stay/);
+  assert.equal(app.nodes['#toast'].textContent, 'Incline Bench Press (Machine · Press <1>) deleted. Recorded Sets and history stay. Restore it under Archived.');
+  assert.match(questions[0], /Restore it under Archived, or choose the same exercise, equipment, manufacturer and label again/);
   await click('[data-manage-remove]', { manageRemove: 'configuration:6' });
   assert.match(questions[1], /^Delete Incline Bench Press \(Machine · Press 2\)\? It has never been used/);
-  assert.deepEqual(labels, ['Archive', 'Delete']);
+  assert.deepEqual(labels, ['Delete', 'Delete']);
   assert.equal(app.nodes['#toast'].textContent, 'Incline Bench Press (Machine · Press 2) deleted.');
   html = content.innerHTML;
   assert.doesNotMatch(html, /configuration:6/);
@@ -1700,7 +1862,7 @@ test('Manage lists custom exercises with rename, equipment and Delete or Archive
   assert.match(html, /data-manage-rename="exercise:3" aria-label="Rename Sled &lt;i&gt;">Rename<\/button>/);
   assert.doesNotMatch(html, /data-manage-rename="exercise:4"/);
   assert.doesNotMatch(html, /data-manage-remove="exercise:/);
-  assert.match(html, /data-manage-rename="variation:7"[^>]*>Rename<\/button><button[^>]*data-manage-equipment="variation:7"[^>]*>Equipment<\/button><button[^>]*data-manage-remove="variation:7"[^>]*>Archive<\/button>/);
+  assert.match(html, /data-manage-rename="variation:7"[^>]*>Rename<\/button><button[^>]*data-manage-equipment="variation:7"[^>]*>Equipment<\/button><button[^>]*data-manage-muscle-groups="variation:7"[^>]*>Muscle Groups<\/button><button[^>]*data-manage-remove="variation:7"[^>]*>Archive<\/button>/);
   assert.match(html, /data-manage-remove="variation:9"[^>]*>Delete<\/button>/);
   // × only on unused equipment, and never on the last value.
   const editor = html.match(/<form class="manage-rename-form manage-equipment-form" data-manage-equipment-form="variation:7" hidden>[\s\S]*?<\/form>/)[0];
@@ -1721,6 +1883,35 @@ test('Manage lists custom exercises with rename, equipment and Delete or Archive
   assert.ok(requests.some(([key]) => key === 'POST /api/manage/variations/8/restore'));
   assert.equal(app.nodes['#toast'].textContent, 'Old Sled <i> restored.');
   assert.match(content.innerHTML, /data-manage-rename="exercise:3"/);
+});
+
+test('Manage saves, clears and displays Custom Variation Muscle Groups', async () => {
+  const app = await harness(storage(), startData([home]));
+  let groups = ['Back'];
+  const { content, requests, click } = await openManage(app, {
+    'GET /api/manage': () => manageOverview([], { muscle_groups: ['Back', 'Forearms', 'Abs'],
+      exercises: [sled([{ ...heavy, muscle_groups: groups }])] }),
+    'PUT /api/manage/variations/7': () => { groups = requests.at(-1)[1].muscle_groups; return { ...heavy, muscle_groups: groups }; },
+  });
+  assert.match(content.innerHTML, /Duration · Sled · Prowler &lt;b&gt; · Back/);
+  assert.match(content.innerHTML, /name="muscle_group" value="Back" checked/);
+  const status = node(), button = node(), input = node();
+  const form = Object.assign(node(), { hidden: true, dataset: { manageMuscleGroupsForm: 'variation:7' },
+    closest: selector => selector === '[data-manage-muscle-groups-form]' ? form : null,
+    querySelector: selector => selector === '.set-status' ? status : input,
+    querySelectorAll: selector => selector === '[type="submit"]' ? [button] : [{ value: 'Forearms' }, { value: 'Abs' }],
+  });
+  content.querySelector = () => form;
+  await click('[data-manage-muscle-groups]', { manageMuscleGroups: 'variation:7' });
+  assert.equal(form.hidden, false);
+  await content.events.submit({ target: form, preventDefault() {} });
+  assert.deepEqual(requests.find(([key]) => key === 'PUT /api/manage/variations/7')[1], { muscle_groups: ['Forearms', 'Abs'] });
+  assert.equal(app.nodes['#toast'].textContent, 'Muscle Groups saved.');
+  assert.match(content.innerHTML, /Forearms · Abs/);
+  await content.events.submit({ target: form, submitter: { value: 'clear' }, preventDefault() {} });
+  assert.deepEqual(requests.at(-2)[1], { muscle_groups: [] });
+  assert.equal(app.nodes['#toast'].textContent, 'Muscle Groups cleared.');
+  assert.doesNotMatch(content.innerHTML, /value="Back" checked|value="Forearms" checked|value="Abs" checked/);
 });
 
 test('Manage renames a custom exercise', async () => {
@@ -2071,4 +2262,192 @@ test('the Routines screen explains that it needs a connection', async () => {
   const app = await harness(storage(), { ...startData([home]), routines: [] });
   const { nodes } = await openRoutinesScreen(app, {});
   assert.match(nodes['#routines-message'].textContent, /Routines require a connection/);
+});
+
+
+test('rest defaults recover from missing or malformed preferences and preserve saved choices', async () => {
+  for (const saved of [null, '{broken', '{}', 'null', '[]', '{"duration":0}', '{"duration":3601}', '{"duration":"90"}', '{"duration":1.5}', '{"enabled":true,"duration":0}']) {
+    const disk = storage();
+    if (saved !== null) disk.setItem('gymdex:rest:v1', saved);
+    const app = await harness(disk);
+    assert.equal(app.nodes['#rest-clock'].textContent, '2:00', saved);
+    if (saved?.includes('enabled')) assert.match(app.nodes['#app'].innerHTML, /id="rest-enabled"[^>]*checked/);
+  }
+  for (const duration of [1, 90, 137, 3600]) {
+    for (const enabled of [true, false]) {
+      const disk = storage();
+      disk.setItem('gymdex:rest:v1', JSON.stringify({ enabled, duration }));
+      const app = await harness(disk);
+      assert.match(app.nodes['#app'].innerHTML, new RegExp(`value="${duration}" selected`));
+      assert.match(app.nodes['#app'].innerHTML, enabled ? /id="rest-enabled"[^>]*checked/ : /id="rest-controls" hidden/);
+    }
+  }
+});
+
+test('Settings shares preferences with workout controls and returns without replacing drafts or timer', async () => {
+  const app = await harness();
+  const { dialog, nodes } = historyDOM(app);
+  app.form.elements.weight.value = '42.5';
+  app.form.elements.result.value = '8';
+  app.form.events.input();
+  const note = app.noteField('workout');
+  note.value = 'Still writing';
+  const original = app.nodes['#app'].innerHTML;
+  app.nodes['#open-settings'].events.click();
+  assert.match(dialog.innerHTML, /Back to workout/);
+  assert.equal(dialog.className, 'settings-screen');
+  nodes['#settings-rest-enabled'].events.change({ target: { checked: true } });
+  nodes['#settings-rest-duration'].events.change({ target: { value: '90' } });
+  assert.deepEqual(JSON.parse(app.disk.getItem('gymdex:rest:v1')), { enabled: true, duration: 90 });
+  assert.equal(app.nodes['#rest-duration'].value, '90');
+  assert.equal(app.nodes['#rest-enabled'].checked, true);
+  app.nodes['#rest-start'].events.click();
+  nodes['#settings-rest-duration'].events.change({ target: { value: '180' } });
+  assert.equal(app.nodes['#rest-clock'].textContent, '1:30', 'current countdown keeps its deadline');
+  nodes['#close-settings'].events.click();
+  assert.equal(dialog.removed, true);
+  assert.equal(app.nodes['#app'].innerHTML, original);
+  assert.equal(app.form.elements.weight.value, '42.5');
+  assert.equal(app.noteField('workout'), note);
+  assert.equal(note.value, 'Still writing');
+  assert.equal(app.nodes['#rest-status'].textContent, 'Resting');
+  app.nodes['#rest-duration'].events.change({ target: { value: '60' } });
+  app.nodes['#open-settings'].events.click();
+  assert.match(dialog.innerHTML, /value="60" selected/);
+  nodes['#settings-rest-enabled'].events.change({ target: { checked: false } });
+  assert.equal(app.nodes['#rest-controls'].hidden, true);
+  assert.equal(app.nodes['#rest-status'].textContent, 'Ready after a completed set');
+});
+
+test('Settings is available before a workout and returns to start', async () => {
+  const app = await harness(storage(), { active_workout: null, workout_exercises: [] });
+  const { dialog, nodes } = historyDOM(app);
+  const original = app.nodes['#app'].innerHTML;
+  app.nodes['#open-settings'].events.click();
+  assert.match(dialog.innerHTML, /Back to start/);
+  nodes['#settings-rest-duration'].events.change({ target: { value: '120' } });
+  nodes['#close-settings'].events.click();
+  assert.equal(app.nodes['#app'].innerHTML, original);
+  assert.deepEqual(JSON.parse(app.disk.getItem('gymdex:rest:v1')), { enabled: false, duration: 120 });
+});
+
+function reorderDOM(app) {
+  const opened = historyDOM(app);
+  const step = (id, direction) => {
+    const list = opened.nodes['#reorder-list'];
+    list.querySelector = () => null;
+    const row = { dataset: { reorderId: String(id) } };
+    const button = { disabled: false, dataset: { reorderStep: String(direction) }, closest: () => row };
+    return list.events.click({ target: { closest: () => button } });
+  };
+  return { ...opened, step };
+}
+
+test('the compact Active Workout reorder list saves Sets and Notes before moving and preserves both Tracking Types', async () => {
+  const app = await harness(storage(), { workout_exercises: [pressEntry, plankEntry] });
+  const requests = [];
+  app.env.fetch = async (url, options) => {
+    const body = JSON.parse(options.body);
+    requests.push([url, body]);
+    if (url === '/api/sets/2') return response({ id: 2, position: 1, weight: 42.5, result: 8, completed: false });
+    if (url.endsWith('/note')) return response({ note: body.note });
+    return response({ workout_exercises: [{ id: 4, position: 1 }, { id: 3, position: 2 }] });
+  };
+  app.form.elements.weight.value = '42.5';
+  app.form.elements.result.value = '8';
+  app.form.events.input();
+  const note = app.noteField('exercise:3');
+  note.value = 'Seat 3';
+  note.events.input();
+  const opened = reorderDOM(app);
+  await clickIn(app, '[data-reorder-exercises]', { reorderExercises: '4' });
+  await opened.step(4, -1);
+  assert.deepEqual(requests, [['/api/sets/2', { weight: 42.5, result: 8, completed: false }],
+    ['/api/workout-exercises/3/note', { note: 'Seat 3' }], ['/api/workout-exercises/4', { position: 1 }]]);
+  const saved = new DraftStore(() => app.disk).cachedWorkout();
+  assert.deepEqual(saved.workout_exercises.map(entry => entry.id), [4, 3]);
+  assert.equal(saved.workout_exercises[0].sets[0].result, 60);
+  assert.equal(saved.workout_exercises[1].sets[0].weight, 42.5);
+  assert.equal(saved.workout_exercises[1].note, 'Seat 3');
+  assert.match(opened.nodes['#reorder-status'].textContent, /Front Plank moved to position 1/);
+});
+
+test('a blocked draft or failed Active Workout move keeps its original order and inputs', async () => {
+  for (const invalid of [true, false]) {
+    const app = await harness(storage(), { workout_exercises: [pressEntry, plankEntry] });
+    const calls = [];
+    app.env.fetch = async (url, options) => { calls.push(url); return url === '/api/sets/2'
+      ? response({ id: 2, position: 1, weight: 42.5, result: 8, completed: false }) : response({ error: 'Move rejected' }, 500); };
+    app.form.elements.weight.value = '42.5';
+    app.form.elements.result.value = invalid ? '' : '8';
+    app.form.elements.completed.checked = invalid;
+    app.form.events.input();
+    const original = app.nodes['#app'].innerHTML;
+    const opened = reorderDOM(app);
+    await clickIn(app, '[data-reorder-exercises]', { reorderExercises: '4' });
+    await opened.step(4, -1);
+    assert.equal(app.nodes['#app'].innerHTML, original);
+    assert.equal(app.form.elements.weight.value, '42.5');
+    assert.match(opened.nodes['#reorder-list'].innerHTML, /Bench Press[\s\S]*Front Plank/);
+    assert.match(opened.nodes['#reorder-status'].textContent, invalid ? /Order unchanged.*pending Sets and Notes/ : /Order unchanged.*Move rejected/);
+    assert.equal(opened.dialog.open, true);
+    assert.deepEqual(calls, invalid ? [] : ['/api/sets/2', '/api/workout-exercises/4']);
+  }
+});
+
+test('Routine compact reorder saves the whole order and keeps Set counts; failure leaves the saved order', async () => {
+  const app = await harness(storage(), { ...startData([home]), routines: [{ id: 4, gym_id: 1, name: 'Push', exercise_count: 2 }] });
+  let routine = { id: 4, gym_id: 1, name: 'Push', exercises: [routineExercise(1, 'Bench Press', 4), routineExercise(2, 'Plank', 2, { tracking_type: 'duration' })] };
+  let fail = false;
+  const openedRoutine = await openRoutinesScreen(app, {
+    'GET /api/routines?gym_id=1': () => ({ routines: [routine] }),
+    'PUT /api/routines/4': body => {
+      if (fail) return { reply: true, status: 500, body: { error: 'Save rejected' } };
+      routine = { ...routine, exercises: body.exercises.map(item => ({ ...routine.exercises.find(old => old.profile_id === item.profile_id), set_count: item.set_count })) };
+      return routine;
+    },
+  });
+  await openedRoutine.click('[data-open-routine]', { openRoutine: '4' });
+  const opened = reorderDOM(app);
+  await openedRoutine.click('[data-reorder-routine]', {});
+  await opened.step(1, -1);
+  assert.deepEqual(openedRoutine.requests.at(-1), ['PUT /api/routines/4', { exercises: [{ profile_id: 2, set_count: 2 }, { profile_id: 1, set_count: 4 }] }]);
+  assert.match(openedRoutine.content.innerHTML, /Plank[\s\S]*Bench Press/);
+  fail = true;
+  await opened.step(1, 1);
+  assert.deepEqual(routine.exercises.map(item => [item.profile_id, item.set_count]), [[2, 2], [1, 4]]);
+  assert.match(opened.nodes['#reorder-list'].innerHTML, /Plank[\s\S]*Bench Press/);
+  assert.match(opened.nodes['#reorder-status'].textContent, /Order unchanged/);
+  assert.equal(opened.dialog.open, true);
+});
+
+
+test('Routine reordering identifies repeated Configurations separately through multiple saves', async () => {
+  const app = await harness(storage(), { ...startData([home]), routines: [{ id: 4, gym_id: 1, name: 'Repeated', exercise_count: 3 }] });
+  let nextId = 100;
+  let routine = { id: 4, gym_id: 1, name: 'Repeated', exercises: [routineExercise(1, 'Bench Press', 2),
+    routineExercise(1, 'Bench Press', 5), routineExercise(2, 'Plank', 3)] };
+  const parent = await openRoutinesScreen(app, {
+    'GET /api/routines?gym_id=1': () => ({ routines: [routine] }),
+    'PUT /api/routines/4': body => {
+      routine = { ...routine, exercises: body.exercises.map(item => ({ ...routineExercise(item.profile_id,
+        item.profile_id === 1 ? 'Bench Press' : 'Plank', item.set_count), id: ++nextId })) };
+      return routine;
+    },
+  });
+  await parent.click('[data-open-routine]', { openRoutine: '4' });
+  const opened = reorderDOM(app);
+  await parent.click('[data-reorder-routine]', {});
+  await opened.step(1, -1);
+  assert.deepEqual(parent.requests.at(-1)[1].exercises, [{ profile_id: 1, set_count: 5 }, { profile_id: 1, set_count: 2 }, { profile_id: 2, set_count: 3 }]);
+  await opened.step(1, 1);
+  await opened.step(1, 1);
+  assert.deepEqual(parent.requests.at(-1)[1].exercises, [{ profile_id: 1, set_count: 2 }, { profile_id: 2, set_count: 3 }, { profile_id: 1, set_count: 5 }]);
+  assert.match(opened.nodes['#reorder-status'].textContent, /Bench Press moved to position 3/);
+});
+
+test('Completed Workout detail offers no reorder entry point or name hold', async () => {
+  const app = await harness();
+  const opened = await openHistoryDetail(app, completedDetail(), {});
+  assert.doesNotMatch(opened.nodes['#history-detail'].innerHTML, /data-reorder|Reorder exercises|data-move-exercise/);
 });

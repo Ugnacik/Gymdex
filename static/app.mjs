@@ -1,9 +1,10 @@
 import { DraftStore, setPayload, WEIGHT_PATTERN } from "./drafts.mjs";
 import { NOTE_MAX_LENGTH, WorkoutEditor } from "./workout-editor.mjs";
-import { RestTimer } from "./rest-timer.mjs";
+import { DEFAULT_REST_DURATION_SECONDS, RestTimer } from "./rest-timer.mjs";
 import { askTextInPage, confirmInPage } from "./confirm-sheet.mjs";
 import { ChoiceField } from "./choice-field.mjs";
 import { openRoutines, renderRoutineStarts } from "./routines.mjs";
+import { bindReorderNameHold, openExerciseReorder } from "./exercise-reorder.mjs";
 
 // The server stores times as SQLite CURRENT_TIMESTAMP values in UTC ("YYYY-MM-DD HH:MM:SS").
 // Gymdex shows them in the device's time zone.
@@ -47,6 +48,8 @@ const state = {
   selectedGymId: null,
   picker: null,
   pickerContext: null,
+  pickerQuery: "",
+  pickerMuscleGroup: "",
   summary: null,
   collapsedExercises: new Set(),
   exerciseOptions: new Set(),
@@ -60,6 +63,7 @@ const state = {
   elapsedTimer: null,
   staleDismissed: null,
 };
+bindReorderNameHold(app, document, (name) => openWorkoutReorder(Number(name.dataset.reorderName)), { schedule: setTimeout, clear: clearTimeout });
 const STALE_WORKOUT_MINUTES = 3 * 60;
 const STALE_DISMISSED_KEY = "gymdex:stale-dismissed:v1";
 
@@ -70,9 +74,9 @@ function readRestSettings() {
     const saved = JSON.parse(window.localStorage.getItem("gymdex:rest:v1"));
     return {
       enabled: saved?.enabled === true,
-      duration: Number.isInteger(saved?.duration) && saved.duration >= 1 && saved.duration <= 3600 ? saved.duration : 90,
+      duration: Number.isInteger(saved?.duration) && saved.duration >= 1 && saved.duration <= 3600 ? saved.duration : DEFAULT_REST_DURATION_SECONDS,
     };
-  } catch { return { enabled: false, duration: 90 }; }
+  } catch { return { enabled: false, duration: DEFAULT_REST_DURATION_SECONDS }; }
 }
 
 function saveRestSettings() {
@@ -240,7 +244,7 @@ function gymOptions(selectedId = null) {
 }
 
 function renderHeader(status = "Ready") {
-  return `<header class="app-header"><div class="brand-block"><div class="brand">Gymdex</div><div class="status${state.data.active_workout ? " status-active" : ""}">${escapeHtml(status)}</div></div><nav aria-label="App views"><button class="text-button" id="open-progress" ${recordedGyms().length ? "" : "disabled"}>Progress</button><button class="text-button" id="open-history">History</button></nav></header><p id="sync-status" class="sync-status" role="status"></p>`;
+  return `<header class="app-header"><div class="brand-block"><div class="brand">Gymdex</div><div class="status${state.data.active_workout ? " status-active" : ""}">${escapeHtml(status)}</div></div><nav aria-label="App views"><button class="text-button" id="open-progress" ${recordedGyms().length ? "" : "disabled"}>Progress</button><button class="text-button" id="open-history">History</button><button class="text-button" id="open-settings">Settings</button></nav></header><p id="sync-status" class="sync-status" role="status"></p>`;
 }
 
 function renderStart() {
@@ -283,6 +287,7 @@ function renderStart() {
   document.querySelector("#add-gym-form").addEventListener("submit", createGym);
   document.querySelector("#start-workout").addEventListener("click", startWorkout);
   document.querySelector("#open-history").addEventListener("click", () => openHistory());
+  document.querySelector("#open-settings").addEventListener("click", openSettings);
   document.querySelector("#open-progress").addEventListener("click", () => openProgress());
   document.querySelector("#open-manage").addEventListener("click", openManage);
 }
@@ -359,16 +364,16 @@ function renderWorkout() {
           <article class="exercise-entry workout-exercise-card">
             ${renderNote(`exercise:${entry.id}`, "Note", `Note for ${exerciseDisplayName(entry)}`)}
             <details class="workout-exercise" data-entry-id="${entry.id}" ${state.collapsedExercises.has(entry.id) ? "" : "open"}>
-              <summary class="exercise-summary"><h3>${escapeHtml(exerciseDisplayName(entry))}</h3><span data-exercise-count="${entry.id}">${entry.sets.filter(set => set.completed).length}/${entry.sets.length} done</span></summary>
+              <summary class="exercise-summary"><h3 data-reorder-name="${entry.id}">${escapeHtml(exerciseDisplayName(entry))}</h3><span data-exercise-count="${entry.id}">${entry.sets.filter(set => set.completed).length}/${entry.sets.length} done</span></summary>
               <div class="exercise-body">
-                <p class="meta">${escapeHtml(configurationLabel(entry))}</p>
+                <div class="machine-line"><p class="meta">${escapeHtml(configurationLabel(entry))}</p>
+                  <button type="button" class="text-button" data-change-machine="${entry.id}" aria-label="Edit manufacturer / machine for ${escapeHtml(exerciseDisplayName(entry))}">Edit manufacturer / machine</button></div>
                 <div class="sets-list">${entry.sets.map((set, index) => renderSet(entry, set, index)).join("")}</div>
                 <button class="secondary add-set" data-add-set="${entry.id}">Add set</button>
                 <details class="exercise-options" data-options-id="${entry.id}" ${state.exerciseOptions.has(entry.id) ? "open" : ""}><summary>Exercise options</summary>
                   <p class="set-hint">${entry.tracking_type === "duration" ? "Duration in seconds" : "Repetitions"}. ${entry.assisted ? "Assist kg is the counterweight and is optional." : "Weight is optional."}</p>
                   <div class="exercise-tools">
                     <button type="button" class="text-button" data-active-progress="${entry.variation_id}" data-progress-equipment="${escapeHtml(entry.equipment)}" data-progress-manufacturer="${escapeHtml(entry.manufacturer || "")}" data-progress-label="${escapeHtml(entry.label || "")}">View progress</button>
-                    <button type="button" class="text-button" data-change-machine="${entry.id}" aria-label="Change machine for ${escapeHtml(exerciseDisplayName(entry))}">Change machine</button>
                     <button type="button" class="text-button manage-remove" data-remove-exercise="${entry.id}" aria-label="Remove ${escapeHtml(exerciseDisplayName(entry))}">Remove exercise</button>
                   </div>
                   ${renderExerciseTools(entry, index, entries.length)}
@@ -385,6 +390,7 @@ function renderWorkout() {
     </main>`;
   document.querySelector("#open-picker").addEventListener("click", openPicker);
   document.querySelector("#open-history").addEventListener("click", () => openHistory());
+  document.querySelector("#open-settings").addEventListener("click", openSettings);
   document.querySelector("#open-progress").addEventListener("click", () => openProgress());
   document.querySelectorAll("[data-finish-workout]").forEach((button) => button.addEventListener("click", finishWorkout));
   document.querySelector("#cancel-workout").addEventListener("click", cancelWorkout);
@@ -486,9 +492,61 @@ function renderExerciseTools(entry, index, count) {
   const name = escapeHtml(exerciseDisplayName(entry));
   // data-move-to is the 1-based target position; the ends keep their disabled button for a stable layout.
   return `<div class="exercise-tools">
+    <button type="button" class="text-button" data-reorder-exercises="${entry.id}" ${count < 2 ? "disabled" : ""}>Reorder exercises</button>
     <button type="button" class="text-button" data-move-exercise="${entry.id}" data-move-to="${index}" aria-label="Move ${name} up" ${index === 0 ? "disabled" : ""}>Move up</button>
     <button type="button" class="text-button" data-move-exercise="${entry.id}" data-move-to="${index + 2}" aria-label="Move ${name} down" ${index === count - 1 ? "disabled" : ""}>Move down</button>
   </div>`;
+}
+
+function restDurationOptions(duration) {
+  const choices = [30, 60, 90, 120, 180];
+  if (!choices.includes(duration)) choices.push(duration);
+  return choices.map((seconds) => `<option value="${seconds}" ${duration === seconds ? "selected" : ""}>${seconds < 60 || seconds % 60 ? `${seconds} seconds` : `${seconds / 60} ${seconds === 60 ? "minute" : "minutes"}`}</option>`).join("");
+}
+
+function setRestEnabled(enabled) {
+  state.restEnabled = enabled;
+  const workoutSwitch = document.querySelector("#rest-enabled");
+  if (workoutSwitch) workoutSwitch.checked = enabled;
+  const controls = document.querySelector("#rest-controls");
+  if (controls) controls.hidden = !enabled;
+  if (!enabled) state.restTimer.stop();
+  saveRestSettings();
+  renderRestTimerState();
+}
+
+function setRestDuration(duration) {
+  state.restTimer.setDuration(duration);
+  const workoutDuration = document.querySelector("#rest-duration");
+  if (workoutDuration) {
+    workoutDuration.innerHTML = restDurationOptions(duration);
+    workoutDuration.value = String(duration);
+  }
+  saveRestSettings();
+}
+
+// A full-screen dialog keeps the previous screen and its unsaved inputs intact.
+function openSettings() {
+  const dialog = document.createElement("dialog");
+  dialog.id = "settings";
+  dialog.className = "settings-screen";
+  dialog.setAttribute("aria-labelledby", "settings-title");
+  dialog.innerHTML = `<main class="shell">
+    <header class="settings-header"><button type="button" class="secondary" id="close-settings" autofocus>Back to ${state.data.active_workout ? "workout" : "start"}</button><h1 id="settings-title">Settings</h1></header>
+    <section class="settings-card" aria-labelledby="settings-rest-title">
+      <div class="rest-heading"><div class="rest-title"><h2 id="settings-rest-title">Rest timer</h2><p class="rest-caption">Start after each completed set</p></div>
+        <label class="rest-switch"><input id="settings-rest-enabled" type="checkbox" role="switch" aria-label="Enable rest timer" ${state.restEnabled ? "checked" : ""} /></label></div>
+      <label class="field">Rest after a set<select id="settings-rest-duration">${restDurationOptions(state.restTimer.snapshot().durationSeconds)}</select></label>
+      <p class="muted">Interval changes apply to your next rest. You can also change the interval in Timer settings during a workout.</p>
+    </section>
+    <p class="muted">Preferences are saved on this phone.</p>
+  </main>`;
+  document.body.append(dialog);
+  dialog.addEventListener("close", () => dialog.remove());
+  dialog.querySelector("#close-settings").addEventListener("click", () => dialog.close());
+  dialog.querySelector("#settings-rest-enabled").addEventListener("change", (event) => setRestEnabled(event.target.checked));
+  dialog.querySelector("#settings-rest-duration").addEventListener("change", (event) => setRestDuration(Number(event.target.value)));
+  dialog.showModal();
 }
 
 function renderRestTimer() {
@@ -507,8 +565,7 @@ function renderRestTimer() {
     </div>
     <details class="rest-settings"><summary>Timer settings</summary>
       <label class="field rest-duration">Rest after a set<select id="rest-duration">
-        ${[30, 60, 90, 120, 180].map((seconds) => `<option value="${seconds}" ${duration === seconds ? "selected" : ""}>${seconds < 60 ? `${seconds} seconds` : `${seconds / 60} ${seconds === 60 ? "minute" : "minutes"}`}</option>`).join("")}
-        ${[30, 60, 90, 120, 180].includes(duration) ? "" : `<option value="${duration}" selected>${duration} seconds</option>`}
+        ${restDurationOptions(duration)}
       </select></label>
       <button type="button" class="text-button" id="rest-stop">Reset timer</button>
     </details>
@@ -540,17 +597,8 @@ function renderRestTimerState() {
 function bindRestTimer() {
   const enabled = document.querySelector("#rest-enabled");
   if (!enabled) return;
-  enabled.addEventListener("change", () => {
-    state.restEnabled = enabled.checked;
-    document.querySelector("#rest-controls").hidden = !state.restEnabled;
-    if (!state.restEnabled) state.restTimer.stop();
-    saveRestSettings();
-    renderRestTimerState();
-  });
-  document.querySelector("#rest-duration").addEventListener("change", (event) => {
-    state.restTimer.setDuration(Number(event.target.value));
-    saveRestSettings();
-  });
+  enabled.addEventListener("change", () => setRestEnabled(enabled.checked));
+  document.querySelector("#rest-duration").addEventListener("change", (event) => setRestDuration(Number(event.target.value)));
   document.querySelector("#rest-start").addEventListener("click", () => {
     unlockRestAudio();
     state.restTimer.start();
@@ -1111,7 +1159,7 @@ function manageItemName(kind, item) {
 function renderManageRow(kind, item, { name = manageItemName(kind, item), shown = name, detail = "", rename = false, remove = true, actions: more = "", editor = "" } = {}) {
   const key = `${kind}:${item.id}`;
   const label = escapeHtml(name);
-  const removeLabel = item.used ? "Archive" : "Delete";
+  const removeLabel = kind === "configuration" || !item.used ? "Delete" : "Archive";
   const actions = item.archived
     ? `<button type="button" class="text-button" data-manage-restore="${key}" aria-label="Restore ${label}">Restore</button>`
     : `${rename ? `<button type="button" class="text-button" data-manage-rename="${key}" aria-label="Rename ${label}">Rename</button>` : ""}${more}${remove ? `<button type="button" class="text-button manage-remove" data-manage-remove="${key}" aria-label="${removeLabel} ${label}">${removeLabel}</button>` : ""}`;
@@ -1125,6 +1173,27 @@ function renderManageRow(kind, item, { name = manageItemName(kind, item), shown 
     </form>` : ""}
     ${item.archived ? "" : editor}
   </li>`;
+}
+
+// Optional Muscle Groups are intentional training targets shared by every Configuration.
+function renderMuscleGroupChoices(groups, selected = []) {
+  return `<fieldset class="muscle-group-options"><legend>Muscle Groups <small>(optional)</small></legend>
+    <p class="field-help">Choose the areas this Variation is intentionally selected to train.</p>
+    <div>${groups.map((group) => `<label class="assistance-option"><input type="checkbox" name="muscle_group" value="${escapeHtml(group)}"${selected.includes(group) ? " checked" : ""} />${escapeHtml(group)}</label>`).join("")}</div>
+  </fieldset>`;
+}
+
+function selectedMuscleGroups(form) {
+  return [...form.querySelectorAll('input[name="muscle_group"]:checked')].map((input) => input.value);
+}
+
+function renderMuscleGroupEditor(variation, groups, open) {
+  const key = `variation:${variation.id}`;
+  return `<form class="manage-rename-form" data-manage-muscle-groups-form="${key}"${open.has(`muscle-groups:${key}`) ? "" : " hidden"}>
+    ${renderMuscleGroupChoices(groups, variation.muscle_groups ?? [])}
+    <div class="history-edit-actions"><button type="submit" class="secondary">Save Muscle Groups</button><button type="submit" class="text-button" value="clear">Clear</button></div>
+    <p class="set-status" role="status"></p>
+  </form>`;
 }
 
 // A custom Variation's Equipment editor. Values recorded in workouts, and the last value, stay.
@@ -1153,14 +1222,14 @@ function renderCustomExercises(overview, open) {
     return `<ul class="manage-list manage-exercise">${renderManageRow("exercise", exercise, { rename: exercise.renamable, remove: false,
       detail: exercise.renamable ? "" : "Starter catalog exercise" })}</ul>
       <ul class="manage-list manage-variations">${members.map((variation) => renderManageRow("variation", variation, { name: variation.name, rename: true,
-        detail: [variation.tracking_type === "duration" ? "Duration" : "Repetitions", ...variation.equipment.map((equipment) => equipment.name)].join(" · "),
-        actions: `<button type="button" class="text-button" data-manage-equipment="variation:${variation.id}" aria-label="Edit equipment of ${escapeHtml(exerciseDisplayName(variation))}">Equipment</button>`,
-        editor: renderEquipmentEditor(variation, open) })).join("")}</ul>`;
+        detail: [variation.tracking_type === "duration" ? "Duration" : "Repetitions", ...variation.equipment.map((equipment) => equipment.name), ...(variation.muscle_groups ?? [])].join(" · "),
+        actions: `<button type="button" class="text-button" data-manage-equipment="variation:${variation.id}" aria-label="Edit equipment of ${escapeHtml(exerciseDisplayName(variation))}">Equipment</button><button type="button" class="text-button" data-manage-muscle-groups="variation:${variation.id}" aria-label="Edit Muscle Groups of ${escapeHtml(exerciseDisplayName(variation))}">Muscle Groups</button>`,
+        editor: renderEquipmentEditor(variation, open) + renderMuscleGroupEditor(variation, overview.muscle_groups ?? [], open) })).join("")}</ul>`;
   }).join("");
   return renderManageSection("exercises", "Custom Exercise Variations", active.length, variations.length ? `
       <p class="manage-help">Delete removes a variation with no workouts. Archive keeps a variation with workouts in history and progress but stops offering it in the exercise picker.</p>
       ${groups || "<p>All custom variations are archived.</p>"}
-      ${renderManageArchived("exercises", archived.map((variation) => renderManageRow("variation", variation)), open)}`
+      ${renderManageArchived("exercises", archived.map((variation) => renderManageRow("variation", variation, { detail: (variation.muscle_groups ?? []).join(" · ") })), open)}`
     : `<p>No custom variations yet. Create one with Create custom exercise when adding an exercise to a workout.</p>`, open);
 }
 
@@ -1198,7 +1267,7 @@ function renderManage(overview, open) {
       ${gyms.length ? `<ul class="manage-list">${gyms.map((gym) => renderManageRow("gym", gym, { rename: true })).join("")}</ul>` : `<p>No gyms to manage.</p>`}
       ${renderManageArchived("gyms", archivedGyms.map((gym) => renderManageRow("gym", gym)), open)}`, open),
     renderManageSection("configurations", "Exercise Configurations", configurations.length, `
-      <p class="manage-help">Saved for a gym when you add an exercise there, and offered under Recent. Delete removes one never used in a workout. Archive keeps a used one in history but stops offering it under Recent and in Repeat; choosing the same equipment, manufacturer and label again restores it.</p>
+      <p class="manage-help">Saved for a gym when you add an exercise there, and offered under Recent. Delete removes this saved choice without deleting recorded Sets or history. Used choices stay under Archived with Restore and are skipped by Repeat and when starting a Routine. Choosing the same exercise, equipment, manufacturer and label again restores one; unused choices are removed permanently.</p>
       ${configurations.length ? renderManageGroups(configurations, (item) => `${item.gym_name}${item.gym_archived ? " (archived)" : ""}`,
         (item) => renderManageRow("configuration", item, { shown: exerciseDisplayName(item), detail: configurationDetail(item) }))
         : `<p>No exercise configurations yet. Add an exercise to a workout to save one.</p>`}
@@ -1270,6 +1339,15 @@ function openManage() {
       else form.elements.name.focus();
       return;
     }
+    const muscleGroups = target.closest?.("[data-manage-muscle-groups]");
+    if (muscleGroups) {
+      const key = muscleGroups.dataset.manageMuscleGroups;
+      const form = content.querySelector(`[data-manage-muscle-groups-form="${key}"]`);
+      form.hidden = !form.hidden;
+      if (form.hidden) open.delete(`muscle-groups:${key}`);
+      else { open.add(`muscle-groups:${key}`); form.querySelector("input")?.focus(); }
+      return;
+    }
     const equipment = target.closest?.("[data-manage-equipment]");
     if (equipment) {
       const key = equipment.dataset.manageEquipment;
@@ -1299,17 +1377,21 @@ function openManage() {
     const restore = target.closest?.("[data-manage-restore]");
     const selected = remove ? itemFor(remove.dataset.manageRemove) : restore ? itemFor(restore.dataset.manageRestore) : null;
     if (!selected) return;
-    const { item, name, path } = selected;
+    const { kind, item, name, path } = selected;
     const button = remove || restore;
-    if (remove && !await ask(item.used
+    if (remove && !await ask(kind === "configuration" && item.used
+      ? `Delete ${name}? Recorded Sets and history stay. This saved choice is no longer offered in Recent and is skipped by Repeat and when starting a Routine. Restore it under Archived, or choose the same exercise, equipment, manufacturer and label again.`
+      : item.used
       ? `Archive ${name}? It is used in recorded workouts, so it stays in history and progress but is no longer offered for new workouts. You can restore it here.`
       : `Delete ${name}? It has never been used in a workout, so it is removed permanently.`,
-    { confirmLabel: item.used ? "Archive" : "Delete", danger: true })) return;
+    { confirmLabel: kind === "configuration" || !item.used ? "Delete" : "Archive", danger: true })) return;
     button.disabled = true;
     try {
       if (remove) {
         const { outcome } = await api(path, { method: "DELETE" });
-        await changed(`${name} ${outcome}.`);
+        await changed(kind === "configuration"
+          ? `${name} deleted.${outcome === "archived" ? " Recorded Sets and history stay. Restore it under Archived." : ""}`
+          : `${name} ${outcome}.`);
       } else {
         await api(`${path}/restore`, { method: "POST", body: "{}" });
         await changed(`${name} restored.`);
@@ -1328,6 +1410,24 @@ function openManage() {
     } catch (error) { status.textContent = error.message; }
   }
   content.addEventListener("submit", async (event) => {
+    const muscleGroupForm = event.target.closest?.("[data-manage-muscle-groups-form]");
+    if (muscleGroupForm) {
+      event.preventDefault();
+      const selected = itemFor(muscleGroupForm.dataset.manageMuscleGroupsForm);
+      if (!selected) return;
+      const status = muscleGroupForm.querySelector(".set-status");
+      const buttons = muscleGroupForm.querySelectorAll('[type="submit"]');
+      buttons.forEach((button) => { button.disabled = true; });
+      status.textContent = "Saving Muscle Groups…";
+      try {
+        const groups = event.submitter?.value === "clear" ? [] : selectedMuscleGroups(muscleGroupForm);
+        await api(selected.path, { method: "PUT", body: JSON.stringify({ muscle_groups: groups }) });
+        showToast(groups.length ? "Muscle Groups saved." : "Muscle Groups cleared.");
+        await refresh();
+        content.querySelector(`[data-manage-muscle-groups-form="${muscleGroupForm.dataset.manageMuscleGroupsForm}"]`)?.querySelector("input")?.focus();
+      } catch (error) { status.textContent = error.message; buttons.forEach((button) => { button.disabled = false; }); }
+      return;
+    }
     const equipmentForm = event.target.closest?.("[data-manage-equipment-form]");
     if (equipmentForm) {
       event.preventDefault();
@@ -1459,6 +1559,8 @@ async function openPicker() {
     state.picker = await api(`/api/catalog?gym_id=${state.data.active_workout.gym_id}`);
     state.selectedExercise = null;
     state.selectedEquipment = null;
+    state.pickerQuery = "";
+    state.pickerMuscleGroup = "";
     renderPicker();
   } catch (error) { showToast(error.message); }
 }
@@ -1502,45 +1604,67 @@ async function openRoutineCatalog(gym, routine, onSave) {
   state.pickerContext = { gym, routine, onSave };
   state.selectedExercise = null;
   state.selectedEquipment = null;
+  state.pickerQuery = "";
+  state.pickerMuscleGroup = "";
   renderPicker();
 }
 
-function renderPicker(query = "") {
+function renderPicker(query = state.pickerQuery) {
+  state.pickerQuery = query;
   openSheet(`
       <div class="sheet-handle" aria-hidden="true"></div>
       <div class="sheet-header"><h2 id="picker-title">Add exercise</h2><button class="text-button" id="close-picker">Close</button></div>
       <input class="search" id="exercise-search" type="search" inputmode="search" autocomplete="off" placeholder="Search exercises" aria-label="Search exercises" value="${escapeHtml(query)}" />
-      <div id="picker-results"></div>`);
+      <div class="picker-filters">
+        <label class="field">Muscle Group<select id="muscle-group-filter"><option value="">All Muscle Groups</option>${(state.picker.muscle_groups ?? []).map((group) => `<option value="${escapeHtml(group)}"${state.pickerMuscleGroup === group ? " selected" : ""}>${escapeHtml(group)}</option>`).join("")}</select></label>
+        <button type="button" class="text-button" id="clear-muscle-group-filter"${state.pickerMuscleGroup ? "" : " hidden"}>Clear filter</button>
+      </div>
+      <div id="picker-results"></div>
+      <div class="picker-create"><button class="secondary create-exercise-button" type="button" id="create-exercise">Create custom exercise</button></div>`);
+  document.querySelector("#picker .sheet").className = "sheet picker-catalog";
+  document.querySelector("#create-exercise").addEventListener("click", () => renderCustomExerciseForm(state.pickerQuery));
   const search = document.querySelector("#exercise-search");
   search.focus();
   search.setSelectionRange(search.value.length, search.value.length);
   search.addEventListener("input", (event) => renderPickerResults(event.target.value));
+  const muscleGroup = document.querySelector("#muscle-group-filter");
+  muscleGroup.addEventListener("change", () => {
+    state.pickerMuscleGroup = muscleGroup.value;
+    renderPickerResults(search.value);
+  });
+  document.querySelector("#clear-muscle-group-filter").addEventListener("click", () => {
+    state.pickerMuscleGroup = "";
+    muscleGroup.value = "";
+    renderPickerResults(search.value);
+    muscleGroup.focus();
+  });
   renderPickerResults(query);
   document.querySelector("#close-picker").addEventListener("click", () => closePicker());
 }
 
-// Without a query: Recent, then the whole catalog. A query searches the Gym's saved
-// configurations and the catalog together, so nothing needs a second search elsewhere.
+// Search and Muscle Group intersect across the Catalog and the Gym's saved Configurations.
+// With neither filter, Recent stays the quick path for adding a familiar exercise.
 function renderPickerResults(query) {
+  state.pickerQuery = query;
   const wanted = query.trim().toLowerCase();
-  const filtered = state.picker.catalog.filter((item) =>
-    `${exerciseDisplayName(item)} ${item.exercise_name} ${item.variation_name}`.toLowerCase().includes(wanted)
-  );
+  const group = state.pickerMuscleGroup;
+  const filtering = Boolean(wanted || group);
+  const groupsByVariation = new Map(state.picker.catalog.map((item) => [item.id, item.muscle_groups ?? []]));
+  const matches = (item, groups, details = "") => (!group || groups.includes(group))
+    && `${exerciseDisplayName(item)} ${item.exercise_name} ${item.variation_name} ${details} ${groups.join(" ")}`.toLowerCase().includes(wanted);
+  const filtered = state.picker.catalog.filter((item) => matches(item, item.muscle_groups ?? []));
   const gymName = escapeHtml(state.pickerContext?.gym.name ?? state.data.active_workout.gym_name);
-  const configurations = wanted
-    ? (state.picker.saved ?? state.picker.recent).filter((item) =>
-      `${exerciseDisplayName(item)} ${item.exercise_name} ${item.variation_name} ${configurationLabel(item)}`.toLowerCase().includes(wanted))
-    : state.picker.recent;
+  const configurations = (filtering ? state.picker.saved ?? state.picker.recent : state.picker.recent)
+    .filter((item) => matches(item, groupsByVariation.get(item.variation_id) ?? [], configurationLabel(item)));
+  document.querySelector("#clear-muscle-group-filter").hidden = !group;
   document.querySelector("#picker-results").innerHTML = `
-      ${configurations.length ? `<div class="section-title"><h3>${wanted ? "Saved" : "Recent"} at ${gymName}</h3>${wanted ? `<span>${configurations.length}</span>` : ""}</div><div class="recent-list">${configurations.map((item) => `<button class="recent-card" data-profile-id="${item.profile_id}"><strong>${escapeHtml(exerciseDisplayName(item))}</strong><span>${escapeHtml(configurationLabel(item))}</span></button>`).join("")}</div>` : ""}
+      ${configurations.length ? `<div class="section-title"><h3>${filtering ? "Saved" : "Recent"} at ${gymName}</h3>${filtering ? `<span>${configurations.length}</span>` : ""}</div><div class="recent-list">${configurations.map((item) => `<button class="recent-card" data-profile-id="${item.profile_id}"><strong>${escapeHtml(exerciseDisplayName(item))}</strong><span>${escapeHtml(configurationLabel(item))}</span></button>`).join("")}</div>` : ""}
       <div class="section-title"><h3>Exercise catalog</h3><span>${filtered.length}</span></div>
-      <div class="exercise-list">${filtered.map((item) => `<button class="exercise-card" data-variation-id="${item.id}"><strong>${escapeHtml(exerciseDisplayName(item))}</strong><span>${escapeHtml(item.equipment.join(" · "))}</span></button>`).join("") || (wanted && configurations.length
+      <div class="exercise-list">${filtered.map((item) => `<button class="exercise-card" data-variation-id="${item.id}"><strong>${escapeHtml(exerciseDisplayName(item))}</strong><span>${escapeHtml(item.equipment.join(" · "))}</span></button>`).join("") || (configurations.length
         ? `<p class="picker-note">No catalog exercises match. Create a custom exercise if none of the saved ones fit.</p>`
-        : `<div class="empty"><h3>No matches</h3><p>Create the exercise to add it here.</p></div>`)}</div>
-      <button class="secondary create-exercise-button" type="button" id="create-exercise">Create custom exercise</button>`;
+        : `<div class="empty"><h3>No matches</h3><p>Try another search or Muscle Group, or create a custom exercise.</p></div>`)}</div>`;
   document.querySelectorAll("[data-profile-id]").forEach((button) => button.addEventListener("click", () => addRecent(Number(button.dataset.profileId))));
   document.querySelectorAll("[data-variation-id]").forEach((button) => button.addEventListener("click", () => chooseExercise(Number(button.dataset.variationId))));
-  document.querySelector("#create-exercise").addEventListener("click", () => renderCustomExerciseForm(query));
 }
 
 // Equipment chips of the custom exercise form and Manage. × appears only on removable values.
@@ -1562,41 +1686,36 @@ function equipmentProblem(names, name) {
   return "";
 }
 
-// Values offered for an Exercise by name, from the picker catalog: its Variations' names and
-// Equipment plus the starter Equipment, and the machine details of its Exercise Configurations
-// at every gym. A new Exercise gets only the starter Equipment.
+// Equipment and machine labels stay relevant to the typed Exercise; Variation names and
+// manufacturers can be reused globally.
 function exerciseSuggestions(name) {
   const suggestions = state.picker.suggestions ?? { equipment: [], exercises: [] };
   const key = cleanEquipmentName(name).toLowerCase();
-  return suggestions.exercises.find((item) => item.name.toLowerCase() === key)
+  const known = suggestions.exercises.find((item) => item.name.toLowerCase() === key)
     ?? { variations: [], equipment: suggestions.equipment, manufacturers: [], labels: [] };
+  return { ...known, choices: suggestions.variations ?? known.variations,
+    manufacturers: suggestions.manufacturers ?? known.manufacturers };
 }
 
-// Variation names must be unique within an Exercise, so only Standard is offered, while the
-// existing Exercise lacks it; any other new name is typed. A new Exercise gets Standard when left blank.
-function variationChoices(variations) {
-  return variations.length && !variations.some((value) => value.toLowerCase() === "standard") ? ["Standard"] : [];
+// Standard remains the default for a new Variation, with every previously entered name reusable.
+function variationChoices(known) {
+  return ["Standard", ...known.choices.filter((value) => value.toLowerCase() !== "standard")];
 }
 
-// A blank Variation name becomes Standard, so Standard is suggested only while it is free.
-function variationPlaceholder(known) {
-  return known.variations.some((value) => value.toLowerCase() === "standard") ? "e.g. Wide grip" : "Standard";
-}
-
-// Names the typed Exercise's existing Variations under the Variation field, so a taken name is not retyped.
-function variationHelp(known, choices) {
-  if (!known.variations.length) return "";
-  const next = choices.length ? "Choose Standard or Other… for a new variation name." : "Enter a new variation name.";
-  return `${known.name} already has: ${known.variations.join(", ")}. ${next}`;
+function variationHelp(known) {
+  return known.variations.length
+    ? `${known.name} already has: ${known.variations.join(", ")}. Choose an existing variation to keep its tracking, equipment, Muscle Groups and Assisted settings, or type a new name.`
+    : "";
 }
 
 function renderCustomExerciseForm(query = "") {
   const sheet = document.querySelector("#picker .sheet");
+  sheet.className = "sheet";
   sheet.innerHTML = `
     <div class="sheet-handle" aria-hidden="true"></div>
     <div class="sheet-header"><button class="text-button" id="back-to-picker">Back</button><button class="text-button" id="close-picker">Close</button></div>
     <h2 id="picker-title">Create custom exercise</h2>
-    <p>Use an existing exercise name to add a new variation, or enter a new name.</p>
+    <p>Use an existing exercise name to choose or add a variation, or enter a new name.</p>
     <form id="custom-exercise-form">
       <label class="field">Exercise name<input name="name" maxlength="80" value="${escapeHtml(query)}" placeholder="e.g. Leg Press" required /></label>
       <div class="field choice-field" id="variation-field"></div>
@@ -1609,9 +1728,10 @@ function renderCustomExerciseForm(query = "") {
         <div class="equipment-entry"><div class="choice-field" id="equipment-choice"></div><button type="button" class="secondary" id="add-equipment">Add</button></div>
         <ul class="equipment-chips" id="equipment-chips" aria-label="Added equipment options"></ul>
       </div>
-      <p class="field-help" id="equipment-help">Choose or type one option, then tap Add. You can choose one for each gym machine when logging.</p>
+      <p class="field-help" id="equipment-help">Type one option and tap Add, or pick one from the list. You can choose one for each gym machine when logging.</p>
       <label class="assistance-option"><input name="assisted" type="checkbox" /> Assisted (weight is counterweight)</label>
-      <button class="primary accent" type="submit">Create exercise</button>
+      <details class="custom-muscle-groups"><summary>Muscle Groups (optional)</summary>${renderMuscleGroupChoices(state.picker.muscle_groups ?? [])}</details>
+      <button class="primary accent" type="submit">Continue</button>
     </form>`;
   sheet.querySelector("#back-to-picker").addEventListener("click", () => renderPicker(query));
   sheet.querySelector("#close-picker").addEventListener("click", () => closePicker());
@@ -1620,21 +1740,20 @@ function renderCustomExerciseForm(query = "") {
   // The typed Exercise name decides which suggestions are offered; see exerciseSuggestions().
   let known = exerciseSuggestions(nameInput.value ?? query);
   const variation = new ChoiceField(sheet.querySelector("#variation-field"), { id: "variation-name", name: "variation_name",
-    title: "Variation", placeholder: variationPlaceholder(known), describedBy: "variation-help", options: variationChoices(known.variations) });
+    title: "Variation", placeholder: "Standard", describedBy: "variation-help", options: variationChoices(known) });
   const help = sheet.querySelector("#variation-help");
   const showVariationHelp = () => {
-    help.textContent = variationHelp(known, variation.options);
+    help.textContent = variationHelp(known);
     help.hidden = !help.textContent;
   };
   showVariationHelp();
   const unadded = () => known.equipment.filter((value) => !equipment.some((added) => added.toLowerCase() === value.toLowerCase()));
   const entry = new ChoiceField(sheet.querySelector("#equipment-choice"), { id: "equipment-entry", title: "Equipment options",
-    empty: "Choose equipment", placeholder: "e.g. Machine", newLabel: "New equipment option", describedBy: "equipment-help",
-    options: unadded(), onEnter: () => addEquipment() });
+    placeholder: "e.g. Machine", describedBy: "equipment-help",
+    options: unadded(), onEnter: (picked) => addEquipment({ focus: !picked }) });
   nameInput.addEventListener("input", () => {
     known = exerciseSuggestions(nameInput.value);
-    variation.placeholder = variationPlaceholder(known);
-    variation.setOptions(variationChoices(known.variations));
+    variation.setOptions(variationChoices(known));
     showVariationHelp();
     entry.setOptions(unadded());
   });
@@ -1643,7 +1762,8 @@ function renderCustomExerciseForm(query = "") {
     chips.innerHTML = renderEquipmentChips(equipment);
     entry.setOptions(unadded());
   };
-  const addEquipment = () => {
+  // Keeps the keyboard up after a typed option, so the next one can be typed straight away.
+  const addEquipment = ({ focus = true } = {}) => {
     const name = entry.value;
     if (!name) return true;
     const problem = equipmentProblem(equipment, name);
@@ -1651,21 +1771,27 @@ function renderCustomExerciseForm(query = "") {
     equipment.push(name);
     renderChips();
     entry.clear();
-    if (entry.typing) entry.focus();
+    if (focus) entry.focus();
     return true;
   };
-  sheet.querySelector("#add-equipment").addEventListener("click", addEquipment);
+  sheet.querySelector("#add-equipment").addEventListener("click", () => addEquipment());
   chips.addEventListener("click", (event) => {
     const button = event.target.closest?.("[data-remove-equipment]");
     if (!button) return;
     equipment.splice(Number(button.dataset.removeEquipment), 1);
     renderChips();
-    if (entry.typing) entry.focus();
   });
   sheet.querySelector("#custom-exercise-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
     const values = new FormData(form);
+    const existing = state.picker.catalog.find((item) =>
+      item.exercise_name.toLowerCase() === cleanEquipmentName(values.get("name")).toLowerCase()
+      && item.variation_name.toLowerCase() === (variation.value || "Standard").toLowerCase());
+    if (existing) {
+      chooseExercise(existing.id);
+      return;
+    }
     if (!addEquipment()) return;
     if (!equipment.length) {
       showToast("Add at least one equipment option.");
@@ -1678,6 +1804,7 @@ function renderCustomExerciseForm(query = "") {
       const created = await api("/api/exercises", { method: "POST", body: JSON.stringify({
         name: values.get("name"), variation_name: variation.value,
         tracking_type: values.get("tracking_type"), equipment, assisted: values.get("assisted") === "on",
+        muscle_groups: selectedMuscleGroups(form),
       }) });
       state.picker.catalog.push(created);
       chooseExercise(created.id);
@@ -1717,14 +1844,15 @@ function chooseExercise(variationId) {
 }
 
 // The Exercise Configuration form: equipment of state.selectedExercise plus manufacturer and
-// machine label. Adding a Variation starts empty; Change machine (change) starts from a
+// machine label. Adding a Variation starts empty; Editing manufacturer / machine (change) starts from a
 // Workout Exercise's current values and saves them to it instead.
 function renderConfiguration(change = null) {
   const sheet = document.querySelector("#picker .sheet");
+  sheet.className = "sheet";
   const item = state.selectedExercise;
   sheet.innerHTML = `
     <div class="sheet-handle" aria-hidden="true"></div>
-    ${change ? `<div class="sheet-header"><h2 id="picker-title">Change machine</h2><button class="text-button" id="close-picker">Cancel</button></div>
+    ${change ? `<div class="sheet-header"><h2 id="picker-title">Edit manufacturer / machine</h2><button class="text-button" id="close-picker">Cancel</button></div>
     <p>${escapeHtml(exerciseDisplayName(item))} keeps its sets and note.</p>` : `<div class="sheet-header"><button class="text-button" id="back-to-picker">Back</button><button class="text-button" id="close-picker">Close</button></div>
     <h2 id="picker-title">${escapeHtml(exerciseDisplayName(item))}</h2>
     <p>Choose the equipment used at this gym.</p>`}
@@ -1740,32 +1868,32 @@ function renderConfiguration(change = null) {
     state.selectedEquipment = button.dataset.equipment;
     document.querySelectorAll("[data-equipment]").forEach((option) => option.setAttribute("aria-pressed", String(option === button)));
   }));
-  // Machine details entered before for this Exercise, at any gym, are offered first.
+  // Manufacturers entered for any Exercise, and this Exercise's machine labels, can be reused from any Gym.
   const known = exerciseSuggestions(item.exercise_name);
   const details = {
     manufacturer: new ChoiceField(document.querySelector("#manufacturer-field"), { id: "manufacturer", name: "manufacturer",
-      title: "Manufacturer", optional: true, empty: "None", placeholder: "e.g. Technogym", options: known.manufacturers,
-      value: change?.entry.manufacturer ?? null }),
+      title: "Manufacturer", optional: true, placeholder: "e.g. Technogym", options: known.manufacturers,
+      value: change?.entry.manufacturer }),
     label: new ChoiceField(document.querySelector("#machine-label-field"), { id: "machine-label", name: "label",
-      title: "Machine label", optional: true, empty: "None", placeholder: "e.g. Upstairs plate-loaded", options: known.labels,
-      value: change?.entry.label ?? null }),
+      title: "Machine label", optional: true, placeholder: "e.g. Upstairs plate-loaded", options: known.labels,
+      value: change?.entry.label }),
   };
   document.querySelector("#configuration-form").addEventListener("submit", (event) =>
     change ? saveMachine(event, change, details) : addConfiguredExercise(event, details));
 }
 
-// Change machine on a Workout Exercise card: saves set and note drafts first, like the other
+// Edit manufacturer / machine on a Workout Exercise card: saves set and note drafts first, like the other
 // card actions, then opens the Exercise Configuration form with the card's current values.
 async function changeMachine(entryId) {
   const entry = state.data.workout_exercises.find((item) => item.id === entryId);
   if (!entry || !state.editor || state.editor.busy) return;
-  if (!await saveAllSets("Cannot change the machine yet")) return;
+  if (!await saveAllSets("Cannot edit manufacturer or machine yet")) return;
   try {
     state.picker = await api(`/api/catalog?gym_id=${state.data.active_workout.gym_id}`);
   } catch (error) { showToast(error.message); return; }
   const variation = state.picker.catalog.find((item) => item.id === entry.variation_id);
   if (!variation) {
-    showToast(`${exerciseDisplayName(entry)} is archived. Restore it in Manage to change its machine.`);
+    showToast(`${exerciseDisplayName(entry)} is archived. Restore it in Manage to edit its manufacturer or machine.`);
     return;
   }
   state.selectedExercise = variation;
@@ -1974,12 +2102,29 @@ async function addSet(button) {
   finally { button.disabled = false; }
 }
 
+function openWorkoutReorder(entryId) {
+  if (!state.editor || state.editor.busy || state.data.workout_exercises.length < 2) return;
+  openExerciseReorder(document, {
+    items: state.data.workout_exercises.map((entry) => ({ id: entry.id, name: exerciseDisplayName(entry), detail: configurationLabel(entry) })),
+    escapeHtml,
+    onMove: async (id, index) => {
+      if (!await saveExerciseMove(id, index + 1)) throw new Error("Close and save or correct your pending Sets and Notes, then try again.");
+    },
+    onClose: () => document.querySelector(`[data-reorder-name="${entryId}"]`)?.closest('summary')?.focus(),
+  });
+}
+
+async function saveExerciseMove(entryId, position) {
+  if (!state.editor || state.editor.busy || !await state.editor.moveExercise(entryId, position)) return false;
+  render();
+  return true;
+}
+
 async function moveExercise(entryId, position) {
   if (!state.editor || state.editor.busy) return;
   const from = state.data.workout_exercises.findIndex((item) => item.id === entryId) + 1;
   try {
-    if (!await state.editor.moveExercise(entryId, position)) { showInvalidSet("Not moved yet"); return; }
-    render();
+    if (!await saveExerciseMove(entryId, position)) { showInvalidSet("Not moved yet"); return; }
     // Keep focus on the moved exercise, preferring the button for the same direction.
     const [preferred, other] = position < from ? [position - 1, position + 1] : [position + 1, position - 1];
     const button = (to) => document.querySelector(`[data-move-exercise="${entryId}"][data-move-to="${to}"]:not(:disabled)`);
@@ -2032,6 +2177,8 @@ app.addEventListener("click", (event) => {
   const routine = event.target.closest?.("[data-start-routine]");
   if (routine) return startRoutine(routine);
   if (event.target.closest?.("#open-routines")) return openRoutinesScreen();
+  const reorder = event.target.closest?.("[data-reorder-exercises]");
+  if (reorder) return openWorkoutReorder(Number(reorder.dataset.reorderExercises));
   const move = event.target.closest?.("[data-move-exercise]");
   if (move) return moveExercise(Number(move.dataset.moveExercise), Number(move.dataset.moveTo));
   const remove = event.target.closest?.("[data-remove-exercise]");

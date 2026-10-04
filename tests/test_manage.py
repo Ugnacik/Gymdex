@@ -387,7 +387,7 @@ class ManageCustomExerciseTests(unittest.TestCase):
         self.assertEqual(db.catalog_for_gym(self.connection, self.home['id'])['recent'], [])
         self.assertEqual(db.manage_overview(self.connection), {
             'gyms': [{'id': self.home['id'], 'name': 'Home', 'archived': False, 'used': False}],
-            'configurations': [], 'exercises': [],
+            'configurations': [], 'exercises': [], 'muscle_groups': list(db.MUSCLE_GROUPS),
         })
         # Both names are free again.
         recreated = db.create_exercise(self.connection, 'sled push', 'heavy', 'repetitions', ['Rope'])

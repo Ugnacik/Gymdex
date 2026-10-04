@@ -104,8 +104,10 @@ gym brings them back.
   Choosing a catalog exercise asks for equipment and machine details; **Add to
   routine** saves the configuration and adds it to the plan together, so you can
   build a routine before your first workout. Added exercises start with 3 sets.
-- **Sets** chooses 1 to 20 sets for an exercise. **Move up** and **Move down**
-  change its place, and the × removes it after a confirmation.
+- **Sets** chooses 1 to 20 sets for an exercise. Hold an exercise name or use
+  **Reorder exercises** to open a compact list, then drag its handle or use the
+  arrows. Each move saves immediately. **Move up** and **Move down** also remain
+  available; the × removes the exercise after a confirmation.
 - **Rename** changes the name. Routine names are unique within a gym,
   regardless of capitalization.
 - **Delete** removes the routine after a confirmation. Workouts started from it
@@ -140,42 +142,46 @@ database. It does not change existing catalog entries, custom variations with
 the same name, or recorded workouts. So a later catalog change that adds
 equipment to an existing starter variation reaches only new databases.
 
+## Find exercises by Muscle Group
+
+In Add exercise, choose a Muscle Group to narrow both the Exercise Catalog and
+saved Exercise Configurations. Search also matches each Variation's Muscle
+Groups, alongside exercise names and saved machine details. Search and the
+Muscle Group choice work together; **Clear filter** keeps your search text.
+The same picker is used when adding to a Routine.
+
 ## Custom exercises
 
 During a workout, open Add exercise and choose **Create custom exercise**.
 Enter an exercise name, a variation name, and choose Repetitions or Duration
 in seconds under Track by. Add equipment choices one at a time: pick one from
-the list, or choose **Other…** and type a new one, then tap Add (or press
-Enter while typing). Each choice appears as a chip you can remove with its ×,
+the list under the field's arrow, or type a new one and tap Add (or press
+Enter). Each choice appears as a chip you can remove with its ×,
 and an added choice leaves the list. An empty variation name becomes Standard.
 Check Assisted when the variation's weight is a machine counterweight.
-Using an existing exercise name adds another variation. The resulting catalog
+Optionally choose Muscle Groups this Variation is intentionally selected to
+train. Several groups can apply; incidental involvement does not count.
+Using an existing exercise name with a new variation name adds another variation.
+Choosing a variation that Exercise already has uses it with its existing tracking,
+equipment, Muscle Groups and Assisted settings. The resulting catalog
 entry is available at every gym; machine details are still recorded for the
 gym when you add it to a workout. Rename, edit the equipment of, or remove
-created variations in [Manage](#manage-gyms-and-exercises).
+created variations in [Manage](#manage-gyms-and-exercises). Muscle Groups can
+also be assigned, changed or cleared there, including for existing Custom
+Exercise Variations.
 
 ### Suggested values
 
-Fields that name something offer what you entered before, but only for the
-same exercise, from all your gyms. Each is a list with **Other…** at the end,
-which opens a text box for a new value; a field with nothing to suggest is just
-the text box.
+Variation names and Manufacturers can be reused across Exercises and Gyms,
+including when creating a new Exercise. Machine labels are offered only for the
+Exercise they were entered on, at any Gym. Type a value, or tap the field's
+arrow to pick one entered before; typing also narrows that list. Values you
+type are offered next time. Variation defaults to Standard; choosing an
+existing Variation for the same Exercise uses it instead of creating another
+one. Manufacturer and Machine label are optional and start empty.
 
-- **Variation**: a variation name must be unique within its exercise, so
-  existing names are not offered. Once the exercise name matches an existing
-  exercise (ignoring capitalization), a line under the field lists its
-  variations, such as "Leg Press already has: Standard, Wide grip. Enter a new
-  variation name.", and you type the new name in the text box. While the
-  exercise has no Standard variation, the field is a list offering Standard,
-  with Other… for a new name. A new exercise has nothing to list.
-- **Equipment options** lists the starter catalog's equipment (Barbell,
-  Bodyweight, Cable, Dumbbell, Machine, Rope) for every exercise, plus the
-  equipment of the named exercise's variations, including values you typed.
-- **Manufacturer** and **Machine label**, shown after you choose a variation,
-  list every manufacturer and label saved in an exercise configuration of any
-  variation of that exercise, at any gym, including archived gyms. They start as
-  None, so both stay optional, and nothing is offered until you have entered
-  one: Gymdex has no built-in manufacturers.
+Equipment options offers the starter catalog's equipment plus equipment of the
+named Exercise's Variations, including values you entered.
 
 Suggestions come from what is recorded, so there is nothing separate to manage:
 archiving or deleting a variation or exercise configuration in
@@ -210,15 +216,12 @@ Archived gyms are listed under **Archived** at the end of the Gyms section, and
 name; restore the archived gym instead.
 
 Exercise Configurations lists the equipment and machine details saved for each
-gym, grouped by gym. Its remove button works the same way:
-
-- **Delete** appears for a configuration that no workout uses, for example one
-  added to a workout that was cancelled. It is removed permanently, also from
-  any routine that lists it.
-- **Archive** appears for a configuration used in a workout. It disappears from
-  Recent in the picker, which then has room for the next most recent configuration, and
-  Repeat this workout and starting a routine leave it out. History, progress, "Last workout", and the
-  CSV export keep it.
+gym, grouped by gym. **Delete** removes a saved choice without deleting its
+recorded Sets or history. A configuration used in a workout stays under
+**Archived** but disappears from Recent; Repeat this workout and starting a
+routine leave it out. History, progress, "Last workout", and the CSV export
+keep it. A configuration that no workout uses is removed permanently, also
+from any routine that lists it.
 
 Archived configurations are listed under **Archived** with their gym, and
 **Restore** offers one under Recent again. Choosing the same exercise,
@@ -256,6 +259,14 @@ Exercise Variations section, and **Restore** offers one in the picker again. Cre
 custom exercise with an archived variation's name is refused; restore the
 archived variation instead.
 
+## Settings
+
+Open **Settings** from the header to choose whether the rest timer starts after
+each completed set and how long it runs. The initial interval is 2 minutes;
+your existing saved interval and enabled choice take precedence. Preferences
+stay in this browser. Returning to your workout keeps unfinished Sets, Notes,
+and the current countdown.
+
 ## Rest timer
 
 Turn on Rest timer during an active workout and choose a rest interval. Marking
@@ -292,13 +303,15 @@ not completed; Gymdex saves any edit to the set above first. The × in a set's
 corner deletes it after confirmation, and the remaining sets are renumbered, as
 in history. Sets can be edited while the workout is active.
 
-Below each exercise's sets, **Move up** and **Move down** change its place in
-the workout. The × in the exercise's top-right corner deletes the exercise with
+Hold an exercise name or choose **Reorder exercises** in Exercise options to
+open a compact list. Drag the handles or use the arrows; each move saves
+immediately. **Move up** and **Move down** also change its place in the workout.
+The × in the exercise's top-right corner deletes the exercise with
 all its sets after confirmation. Both actions first save outstanding set edits to the server;
 removing an exercise also discards any unsaved drafts for its sets and note on
 this phone.
 
-**Change machine**, beside an exercise's equipment and machine details, fixes
+**Edit manufacturer / machine**, beside an exercise's equipment and machine details, fixes
 them without adding the exercise again, for example when you picked the wrong
 manufacturer. It opens the same equipment, Manufacturer and Machine label
 choices as adding an exercise, starting from the current ones; **Save** switches
@@ -307,7 +320,7 @@ was. The exercise keeps its sets and note, and its "Last workout" values then
 come from the last workout with the new configuration. Choosing an archived
 configuration's details restores it. The previous configuration is deleted when
 no workout and no routine uses it any more, so a mistaken machine does not stay
-under Recent. Change machine is only on the active workout, not in history.
+under Recent. Edit manufacturer / machine is only on the active workout, not in history.
 
 Notes are optional free text, up to 1,000 characters, for anything the numbers
 don't capture. They stay collapsed so they never get in the way of logging sets:
@@ -376,7 +389,8 @@ mark the set completed.
 
 Tap an exercise heading to collapse or expand its sets. Completion counts stay
 visible, and collapsing keeps input values and drafts. **Exercise options**
-holds notes, View progress, Change machine, reordering, and removal. Options
+holds notes, View progress, reordering, and removal. Manufacturer and machine
+edits are available beside the visible configuration details. Options
 stay open when changing a machine or reordering. A pending note opens its
 options after an offline reload, and a draft blocking Finish expands so it
 can be corrected.
@@ -676,6 +690,6 @@ it on the Pi with `tailscale file get ~/`, and follow the restore steps above.
 Exercise configurations belong to a gym. A configuration can record equipment,
 a manufacturer, and a machine label. When it is added to a workout, Gymdex
 copies those details into the workout record so old workouts do not change when
-the gym configuration is edited later. Change machine on the active workout
+the gym configuration is edited later. Edit manufacturer / machine on the active workout
 updates that copy and the configuration it refers to. A routine refers to a gym's configurations
 and stores only their order and set counts.
