@@ -450,6 +450,7 @@ def exercise_suggestions(connection: sqlite3.Connection) -> dict[str, Any]:
     They are derived from the Exercise's unarchived Variations: their names, their Equipment
     plus the starter Equipment, and the manufacturers and machine labels of their unarchived
     Exercise Configurations at every Gym. Archiving or deleting the source row removes a value.
+    Machine labels name one Exercise's machines, so they are offered only per Exercise.
     """
     exercises: dict[int, dict[str, Any]] = {}
     for row in connection.execute(
@@ -478,7 +479,7 @@ def exercise_suggestions(connection: sqlite3.Connection) -> dict[str, Any]:
     return {
         "equipment": list(STARTER_EQUIPMENT),
         **{field: _distinct(value for exercise in exercises.values() for value in exercise[field])
-           for field in ("variations", "manufacturers", "labels")},
+           for field in ("variations", "manufacturers")},
         "exercises": [
             {**exercise, **{field: _distinct(exercise[field])
                             for field in ("variations", "equipment", "manufacturers", "labels")}}
