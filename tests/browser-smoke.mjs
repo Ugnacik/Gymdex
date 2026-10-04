@@ -238,6 +238,8 @@ try {
   await page.locator('#open-routines').click();
   await page.locator(`[data-open-routine="${longRoutine.id}"]`).click();
   await page.locator('[data-reorder-routine]').click();
+  // Raw mouse coordinates must wait for the entrance slide, or pointerdown can miss the handle.
+  await page.locator('#exercise-reorder').evaluate(dialog => Promise.all(dialog.getAnimations().map(animation => animation.finished)));
   const listBounds = await page.locator('#reorder-list').boundingBox();
   const firstHandle = await page.locator('#reorder-list .reorder-handle').first().boundingBox();
   await page.mouse.move(firstHandle.x + 22, firstHandle.y + 22);
