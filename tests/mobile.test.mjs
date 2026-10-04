@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import vm from 'node:vm';
-import { DraftStore, setPayload } from '../static/drafts.mjs';
+import { DraftStore, effortText, setPayload } from '../static/drafts.mjs';
 
 function storage() {
   const data = new Map();
@@ -76,6 +76,31 @@ test('weights accept a decimal comma as well as a decimal point', () => {
   assert.equal(setPayload({ ...values, assistance: false, weight: '62,5' }).weight, 62.5);
   assert.equal(setPayload({ ...values, assistance: false, weight: ' 62.5 ' }).weight, 62.5);
   assert.equal(setPayload({ ...values, weight: '7,5' }).weight, -7.5);
+});
+
+test('a payload sends Effort only when the values carry it, so older drafts keep the saved one', () => {
+  assert.equal('effort' in setPayload(values), false);
+  assert.equal(setPayload({ ...values, effort: null }).effort, null);
+  assert.equal(setPayload({ ...values, effort: 'failure' }).effort, 'failure');
+});
+
+test('drafts from before Effort existed still restore, and an unknown Effort is rejected', () => {
+  const disk = storage();
+  const store = new DraftStore(() => disk);
+  store.put(1, 2, values);
+  store.put(1, 3, { ...values, effort: '4+' });
+  store.put(1, 4, { ...values, effort: null });
+  store.put(1, 5, { ...values, effort: '5' });
+  const reloaded = new DraftStore(() => disk);
+  assert.equal(reloaded.get(1, 2).weight, '12.5');
+  assert.equal(reloaded.get(1, 3).effort, '4+');
+  assert.equal(reloaded.get(1, 4).effort, null);
+  assert.equal(reloaded.get(1, 5), null);
+});
+
+test('Effort reads as Failure or the repetitions left', () => {
+  assert.deepEqual(['failure', '0', '1', '4+'].map((effort) => effortText(effort)), ['Failure', '0 reps left', '1 rep left', '4+ reps left']);
+  assert.deepEqual(['failure', '2', '4+'].map((effort) => effortText(effort, { short: true })), ['Failure', 'RIR 2', 'RIR 4+']);
 });
 
 test('worker upgrade installs the current shell and removes the previous offline version', async () => {

@@ -36,7 +36,7 @@ function node() {
 
 function setForm(setId, position) {
   const formNodes = { fieldset: node(), '.set-status': node(), '.remove-set': node(), '.set-retry': Object.assign(node(), { hidden: true }),
-    legend: node(), '.fill-previous': node() };
+    legend: node(), '.fill-previous': node(), '[data-set-effort]': Object.assign(node(), { dataset: {} }) };
   formNodes.legend.textContent = `Set ${position}`;
   const form = Object.assign(node(), {
     isConnected: true, dataset: { setId: String(setId), entryId: '3' },
@@ -111,6 +111,8 @@ async function harness(disk = storage(), initialData = {}, { now = Date.parse('2
     ask: async () => true,
     // Answers the text sheet; tests replace it to name a routine through its submit().
     askText: async () => null,
+    // Answers the choice sheet, such as a Set's Effort; undefined leaves it without a choice.
+    choose: async () => undefined,
     navigator: { onLine: true },
     document: {
       visibilityState: 'visible', addEventListener() {},
@@ -136,7 +138,7 @@ async function harness(disk = storage(), initialData = {}, { now = Date.parse('2
     },
   };
   const app = createApp({ ...env, fetch: (...args) => env.fetch(...args), ask: (...args) => env.ask(...args),
-    askText: (...args) => env.askText(...args) });
+    askText: (...args) => env.askText(...args), choose: (...args) => env.choose(...args) });
   await app.load();
   readPreviousButton(form, nodes['#app'].innerHTML);
   const noteField = (target) => env.document.querySelectorAll('[data-note-target]').find((field) => field.dataset.noteTarget === target);
@@ -1254,6 +1256,58 @@ test('removing a set renumbers the remaining sets and pairs them with Last worko
   assert.match(list.innerHTML, /data-set-id="5"[\s\S]*?Last workout: 80 kg × 8 reps[\s\S]*?data-set-id="6"[\s\S]*?Last workout: 85 kg × 6 reps/);
   assert.equal(addButton.focused, true);
 });
+
+test('the RIR button saves an Effort without changing completion, and picking it again clears it', async () => {
+  const app = await harness(storage(), { workout_exercises: [{ ...pressEntry,
+    sets: [{ id: 2, position: 1, weight: 60, result: 8, completed: true, effort: null }] }] });
+  Object.assign(app.form.elements, { effort: { value: '' } });
+  Object.assign(app.form.elements.weight, { value: '60' });
+  Object.assign(app.form.elements.result, { value: '8' });
+  app.form.elements.completed.checked = true;
+  const offered = [];
+  app.env.choose = async (question, options) => { offered.push({ question, ...options }); return '2'; };
+  const bodies = [];
+  app.env.fetch = async (path, options) => {
+    const body = JSON.parse(options.body);
+    bodies.push(body);
+    return response({ id: 2, position: 1, weight: body.weight, result: body.result, completed: body.completed, effort: body.effort });
+  };
+  assert.match(app.nodes['#app'].innerHTML, /<button type="button" class="effort-button" data-set-effort data-recorded="false" aria-label="Effort for Bench Press, set 1: none"\s+aria-haspopup="dialog">RIR<\/button>/);
+  await tapEffort(app);
+  assert.equal(offered[0].question, 'Effort for Bench Press, set 1');
+  assert.deepEqual(offered[0].choices.map((choice) => choice.name ?? choice.label), ['Failure', '0 reps left', '1 rep left', '2 reps left', '3 reps left', '4+ reps left']);
+  assert.equal(offered[0].selected, null);
+  assert.deepEqual(bodies, [{ weight: 60, result: 8, completed: true, effort: '2' }]);
+  assert.equal(app.form.querySelector('[data-set-effort]').textContent, 'RIR 2');
+  await tapEffort(app);
+  assert.equal(offered[1].selected, '2');
+  assert.deepEqual(bodies[1], { weight: 60, result: 8, completed: true, effort: null });
+  assert.equal(app.form.querySelector('[data-set-effort]').textContent, 'RIR');
+});
+
+test('a Duration Set toggles Failure from its button without a sheet', async () => {
+  const app = await harness(storage(), { workout_exercises: [{ ...pressEntry, tracking_type: 'duration',
+    sets: [{ id: 2, position: 1, weight: null, result: null, completed: false, effort: null }] }] });
+  Object.assign(app.form.elements, { effort: { value: '' } });
+  app.env.choose = async () => { throw new Error('Duration Sets have no Effort sheet'); };
+  const bodies = [];
+  app.env.fetch = async (path, options) => {
+    const body = JSON.parse(options.body);
+    bodies.push(body);
+    return response({ id: 2, position: 1, weight: null, result: null, completed: false, effort: body.effort });
+  };
+  assert.match(app.nodes['#app'].innerHTML, /aria-label="Effort for Bench Press, set 1: none"\s+aria-pressed="false">Failure<\/button>/);
+  await tapEffort(app);
+  await tapEffort(app);
+  assert.deepEqual(bodies.map((body) => body.effort), ['failure', null]);
+});
+
+// Taps the harness form's Effort button through the app's delegated click handler.
+async function tapEffort(app) {
+  const button = { closest: () => app.form };
+  await app.nodes['#app'].events.click({ target: { closest: (selector) => selector === '[data-set-effort]' ? button : null } });
+  await settle();
+}
 
 const pressEntry = { id: 3, variation_id: 11, exercise_name: 'Bench Press', variation_name: 'Standard', equipment: 'Barbell',
   tracking_type: 'repetitions', previous_sets: [], sets: [{ id: 2, position: 1, weight: null, result: null, completed: false }] };

@@ -143,6 +143,36 @@ try {
     await page.mouse.down();
     await page.mouse.move(handle.x + handle.width / 2, to < from ? target.y + 2 : target.y + target.height - 2, { steps: 5 });
   };
+  // Opens a Set's Effort sheet from its RIR button and waits for the entrance slide before measuring.
+  const openEffort = async form => {
+    await form.locator('[data-set-effort]').click();
+    await page.locator('.choice-sheet').evaluate(sheet => Promise.all(sheet.getAnimations().map(animation => animation.finished)));
+    return page.locator('.choice-sheet');
+  };
+  // Picks an option by its accessible name; the sheet's close event runs after the click returns.
+  const pickEffort = async name => {
+    await page.locator('.choice-sheet').getByRole('button', { name, exact: true }).click();
+    await page.locator('.choice-sheet').waitFor({ state: 'detached' });
+  };
+  const setEffortOf = async index => (await read('/api/bootstrap')).workout_exercises[0].sets[index].effort;
+  const effortButton = form => form.locator('[data-set-effort]');
+  // The Effort button's 44px tap area (its ::before) must sit above the result input, left of Done.
+  const effortTapArea = form => form.evaluate(form => {
+    const button = form.querySelector('[data-set-effort]').getBoundingClientRect();
+    const area = getComputedStyle(form.querySelector('[data-set-effort]'), '::before');
+    const bottom = button.bottom - parseFloat(area.bottom);
+    return { width: parseFloat(area.width), height: parseFloat(area.height), bottom, right: button.right,
+      resultTop: form.elements.result.getBoundingClientRect().top, doneLeft: form.elements.completed.getBoundingClientRect().left,
+      labelTop: form.elements.result.labels[0].getBoundingClientRect().top, buttonTop: button.top };
+  });
+  // The sync status can already read saved before a new save starts, so poll the server instead.
+  const eventually = async condition => {
+    for (let attempt = 0; attempt < 70; attempt++) {
+      if (await condition()) return true;
+      await page.waitForTimeout(100);
+    }
+    return false;
+  };
   await page.goto(base);
   await page.locator('#open-settings').click();
   assert.equal(await page.locator('#settings-rest-duration').inputValue(), '120');
@@ -321,6 +351,69 @@ try {
   await set.locator('[name=result]').fill('8');
   await set.locator('[name=completed]').check();
   await page.waitForFunction(() => document.querySelector('[data-exercise-count]')?.textContent === '1/2 done');
+  check('Done completes a Set in one tap', (await read('/api/bootstrap')).workout_exercises[0].sets[0].completed === 1);
+  check('The Set number is plain text', await set.locator('legend').innerText() === 'Set 1' && await set.locator('legend button').count() === 0);
+  check('An unrecorded Repetitions Set shows RIR beside Reps', await effortButton(set).innerText() === 'RIR'
+    && await effortButton(set).getAttribute('aria-label') === 'Effort for Bench Press, set 1: none');
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    const area = await effortTapArea(set);
+    check(`RIR sits in the label row with a 44px tap area clear of the input and Done at ${width}px`, area.width >= 44 && area.height >= 44
+      && area.bottom <= area.resultTop && area.right <= area.doneLeft && Math.abs(area.buttonTop - area.labelTop) < 1);
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  let effortSheet = await openEffort(set);
+  await screenshot('effort-sheet');
+  check('Repetitions Effort offers Failure and 0 to 4+ reps left', JSON.stringify(await effortSheet.locator('.choice-option').evaluateAll(buttons =>
+    buttons.map(button => button.getAttribute('aria-label') || button.textContent))) === JSON.stringify(['Failure', '0 reps left', '1 rep left', '2 reps left', '3 reps left', '4+ reps left']));
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    const smallest = await effortSheet.locator('.choice-option').evaluateAll(buttons => Math.min(...buttons.map(button => Math.min(button.offsetWidth, button.offsetHeight))));
+    check(`Effort sheet fits ${width}px with touch-sized options`, smallest >= 44
+      && await effortSheet.evaluate(sheet => sheet.scrollWidth <= sheet.clientWidth && sheet.getBoundingClientRect().right <= innerWidth));
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await pickEffort('2 reps left');
+  check('Picking an Effort closes the sheet and shows it on the completed Set', await page.locator('.choice-sheet').count() === 0
+    && await effortButton(set).innerText() === 'RIR 2' && await effortButton(set).getAttribute('aria-label') === 'Effort for Bench Press, set 1: 2 reps left'
+    && await set.locator('[name=completed]').isChecked()
+    && await eventually(async () => await setEffortOf(0) === '2') && (await read('/api/bootstrap')).workout_exercises[0].sets[0].completed === 1);
+  await screenshot('effort-set-row');
+  effortSheet = await openEffort(set);
+  check('The recorded Effort shows as selected', await effortSheet.getByRole('button', { name: '2 reps left', exact: true }).getAttribute('aria-pressed') === 'true');
+  await pickEffort('2 reps left');
+  check('Picking the selected Effort again clears it', await effortButton(set).innerText() === 'RIR' && await eventually(async () => await setEffortOf(0) === null));
+  effortSheet = await openEffort(set);
+  await pickEffort('Cancel');
+  check('Cancel leaves the Effort unchanged', await page.locator('.choice-sheet').count() === 0 && await effortButton(set).innerText() === 'RIR');
+  await openEffort(set);
+  await pickEffort('Failure');
+  check('Failure is recorded on the Set', await effortButton(set).innerText() === 'Failure' && await eventually(async () => await setEffortOf(0) === 'failure'));
+  const durationSet = page.locator('.workout-exercise-card', { hasText: 'Long Custom Duration' }).locator('.set-form').first();
+  const durationEffort = async () => (await read('/api/bootstrap')).workout_exercises[1].sets[0].effort;
+  check('A Duration Set offers a Failure toggle beside Seconds', await effortButton(durationSet).innerText() === 'Failure'
+    && await effortButton(durationSet).getAttribute('aria-pressed') === 'false');
+  await effortButton(durationSet).click();
+  check('Tapping Failure on a Duration Set records it without a sheet', await page.locator('.choice-sheet').count() === 0
+    && await effortButton(durationSet).getAttribute('aria-pressed') === 'true' && await eventually(async () => await durationEffort() === 'failure'));
+  await durationSet.scrollIntoViewIfNeeded();
+  await durationSet.screenshot({ path: join(artifacts, 'effort-duration-failure.png') });
+  await effortButton(durationSet).click();
+  check('Tapping Failure again clears it', await effortButton(durationSet).getAttribute('aria-pressed') === 'false'
+    && await eventually(async () => await durationEffort() === null));
+  await effortButton(durationSet).click();
+  await eventually(async () => await durationEffort() === 'failure');
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    const area = await effortTapArea(durationSet);
+    const clear = await durationSet.evaluate(form => {
+      const range = document.createRange();
+      range.selectNodeContents(form.elements.result.labels[0].firstChild);
+      return range.getBoundingClientRect().right <= form.querySelector('[data-set-effort]').getBoundingClientRect().left;
+    });
+    check(`Duration Failure clears the Seconds label, input and Done at ${width}px`, clear && area.bottom <= area.resultTop && area.right <= area.doneLeft);
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.locator('.exercise-summary').first().click();
   check('Exercise can collapse', !await page.locator('.workout-exercise').first().evaluate(card => card.open));
   await page.locator('.exercise-summary').first().click();
@@ -409,14 +502,18 @@ try {
   await set.locator('[name=weight]').blur();
   await page.locator('[data-note-target="exercise:1"]').fill('Offline seat setting');
   await page.locator('[data-note-target="exercise:1"]').blur();
+  await openEffort(set);
+  await pickEffort('1 rep left');
   await page.reload();
   await page.locator('.set-form').first().waitFor();
   check('Offline draft survives reload', await page.locator('.set-form').first().locator('[name=weight]').inputValue() === '45.5');
+  check('Offline Effort survives reload', await effortButton(page.locator('.set-form').first()).innerText() === 'RIR 1');
   check('Offline note draft is visible above the restored exercise', await page.locator('[data-note-target="exercise:1"]').isVisible()
     && await page.locator('[data-note-target="exercise:1"]').inputValue() === 'Offline seat setting');
   await context.setOffline(false);
   await page.waitForFunction(() => document.querySelector('#sync-status')?.textContent.includes('All changes saved'));
   check('Offline draft syncs', (await read('/api/bootstrap')).workout_exercises[0].sets[0].weight === 45.5);
+  check('Offline Effort syncs', await eventually(async () => await setEffortOf(0) === '1'));
   await page.locator('#open-picker').click();
   await page.locator('#create-exercise').focus();
   await page.keyboard.press('Tab');
@@ -467,6 +564,35 @@ try {
     check(selector + ' stays visible after scrolling', bounds.y >= 0 && bounds.y + bounds.height <= 844);
   }
   await screenshot('history-sticky-navigation');
+  const historySet = page.locator('#history-detail .history-sets li').first();
+  check('Completed Workout shows the Effort on its Set', (await historySet.locator('span').first().innerText()) === 'Set 1: 8 reps · 45.5 kg · 1 rep left');
+  const historyWorkoutId = (await read('/api/history')).workouts[0].id;
+  const historyEffort = async () => (await read(`/api/history/${historyWorkoutId}`)).workout_exercises[0].sets[0].effort;
+  const correctEffort = async name => {
+    await historySet.getByRole('button', { name: 'Edit set 1', exact: true }).click();
+    await historySet.locator('form').getByRole('radio', { name, exact: true }).check();
+    await historySet.getByRole('button', { name: 'Save correction', exact: true }).click();
+    await page.locator('#history-detail .history-sets li form[hidden]').first().waitFor({ state: 'attached' });
+  };
+  await historySet.getByRole('button', { name: 'Edit set 1', exact: true }).click();
+  check('Correction form starts from the recorded Effort', await historySet.locator('form').getByRole('radio', { name: '1 rep left', exact: true }).isChecked());
+  check('Correction Effort fits a phone', await page.locator('#history').evaluate(dialog => dialog.scrollWidth <= dialog.clientWidth));
+  await screenshot('effort-history-edit');
+  await historySet.locator('form').getByRole('radio', { name: 'Failure', exact: true }).check();
+  await historySet.getByRole('button', { name: 'Cancel', exact: true }).click();
+  check('Cancel leaves a Completed Set Effort unchanged', await historyEffort() === '1'
+    && (await historySet.locator('span').first().innerText()).endsWith('1 rep left'));
+  await correctEffort('No effort');
+  await page.waitForFunction(() => document.querySelector('#history-detail .history-sets li span')?.textContent === 'Set 1: 8 reps · 45.5 kg');
+  check('Correction clears the Effort', await historyEffort() === null);
+  await correctEffort('Failure');
+  await page.waitForFunction(() => document.querySelector('#history-detail .history-sets li span')?.textContent.endsWith('· Failure'));
+  check('Correction records the Effort', await historyEffort() === 'failure');
+  const durationHistorySet = page.locator('#history-detail .exercise-entry', { hasText: 'Long Custom Duration' }).locator('.history-sets li').first();
+  await durationHistorySet.getByRole('button', { name: 'Edit set 1', exact: true }).click();
+  check('Duration correction offers only None and Failure', JSON.stringify(await durationHistorySet.locator('form [name=effort]').evaluateAll(inputs => inputs.map(input => input.value))) === JSON.stringify(['', 'failure'])
+    && await durationHistorySet.locator('form').getByRole('radio', { name: 'Failure', exact: true }).isChecked());
+  await durationHistorySet.getByRole('button', { name: 'Cancel', exact: true }).click();
   await page.setViewportSize({ width: 320, height: 568 });
   const shortClose = await page.locator('#close-history').boundingBox();
   check('History navigation fits a short phone viewport', shortClose.y >= 0 && shortClose.y + shortClose.height <= 568);
@@ -483,6 +609,7 @@ try {
   await page.waitForFunction(() => document.querySelector('#progress-point-details')?.textContent.includes('45.5 kg'));
   const detail = await page.locator('#progress-point-details').innerText();
   check('Chart point exposes actual paired sets', detail.includes('8 reps · 45.5 kg') && detail.includes('6 reps · 50 kg'));
+  check('Chart point detail shows each Set Effort', detail.includes('8 reps · 45.5 kg · Failure') && !detail.includes('6 reps · 50 kg ·'));
   check('Chart includes date labels', await page.locator('.progress-chart text').count() >= 3);
   await screenshot('progress-point-mobile');
   await page.locator('#progress-metric').selectOption('best_weight');
@@ -518,6 +645,40 @@ try {
   check('Muscle Group editor has no phone overflow', await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   await screenshot('manage-muscle-groups');
   await page.locator('#close-manage').click();
+  await page.locator('#open-history').click();
+  await page.locator(`[data-history-id="${historyWorkoutId}"]`).click();
+  await page.locator('[data-repeat-workout]').click();
+  await page.locator('.set-form').first().waitFor();
+  check('Last workout shows the Effort', (await page.locator('.set-form').first().locator('.previous-set').innerText()) === 'Last workout: 45.5 kg × 8 reps · Failure');
+  check('A repeated Workout starts without Effort', await effortButton(page.locator('.set-form').first()).innerText() === 'RIR');
+  await page.locator('.set-form').first().locator('.previous-set').click();
+  check('Fill from Last workout copies only weight and result', await eventually(async () => (await read('/api/bootstrap')).workout_exercises[0].sets[0].result === 8)
+    && await setEffortOf(0) === null);
+  await page.evaluate(() => scrollTo(0, 0));
+  await screenshot('effort-last-workout');
+  const repeatedSet = page.locator('.set-form').first();
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    const plain = (await repeatedSet.boundingBox()).height;
+    if (width === 390) await repeatedSet.screenshot({ path: join(artifacts, 'effort-row-none.png') });
+    await openEffort(repeatedSet);
+    await pickEffort('2 reps left');
+    const recorded = (await repeatedSet.boundingBox()).height;
+    await repeatedSet.screenshot({ path: join(artifacts, width === 390 ? 'effort-row-rir2.png' : 'effort-row-320.png') });
+    await openEffort(repeatedSet);
+    await pickEffort('Failure');
+    const failure = (await repeatedSet.boundingBox()).height;
+    if (width === 390) await repeatedSet.screenshot({ path: join(artifacts, 'effort-row-failure.png') });
+    check(`A Set row with Last workout is exactly as tall with an Effort at ${width}px`, plain === recorded && plain === failure);
+    await openEffort(repeatedSet);
+    await pickEffort('Failure');
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  check('Effort leaves the Last workout chip its own taps', await repeatedSet.evaluate(form => {
+    const chip = form.querySelector('.fill-previous').getBoundingClientRect();
+    const x = Math.min(chip.right, form.querySelector('[data-set-effort]').getBoundingClientRect().right) - 4;
+    return document.elementFromPoint(x, chip.top + chip.height / 2).closest('.fill-previous') !== null;
+  }));
   check('No unexpected JavaScript exceptions', errors.length === 0);
   await writeFile(join(artifacts, 'results.json'), JSON.stringify({ checks, errors, port }, null, 2));
   console.log(`${checks.length} browser checks passed. Artifacts: ${artifacts}`);

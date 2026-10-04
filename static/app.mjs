@@ -1,7 +1,7 @@
-import { DraftStore, setPayload, WEIGHT_PATTERN } from "./drafts.mjs";
+import { DraftStore, effortsFor, effortText, setPayload, WEIGHT_PATTERN } from "./drafts.mjs";
 import { NOTE_MAX_LENGTH, WorkoutEditor } from "./workout-editor.mjs";
 import { DEFAULT_REST_DURATION_SECONDS, RestTimer } from "./rest-timer.mjs";
-import { askTextInPage, confirmInPage } from "./confirm-sheet.mjs";
+import { askTextInPage, chooseInPage, confirmInPage } from "./confirm-sheet.mjs";
 import { ChoiceField } from "./choice-field.mjs";
 import { openRoutines, renderRoutineStarts } from "./routines.mjs";
 import { bindReorderNameHold, openExerciseReorder } from "./exercise-reorder.mjs";
@@ -34,9 +34,11 @@ export function localMidnightUtc(value, addDays = 0) {
 
 // ask(question, { confirmLabel, cancelLabel, danger }) resolves to the user's answer from the confirmation sheet.
 // askText(question, { label, value, confirmLabel, submit }) asks for a name in a sheet (see confirm-sheet.mjs).
+// choose(question, { choices, selected, hint }) offers a few choices, such as a Set's Effort, in a sheet.
 export function createApp({ window, document, navigator, fetch, setTimeout, clearTimeout, setInterval, clearInterval, now = () => Date.now(),
   ask = (question, options) => confirmInPage(document, question, options),
-  askText = (question, options) => askTextInPage(document, question, options) }) {
+  askText = (question, options) => askTextInPage(document, question, options),
+  choose = (question, options) => chooseInPage(document, question, options) }) {
 
 const drafts = new DraftStore(() => window.localStorage);
 const app = document.querySelector("#app");
@@ -663,13 +665,15 @@ function renderHistoryDetail(data, canRepeat) {
           const weight = set.weight === null ? "No weight recorded" : `${Math.abs(set.weight)} kg${set.weight < 0 ? " assistance" : ""}`;
           const result = set.result === null ? "No result recorded" : `${set.result} ${entry.tracking_type === "duration" ? "seconds" : "reps"}`;
           const assisted = Boolean(entry.assisted) || set.weight < 0;
-          return `<li><span>Set ${index + 1}: ${escapeHtml(result)} · ${escapeHtml(weight)}</span><span class="meta">${set.completed ? "Completed" : "Not completed"}</span>
+          const effort = set.effort ? ` · ${effortText(set.effort)}` : "";
+          return `<li><span>Set ${index + 1}: ${escapeHtml(result)} · ${escapeHtml(weight)}${escapeHtml(effort)}</span><span class="meta">${set.completed ? "Completed" : "Not completed"}</span>
             ${set.id ? `<div class="history-set-actions"><button type="button" class="text-button history-edit-toggle" data-edit-set="${set.id}">Edit set ${index + 1}</button><button type="button" class="text-button history-delete-set" data-delete-history-set="${set.id}">Delete set ${index + 1}</button></div>
               <form class="history-set-form" data-history-set="${set.id}" data-assisted="${assisted}" hidden>
                 <div class="set-inputs">
                   <label>${assisted ? "Assist kg" : "kg"} <input name="weight" type="text" inputmode="decimal" pattern="${WEIGHT_PATTERN}" autocomplete="off" title="A number such as 62.5 or 62,5" value="${set.weight === null ? "" : Math.abs(set.weight)}" /></label>
                   <label>${entry.tracking_type === "duration" ? "Seconds" : "Reps"} <input name="result" type="number" inputmode="numeric" min="1" max="1000000" step="1" value="${set.result ?? ""}" ${set.completed ? "required" : ""} /></label>
                 </div>
+                ${renderEffortOptions(entry, set)}
                 <label class="set-complete"><input name="completed" type="checkbox" ${set.completed ? "checked" : ""} /> Set completed</label>
                 <div class="history-edit-actions"><button type="submit" class="secondary">Save correction</button><button type="button" class="text-button" data-cancel-edit>Cancel</button></div>
                 <p class="set-status" role="status"></p>
@@ -686,6 +690,14 @@ function renderHistoryDetail(data, canRepeat) {
         <p class="set-status" role="status"></p>
       </form>
     </section>`;
+}
+
+// The Completed Workout correction form's Effort choice; Cancel's form.reset() restores the saved one.
+function renderEffortOptions(entry, set) {
+  return `<fieldset class="effort-options"><legend>Effort</legend><div>
+    ${[null, ...effortsFor(entry.tracking_type)].map((value) => `<label><input type="radio" name="effort" value="${value ?? ""}"
+      aria-label="${value === null ? "No effort" : effortText(value)}" ${(set.effort ?? null) === value ? "checked" : ""} /><span>${value === null ? "None" : value === "failure" ? "Failure" : value}</span></label>`).join("")}
+  </div></fieldset>`;
 }
 
 function renderHistoryNote(target, note = "", label, subject = "") {
@@ -1084,7 +1096,7 @@ async function openProgress(initialVariationId = null, initialGymId = null, init
         && (!selectedConfig || ["equipment", "manufacturer", "label"].every(field => (entry[field] ?? "") === (selectedConfig[field] ?? ""))));
       panel.innerHTML = `<p><strong>${escapeHtml(formatLocalDateTime(point.completed_at))}</strong> · ${escapeHtml(detail.workout.gym_name)}</p>
         ${entries.map(entry => `<p>${escapeHtml(configurationLabel(entry))}</p><ul>${entry.sets.filter(set => set.completed).map(set =>
-          `<li>${set.result} ${entry.tracking_type === "duration" ? "seconds" : "reps"} · ${set.weight === null ? "No weight recorded" : `${Math.abs(set.weight)} kg${set.weight < 0 ? " assistance" : ""}`}</li>`).join("")}</ul>`).join("") || "<p>No matching completed sets remain.</p>"}`;
+          `<li>${set.result} ${entry.tracking_type === "duration" ? "seconds" : "reps"} · ${set.weight === null ? "No weight recorded" : `${Math.abs(set.weight)} kg${set.weight < 0 ? " assistance" : ""}`}${set.effort ? ` · ${effortText(set.effort)}` : ""}</li>`).join("")}</ul>`).join("") || "<p>No matching completed sets remain.</p>"}`;
       panel.scrollIntoView?.({ block: "nearest" });
     } catch (error) { if (version === pointRequest && dialog.open) panel.textContent = error.message; }
   }
@@ -1950,13 +1962,17 @@ function renderSet(entry, set, index) {
   const unit = entry.tracking_type === "duration" ? "sec" : "reps";
   const name = `${exerciseDisplayName(entry)}, set ${set.position}`;
   // Negative weights recorded before assistance moved to the variation stay assisted.
-  const assisted = Boolean(entry.assisted) || set.weight < 0 || state.editor?.status(set.id)?.values?.assistance === true;
+  const draft = state.editor?.status(set.id)?.values;
+  const assisted = Boolean(entry.assisted) || set.weight < 0 || draft?.assistance === true;
+  // A draft from before Effort existed has no effort key and shows the saved one.
+  const effort = draft && "effort" in draft ? draft.effort : set.effort ?? null;
   const previousText = previous
-    ? `${previous.weight === null ? "" : `${Math.abs(previous.weight)} kg${previous.weight < 0 ? " assistance" : ""} × `}${previous.result} ${unit}`
+    ? `${previous.weight === null ? "" : `${Math.abs(previous.weight)} kg${previous.weight < 0 ? " assistance" : ""} × `}${previous.result} ${unit}${previous.effort ? ` · ${effortText(previous.effort)}` : ""}`
     : "No completed set";
   return `<form class="set-form${set.completed ? " is-complete" : ""}" data-set-id="${set.id}" data-entry-id="${entry.id}" data-assisted="${assisted}">
     <fieldset>
       <legend>Set ${set.position}</legend>
+      <input type="hidden" name="effort" value="${escapeHtml(effort ?? "")}" />
       <button type="button" class="remove-set" aria-label="Remove ${escapeHtml(name)}"><span aria-hidden="true">×</span></button>
       ${previous
         ? `<button type="button" class="previous-set fill-previous" data-previous-weight="${previous.weight ?? ""}" data-previous-result="${previous.result}" aria-label="Fill ${escapeHtml(name)} from last workout: ${escapeHtml(previousText)}">Last workout: ${escapeHtml(previousText)}</button>`
@@ -1964,6 +1980,7 @@ function renderSet(entry, set, index) {
       <div class="set-inputs">
         <label>${assisted ? "Assist kg" : "kg"} <input name="weight" type="text" inputmode="decimal" pattern="${WEIGHT_PATTERN}" autocomplete="off" title="A number such as 62.5 or 62,5" aria-label="${escapeHtml(name)} ${assisted ? "assistance" : "weight"} in kilograms" value="${set.weight === null ? "" : Math.abs(set.weight)}" /></label>
         <label>${unit === "sec" ? "Seconds" : "Reps"} <input name="result" type="number" inputmode="numeric" min="1" max="1000000" step="1" aria-label="${escapeHtml(name)} ${unit}" value="${set.result ?? ""}" ${set.completed ? "required" : ""} /></label>
+        ${renderEffortButton(entry, name, effort)}
         <label class="set-complete">Done <input name="completed" type="checkbox" aria-label="Mark ${escapeHtml(name)} completed and save" ${set.completed ? "checked" : ""} /></label>
       </div>
       <div class="set-actions">
@@ -1974,13 +1991,64 @@ function renderSet(entry, set, index) {
   </form>`;
 }
 
-function setValues(form) {
+// The Effort button sits in the label row over the result column. Repetitions Sets open the
+// Effort sheet from it ("RIR", "RIR 2", "Failure"); Duration Sets toggle Failure directly.
+function effortButtonState(entry, name, effort) {
+  const duration = entry.tracking_type === "duration";
   return {
+    text: duration ? "Failure" : effort ? effortText(effort, { short: true }) : "RIR",
+    label: `Effort for ${name}: ${effort ? effortText(effort) : "none"}`,
+    pressed: duration ? String(effort === "failure") : null,
+  };
+}
+
+function renderEffortButton(entry, name, effort) {
+  const { text, label, pressed } = effortButtonState(entry, name, effort);
+  return `<button type="button" class="effort-button" data-set-effort data-recorded="${Boolean(effort)}" aria-label="${escapeHtml(label)}"
+    ${pressed === null ? 'aria-haspopup="dialog"' : `aria-pressed="${pressed}"`}>${escapeHtml(text)}</button>`;
+}
+
+function setValues(form) {
+  const values = {
     weight: form.elements.weight.value,
     result: form.elements.result.value,
     completed: form.elements.completed.checked,
     assistance: form.dataset.assisted === "true",
   };
+  // Blank is no Effort; the Active Workout keeps it in a hidden input, history in radio buttons.
+  if (form.elements.effort) values.effort = form.elements.effort.value || null;
+  return values;
+}
+
+// Picking an Effort saves at once like Done, without changing completion; picking the
+// selected value again clears it. Duration Sets have only Failure, so a tap toggles it.
+async function chooseSetEffort(form) {
+  if (!state.editor || state.editor.busy) return;
+  const entry = state.data.workout_exercises.find((item) => item.id === Number(form.dataset.entryId));
+  const set = entry?.sets.find((item) => item.id === Number(form.dataset.setId));
+  if (!set) return;
+  const current = form.elements.effort.value || null;
+  const duration = entry.tracking_type === "duration";
+  const picked = duration ? "failure" : await choose(`Effort for ${exerciseDisplayName(entry)}, set ${set.position}`, {
+    choices: effortsFor(entry.tracking_type).map((value) => value === "failure"
+      ? { value, label: "Failure", wide: true }
+      : { value, label: value, name: effortText(value) }),
+    selected: current,
+    hint: `Failure: you tried another rep and missed it. Numbers are reps left in reserve; 0 means none was left.${current ? " Tap the selected value to clear it." : ""}`,
+  });
+  if (picked === undefined || state.editor.busy || !form.isConnected) return;
+  const effort = picked === current ? null : picked;
+  form.elements.effort.value = effort ?? "";
+  const button = form.querySelector("[data-set-effort]");
+  const { text, label, pressed } = effortButtonState(entry, `${exerciseDisplayName(entry)}, set ${set.position}`, effort);
+  button.textContent = text;
+  button.dataset.recorded = String(Boolean(effort));
+  button.setAttribute("aria-label", label);
+  if (pressed !== null) button.setAttribute("aria-pressed", pressed);
+  form.elements.result.required = form.elements.completed.checked;
+  const valid = form.checkValidity();
+  state.editor.edit(form.dataset.setId, setValues(form), { valid });
+  if (valid) state.editor.save(form.dataset.setId);
 }
 
 function bindSet(form) {
@@ -2174,6 +2242,8 @@ async function removeSet(form) {
 }
 
 app.addEventListener("click", (event) => {
+  const effort = event.target.closest?.("[data-set-effort]");
+  if (effort) return chooseSetEffort(effort.closest(".set-form"));
   const routine = event.target.closest?.("[data-start-routine]");
   if (routine) return startRoutine(routine);
   if (event.target.closest?.("#open-routines")) return openRoutinesScreen();

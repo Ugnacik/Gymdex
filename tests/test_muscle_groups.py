@@ -128,7 +128,7 @@ class MuscleGroupTests(unittest.TestCase):
         self.connection.commit()
         db.initialize(self.connection)
         db.initialize(self.connection)
-        self.assertEqual(self.connection.execute('PRAGMA user_version').fetchone()[0], 6)
+        self.assertEqual(self.connection.execute('PRAGMA user_version').fetchone()[0], 7)
         self.assertEqual(before, {table: [tuple(row) for row in self.connection.execute(f'SELECT * FROM {table} ORDER BY rowid')]
                                  for table in tables})
         self.assertEqual(db.muscle_groups_for_variation(self.connection, press['id']), ['Chest'])
