@@ -309,6 +309,17 @@ def migrate(connection: sqlite3.Connection) -> None:
                         [(variation["id"], group) for group in groups],
                     )
             connection.execute("PRAGMA user_version = 6")
+    if version < 7:
+        with connection:
+            connection.execute("BEGIN IMMEDIATE")
+            # Effort (see CONTEXT.md) stays NULL until recorded, so existing sets have none.
+            columns = {row["name"] for row in connection.execute("PRAGMA table_info(workout_sets)")}
+            if "effort" not in columns:
+                connection.execute(
+                    """ALTER TABLE workout_sets ADD COLUMN effort TEXT
+                       CHECK (effort IN ('failure', '0', '1', '2', '3', '4+'))"""
+                )
+            connection.execute("PRAGMA user_version = 7")
 
 
 def rows(cursor: sqlite3.Cursor) -> list[dict[str, Any]]:
@@ -1364,11 +1375,19 @@ def set_workout_exercise_note(
     return _set_note(connection, "workout_exercises", exercise_id, note, "Workout exercise not found.")
 
 
+# The columns of every Set the API returns.
+SET_COLUMNS = "id, position, weight, result, completed, effort"
+
+
 def sets_for_exercise(connection: sqlite3.Connection, exercise_id: int) -> list[dict[str, Any]]:
     return rows(connection.execute(
-        "SELECT id, position, weight, result, completed FROM workout_sets WHERE workout_exercise_id = ? ORDER BY position",
+        f"SELECT {SET_COLUMNS} FROM workout_sets WHERE workout_exercise_id = ? ORDER BY position",
         (exercise_id,),
     ))
+
+
+def _set_row(connection: sqlite3.Connection, set_id: int) -> dict[str, Any]:
+    return dict(connection.execute(f"SELECT {SET_COLUMNS} FROM workout_sets WHERE id = ?", (set_id,)).fetchone())
 
 
 def require_active_exercise(connection: sqlite3.Connection, exercise_id: int) -> None:
@@ -1452,7 +1471,8 @@ def move_workout_exercise(
 
 
 def append_set(connection: sqlite3.Connection, exercise_id: int) -> dict[str, Any]:
-    """Append a set that copies the weight and result of the set above, not completed.
+    """Append a set that copies the weight and result of the set above, not completed
+    and without its effort.
 
     Works for active and completed workouts; the caller owns the transaction.
     """
@@ -1465,7 +1485,7 @@ def append_set(connection: sqlite3.Connection, exercise_id: int) -> dict[str, An
         "INSERT INTO workout_sets(workout_exercise_id, position, weight, result) VALUES (?, ?, ?, ?)",
         (exercise_id, above["position"] + 1, above["weight"], above["result"]) if above else (exercise_id, 1, None, None),
     )
-    return dict(connection.execute("SELECT id, position, weight, result, completed FROM workout_sets WHERE id = ?", (cursor.lastrowid,)).fetchone())
+    return _set_row(connection, cursor.lastrowid)
 
 
 def add_set(connection: sqlite3.Connection, exercise_id: int) -> dict[str, Any]:
@@ -1489,6 +1509,35 @@ def validate_set_values(payload: dict) -> tuple[int | float | None, int | None, 
     return weight, result, completed
 
 
+EFFORT_VALUES = ("failure", "0", "1", "2", "3", "4+")
+
+
+def validate_effort(payload: dict) -> None:
+    """An effort key is optional: absent keeps the stored effort and null clears it."""
+    effort = payload.get("effort")
+    if effort is not None and (type(effort) is not str or effort not in EFFORT_VALUES):
+        raise ValueError("Effort must be Failure or 0, 1, 2, 3 or 4+ reps in reserve.")
+
+
+def _save_set(
+    connection: sqlite3.Connection, set_id: int, payload: dict,
+    values: tuple[int | float | None, int | None, bool],
+) -> dict[str, Any]:
+    """Write validated values to a set the caller has located; the caller owns the transaction."""
+    weight, result, completed = values
+    effort = payload.get("effort")
+    if effort not in (None, "failure") and connection.execute(
+        """SELECT e.tracking_type_snapshot FROM workout_sets s
+           JOIN workout_exercises e ON e.id = s.workout_exercise_id WHERE s.id = ?""", (set_id,),
+    ).fetchone()[0] == "duration":
+        raise ValueError("Duration sets can record only Failure as effort.")
+    weight = assisted_weight(weight, variation_assisted(connection, set_id))
+    connection.execute("UPDATE workout_sets SET weight = ?, result = ?, completed = ? WHERE id = ?", (weight, result, completed, set_id))
+    if "effort" in payload:
+        connection.execute("UPDATE workout_sets SET effort = ? WHERE id = ?", (effort, set_id))
+    return _set_row(connection, set_id)
+
+
 def variation_assisted(connection: sqlite3.Connection, set_id: int) -> bool:
     row = connection.execute(
         """SELECT v.assisted FROM workout_sets s
@@ -1505,16 +1554,15 @@ def assisted_weight(weight: int | float | None, assisted: bool) -> int | float |
 
 
 def update_set(connection: sqlite3.Connection, set_id: int, payload: dict) -> dict[str, Any]:
-    weight, result, completed = validate_set_values(payload)
+    values = validate_set_values(payload)
+    validate_effort(payload)
     with connection:
         connection.execute("BEGIN IMMEDIATE")
         item = connection.execute("SELECT workout_exercise_id FROM workout_sets WHERE id = ?", (set_id,)).fetchone()
         if not item:
             raise LookupError("Set not found.")
         require_active_exercise(connection, item["workout_exercise_id"])
-        weight = assisted_weight(weight, variation_assisted(connection, set_id))
-        connection.execute("UPDATE workout_sets SET weight = ?, result = ?, completed = ? WHERE id = ?", (weight, result, completed, set_id))
-        return dict(connection.execute("SELECT id, position, weight, result, completed FROM workout_sets WHERE id = ?", (set_id,)).fetchone())
+        return _save_set(connection, set_id, payload, values)
 
 
 def correct_completed_set(
@@ -1523,7 +1571,8 @@ def correct_completed_set(
     """Correct a set only when it belongs to the specified completed workout."""
     if not 1 <= workout_id <= 9223372036854775807 or not 1 <= set_id <= 9223372036854775807:
         raise LookupError("Completed workout set not found.")
-    weight, result, completed = validate_set_values(payload)
+    values = validate_set_values(payload)
+    validate_effort(payload)
     with connection:
         connection.execute("BEGIN IMMEDIATE")
         if not connection.execute(
@@ -1534,16 +1583,7 @@ def correct_completed_set(
             (set_id, workout_id),
         ).fetchone():
             raise LookupError("Completed workout set not found.")
-        weight = assisted_weight(weight, variation_assisted(connection, set_id))
-        connection.execute(
-            """UPDATE workout_sets SET weight = ?, result = ?, completed = ?
-               WHERE id = ?""",
-            (weight, result, completed, set_id),
-        )
-        return dict(connection.execute(
-            """SELECT id, position, weight, result, completed
-               FROM workout_sets WHERE id = ?""", (set_id,),
-        ).fetchone())
+        return _save_set(connection, set_id, payload, values)
 
 
 def _require_completed_id(*ids: int) -> None:
@@ -1556,7 +1596,7 @@ def add_completed_set(
 ) -> dict[str, Any]:
     """Append a set to a Workout Exercise of the specified completed workout.
 
-    Like Add set in the active workout, it copies the set above and is not completed.
+    Like Add set in the active workout, it copies the set above (see append_set).
     """
     _require_completed_id(workout_id, exercise_id)
     with connection:

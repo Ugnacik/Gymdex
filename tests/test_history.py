@@ -169,6 +169,38 @@ class CompletedWorkoutSetsTests(unittest.TestCase):
                          (3, 60, 6, 0))
         self.assertEqual(self.sets(entry), [(1, 60, 8, 1), (2, 60, 6, 1), (3, 60, 6, 0)])
 
+    def correct(self, workout, item, **effort):
+        return db.correct_completed_set(self.connection, workout['id'], item['id'],
+                                        dict(weight=60, result=8, completed=True) | effort)
+
+    def test_correcting_effort_keeps_it_when_absent_clears_null_and_shows_in_detail(self):
+        workout, entry = self.completed(8)
+        item = db.sets_for_exercise(self.connection, entry['id'])[0]
+        self.assertEqual(self.correct(workout, item, effort='0')['effort'], '0')
+        self.assertEqual(self.correct(workout, item)['effort'], '0')
+        detail = db.completed_workout(self.connection, workout['id'])
+        self.assertEqual(detail['workout_exercises'][0]['sets'][0]['effort'], '0')
+        self.assertIsNone(self.correct(workout, item, effort=None)['effort'])
+        for effort in ['Failure', '5', 3]:
+            with self.subTest(effort=effort), self.assertRaises(ValueError):
+                self.correct(workout, item, effort=effort)
+        added = db.add_completed_set(self.connection, workout['id'], entry['id'])
+        self.correct(workout, item, effort='failure')
+        self.assertIsNone(db.add_completed_set(self.connection, workout['id'], entry['id'])['effort'])
+        self.assertIsNone(added['effort'])
+
+    def test_correcting_a_duration_set_accepts_only_failure(self):
+        workout = db.start_workout(self.connection, self.gym['id'])
+        plank = next(v for v in db.catalog_for_gym(self.connection, self.gym['id'])['catalog']
+                     if v['tracking_type'] == 'duration')
+        entry = db.add_workout_exercise(self.connection, workout['id'], plank['id'], 'Bodyweight')
+        db.complete_workout(self.connection, workout['id'])
+        item = db.sets_for_exercise(self.connection, entry['id'])[0]
+        self.assertEqual(self.correct(workout, item, effort='failure')['effort'], 'failure')
+        with self.assertRaises(ValueError):
+            self.correct(workout, item, effort='2')
+        self.assertEqual(db.sets_for_exercise(self.connection, entry['id'])[0]['effort'], 'failure')
+
     def test_sets_cannot_be_added_to_an_active_or_different_workout(self):
         workout, entry = self.completed(8)
         other, _ = self.completed(5)

@@ -53,5 +53,8 @@ _Avoid_: Comment, remark, memo
 **Set**:
 A recorded effort of one Exercise Variation within a Workout. A Set records the result required by the Variation's Tracking Type, may record weight, and counts as performed only after the user marks it complete.
 
+**Effort**:
+The optional record of how hard a Set was: Failure, meaning another repetition was attempted and missed, or the repetitions left in reserve: 0, 1, 2, 3 or 4+. Duration Sets record only Failure.
+
 **Weight**:
 The optional load recorded for a Set in kilograms, in addition to its repetitions or duration. Positive values represent added resistance. Negative values represent assistance: they are recorded for Assisted Variations, and Sets recorded before assistance became a Variation property may also be negative. Negative values are displayed as "N kg assistance".
