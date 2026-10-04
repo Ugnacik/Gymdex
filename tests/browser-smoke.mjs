@@ -43,6 +43,21 @@ try {
   const read = async path => (await context.request.get(base + path)).json();
   const screenshot = name => page.screenshot({ path: join(artifacts, name + '.png') });
   const check = (name, value) => { assert.ok(value, name); checks.push(name); };
+  const holdName = async locator => {
+    await locator.scrollIntoViewIfNeeded();
+    const box = await locator.boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.locator('#exercise-reorder').waitFor();
+    await page.mouse.up();
+  };
+  const dragPreview = async (from, to) => {
+    const handle = await page.locator('#reorder-list .reorder-handle').nth(from).boundingBox();
+    const target = await page.locator('#reorder-list .reorder-row').nth(to).boundingBox();
+    await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(handle.x + handle.width / 2, to < from ? target.y + 2 : target.y + target.height - 2, { steps: 5 });
+  };
   await page.goto(base);
   await page.locator('#open-settings').click();
   assert.equal(await page.locator('#settings-rest-duration').inputValue(), '120');
@@ -90,8 +105,52 @@ try {
   await page.locator('.routine-exercise').nth(1).waitFor();
   await screenshot('routine-from-catalog');
   check('Custom exercise can be created in a routine', (await read('/api/routines?gym_id=1')).routines[0].exercises.length === 2);
+  const routineBeforeOrder = (await read('/api/routines?gym_id=1')).routines[0].exercises;
+  await holdName(page.locator('.routine-exercise h3').first());
+  await dragPreview(0, 1);
+  await page.locator('#reorder-list').dispatchEvent('pointercancel', { pointerId: 1 });
+  await page.mouse.up();
+  check('Cancelled Routine drag restores the saved list', await page.locator('#reorder-list .reorder-name strong').first().innerText() === 'Bench Press'
+    && (await read('/api/routines?gym_id=1')).routines[0].exercises[0].profile_id === routineBeforeOrder[0].profile_id);
+  await dragPreview(0, 1);
+  await page.mouse.up();
+  await page.locator('#reorder-status').filter({ hasText: 'moved to position 2' }).waitFor();
+  const reorderedRoutine = (await read('/api/routines?gym_id=1')).routines[0].exercises;
+  check('Routine drag saves the order with its original Set counts', reorderedRoutine[0].profile_id === routineBeforeOrder[1].profile_id
+    && reorderedRoutine[0].set_count === routineBeforeOrder[1].set_count && reorderedRoutine[1].set_count === routineBeforeOrder[0].set_count);
+  await page.locator('#reorder-list').getByRole('button', { name: 'Move Bench Press up', exact: true }).click();
+  await page.locator('#reorder-status').filter({ hasText: 'Bench Press moved to position 1' }).waitFor();
+  await screenshot('routine-reorder-mobile');
+  await page.locator('#close-reorder').click();
+  const longRoutineResponse = await context.request.post(base + '/api/routines', { data: { gym_id: 1, name: 'Long order test',
+    exercises: Array.from({ length: 15 }, (_, index) => ({ profile_id: routineBeforeOrder[0].profile_id, set_count: index + 1 })) } });
+  assert.equal(longRoutineResponse.status(), 201);
+  const longRoutine = await longRoutineResponse.json();
   await page.locator('#close-routines').click();
-  await page.locator('[data-start-routine]').click();
+  await page.locator('#open-routines').click();
+  await page.locator(`[data-open-routine="${longRoutine.id}"]`).click();
+  await page.locator('[data-reorder-routine]').click();
+  const listBounds = await page.locator('#reorder-list').boundingBox();
+  const firstHandle = await page.locator('#reorder-list .reorder-handle').first().boundingBox();
+  await page.mouse.move(firstHandle.x + 22, firstHandle.y + 22);
+  await page.mouse.down();
+  for (let step = 0; step < 65; step++) {
+    await page.mouse.move(firstHandle.x + 22, listBounds.y + listBounds.height - 5 - (step % 2));
+  }
+  check('Held handle reaches destinations below the visible list', await page.locator('#reorder-list').evaluate(list => list.scrollTop > 300));
+  await page.mouse.up();
+  await page.locator('#reorder-status').filter({ hasText: 'Bench Press moved to position 15' }).waitFor();
+  const savedLongRoutine = (await read('/api/routines?gym_id=1')).routines.find(routine => routine.id === longRoutine.id);
+  check('Long-list drag moves the right repeated Configuration occurrence', savedLongRoutine.exercises.at(-1).set_count === 1
+    && savedLongRoutine.exercises[0].set_count === 2);
+  const stoppedScroll = await page.locator('#reorder-list').evaluate(list => list.scrollTop);
+  await page.mouse.move(firstHandle.x + 22, listBounds.y + listBounds.height - 5);
+  check('Edge scrolling stops after dropping', await page.locator('#reorder-list').evaluate(list => list.scrollTop) === stoppedScroll);
+  await screenshot('long-routine-reorder-mobile');
+  await page.locator('#close-reorder').click();
+  await context.request.delete(base + `/api/routines/${longRoutine.id}`);
+  await page.locator('#close-routines').click();
+  await page.locator('[data-start-routine="1"]').click();
   await page.locator('.set-form').first().waitFor();
   check('Routine starts with correct empty slots', await page.locator('.set-form').count() === 5
     && await page.locator('.set-form input[name=weight], .set-form input[name=result]').evaluateAll(inputs => inputs.every(input => input.value === '')));
@@ -156,6 +215,52 @@ try {
   check('Saved note stays visible when the exercise collapses', await page.locator('.workout-exercise-card > .note summary').first().isVisible());
   await page.locator('.exercise-summary').first().click();
   await screenshot('exercise-note-above-heading');
+  const exerciseName = page.locator('.exercise-summary h3').first();
+  await exerciseName.scrollIntoViewIfNeeded();
+  let nameBox = await exerciseName.boundingBox();
+  await page.mouse.move(nameBox.x + 20, nameBox.y + 10);
+  await page.mouse.down();
+  await page.mouse.move(nameBox.x + 20, nameBox.y + 30);
+  await page.waitForTimeout(500);
+  await page.mouse.up();
+  check('Moving on an exercise name cancels its hold', await page.locator('#exercise-reorder').count() === 0);
+  await exerciseName.scrollIntoViewIfNeeded();
+  nameBox = await exerciseName.boundingBox();
+  await page.mouse.move(nameBox.x + 20, nameBox.y + 10);
+  await page.mouse.down();
+  await page.evaluate(() => scrollBy(0, 40));
+  await page.waitForTimeout(500);
+  await page.mouse.up();
+  check('Scrolling cancels the name hold', await page.locator('#exercise-reorder').count() === 0);
+  if (!await page.locator('.workout-exercise').first().evaluate(card => card.open)) await exerciseName.click();
+  const workoutBeforeOrder = (await read('/api/bootstrap')).workout_exercises;
+  await holdName(exerciseName);
+  check('Reorder list fits the phone and uses touch-sized handles', await page.locator('#exercise-reorder').evaluate(dialog => dialog.scrollWidth <= dialog.clientWidth)
+    && (await page.locator('#reorder-list .reorder-handle').first().boundingBox()).width >= 44);
+  // Touch input exercises the dedicated handle's pointer capture and touch-action.
+  const touch = await context.newCDPSession(page);
+  const touchHandle = await page.locator('#reorder-list .reorder-handle').first().boundingBox();
+  const touchTarget = await page.locator('#reorder-list .reorder-row').nth(1).boundingBox();
+  await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: touchHandle.x + 22, y: touchHandle.y + 22 }] });
+  await touch.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: touchHandle.x + 22, y: touchTarget.y + touchTarget.height - 2 }] });
+  await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await touch.detach();
+  await page.locator('#reorder-status').filter({ hasText: 'Bench Press moved to position 2' }).waitFor();
+  const workoutAfterOrder = (await read('/api/bootstrap')).workout_exercises;
+  check('Active Workout touch drag preserves recorded Sets and Notes', workoutAfterOrder[1].id === workoutBeforeOrder[0].id
+    && JSON.stringify(workoutAfterOrder[1].sets) === JSON.stringify(workoutBeforeOrder[0].sets)
+    && workoutAfterOrder[1].note === workoutBeforeOrder[0].note);
+  await page.locator('#reorder-list').getByRole('button', { name: 'Move Bench Press up', exact: true }).click();
+  await page.locator('#reorder-status').filter({ hasText: 'Bench Press moved to position 1' }).waitFor();
+  await page.route('**/api/workout-exercises/1', route => route.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"Test move rejected"}' }));
+  await page.locator('#reorder-list').getByRole('button', { name: 'Move Bench Press down', exact: true }).click();
+  await page.locator('#reorder-status').filter({ hasText: 'Order unchanged. Test move rejected' }).waitFor();
+  check('Failed Active Workout reorder keeps the saved order visible', await page.locator('#reorder-list .reorder-name strong').first().innerText() === 'Bench Press'
+    && (await read('/api/bootstrap')).workout_exercises[0].id === workoutBeforeOrder[0].id);
+  await page.unroute('**/api/workout-exercises/1');
+  await screenshot('workout-reorder-mobile');
+  await page.locator('#close-reorder').click();
+  check('Name hold leaves the Workout exercise expanded', await page.locator('.workout-exercise').first().evaluate(card => card.open));
   await page.locator('.exercise-options > summary').first().click();
   await page.locator('.exercise-options > summary').nth(1).click();
   await page.getByRole('button', { name: 'Move Long Custom Duration Exercise For Browser Testing up', exact: true }).click();

@@ -25,7 +25,7 @@ function storage() {
 function node() {
   return { innerHTML: '', textContent: '', hidden: false, disabled: false, events: {},
     showModal() { this.open = true; }, close() { this.open = false; this.events.close?.(); },
-    classList: { toggle() {} }, addEventListener(event, callback) { this.events[event] = callback; },
+    classList: { toggle() {}, add() {}, remove() {} }, addEventListener(event, callback) { this.events[event] = callback; },
     focus() { this.focused = true; }, setAttribute() {}, removeAttribute() {},
     querySelectorAll() {
       this.buttons = [...this.innerHTML.matchAll(/data-history-id="(\d+)"/g)].map((match) =>
@@ -1129,7 +1129,7 @@ test('each exercise offers move up and move down with the ends disabled, and rem
   assert.match(html, /data-move-exercise="3" data-move-to="2" aria-label="Move Bench Press down" >Move down/);
   assert.match(html, /data-move-exercise="4" data-move-to="1" aria-label="Move Front Plank up" >Move up/);
   assert.match(html, /data-move-exercise="4" data-move-to="3" aria-label="Move Front Plank down" disabled>Move down/);
-  assert.match(html, /<summary class="exercise-summary"><h3>Front Plank<\/h3>[\s\S]*?<details class="exercise-options"[^>]*><summary>Exercise options<\/summary>[\s\S]*?data-remove-exercise="4" aria-label="Remove Front Plank">Remove exercise<\/button>/);
+  assert.match(html, /<summary class="exercise-summary"><h3 data-reorder-name="4">Front Plank<\/h3>[\s\S]*?<details class="exercise-options"[^>]*><summary>Exercise options<\/summary>[\s\S]*?data-remove-exercise="4" aria-label="Remove Front Plank">Remove exercise<\/button>/);
   assert.doesNotMatch(html, />Remove</, 'removal has a specific exercise label');
 });
 
@@ -2157,4 +2157,125 @@ test('Settings is available before a workout and returns to start', async () => 
   nodes['#close-settings'].events.click();
   assert.equal(app.nodes['#app'].innerHTML, original);
   assert.deepEqual(JSON.parse(app.disk.getItem('gymdex:rest:v1')), { enabled: false, duration: 120 });
+});
+
+function reorderDOM(app) {
+  const opened = historyDOM(app);
+  const step = (id, direction) => {
+    const list = opened.nodes['#reorder-list'];
+    list.querySelector = () => null;
+    const row = { dataset: { reorderId: String(id) } };
+    const button = { disabled: false, dataset: { reorderStep: String(direction) }, closest: () => row };
+    return list.events.click({ target: { closest: () => button } });
+  };
+  return { ...opened, step };
+}
+
+test('the compact Active Workout reorder list saves Sets and Notes before moving and preserves both Tracking Types', async () => {
+  const app = await harness(storage(), { workout_exercises: [pressEntry, plankEntry] });
+  const requests = [];
+  app.env.fetch = async (url, options) => {
+    const body = JSON.parse(options.body);
+    requests.push([url, body]);
+    if (url === '/api/sets/2') return response({ id: 2, position: 1, weight: 42.5, result: 8, completed: false });
+    if (url.endsWith('/note')) return response({ note: body.note });
+    return response({ workout_exercises: [{ id: 4, position: 1 }, { id: 3, position: 2 }] });
+  };
+  app.form.elements.weight.value = '42.5';
+  app.form.elements.result.value = '8';
+  app.form.events.input();
+  const note = app.noteField('exercise:3');
+  note.value = 'Seat 3';
+  note.events.input();
+  const opened = reorderDOM(app);
+  await clickIn(app, '[data-reorder-exercises]', { reorderExercises: '4' });
+  await opened.step(4, -1);
+  assert.deepEqual(requests, [['/api/sets/2', { weight: 42.5, result: 8, completed: false }],
+    ['/api/workout-exercises/3/note', { note: 'Seat 3' }], ['/api/workout-exercises/4', { position: 1 }]]);
+  const saved = new DraftStore(() => app.disk).cachedWorkout();
+  assert.deepEqual(saved.workout_exercises.map(entry => entry.id), [4, 3]);
+  assert.equal(saved.workout_exercises[0].sets[0].result, 60);
+  assert.equal(saved.workout_exercises[1].sets[0].weight, 42.5);
+  assert.equal(saved.workout_exercises[1].note, 'Seat 3');
+  assert.match(opened.nodes['#reorder-status'].textContent, /Front Plank moved to position 1/);
+});
+
+test('a blocked draft or failed Active Workout move keeps its original order and inputs', async () => {
+  for (const invalid of [true, false]) {
+    const app = await harness(storage(), { workout_exercises: [pressEntry, plankEntry] });
+    const calls = [];
+    app.env.fetch = async (url, options) => { calls.push(url); return url === '/api/sets/2'
+      ? response({ id: 2, position: 1, weight: 42.5, result: 8, completed: false }) : response({ error: 'Move rejected' }, 500); };
+    app.form.elements.weight.value = '42.5';
+    app.form.elements.result.value = invalid ? '' : '8';
+    app.form.elements.completed.checked = invalid;
+    app.form.events.input();
+    const original = app.nodes['#app'].innerHTML;
+    const opened = reorderDOM(app);
+    await clickIn(app, '[data-reorder-exercises]', { reorderExercises: '4' });
+    await opened.step(4, -1);
+    assert.equal(app.nodes['#app'].innerHTML, original);
+    assert.equal(app.form.elements.weight.value, '42.5');
+    assert.match(opened.nodes['#reorder-list'].innerHTML, /Bench Press[\s\S]*Front Plank/);
+    assert.match(opened.nodes['#reorder-status'].textContent, invalid ? /Order unchanged.*pending Sets and Notes/ : /Order unchanged.*Move rejected/);
+    assert.equal(opened.dialog.open, true);
+    assert.deepEqual(calls, invalid ? [] : ['/api/sets/2', '/api/workout-exercises/4']);
+  }
+});
+
+test('Routine compact reorder saves the whole order and keeps Set counts; failure leaves the saved order', async () => {
+  const app = await harness(storage(), { ...startData([home]), routines: [{ id: 4, gym_id: 1, name: 'Push', exercise_count: 2 }] });
+  let routine = { id: 4, gym_id: 1, name: 'Push', exercises: [routineExercise(1, 'Bench Press', 4), routineExercise(2, 'Plank', 2, { tracking_type: 'duration' })] };
+  let fail = false;
+  const openedRoutine = await openRoutinesScreen(app, {
+    'GET /api/routines?gym_id=1': () => ({ routines: [routine] }),
+    'PUT /api/routines/4': body => {
+      if (fail) return { reply: true, status: 500, body: { error: 'Save rejected' } };
+      routine = { ...routine, exercises: body.exercises.map(item => ({ ...routine.exercises.find(old => old.profile_id === item.profile_id), set_count: item.set_count })) };
+      return routine;
+    },
+  });
+  await openedRoutine.click('[data-open-routine]', { openRoutine: '4' });
+  const opened = reorderDOM(app);
+  await openedRoutine.click('[data-reorder-routine]', {});
+  await opened.step(1, -1);
+  assert.deepEqual(openedRoutine.requests.at(-1), ['PUT /api/routines/4', { exercises: [{ profile_id: 2, set_count: 2 }, { profile_id: 1, set_count: 4 }] }]);
+  assert.match(openedRoutine.content.innerHTML, /Plank[\s\S]*Bench Press/);
+  fail = true;
+  await opened.step(1, 1);
+  assert.deepEqual(routine.exercises.map(item => [item.profile_id, item.set_count]), [[2, 2], [1, 4]]);
+  assert.match(opened.nodes['#reorder-list'].innerHTML, /Plank[\s\S]*Bench Press/);
+  assert.match(opened.nodes['#reorder-status'].textContent, /Order unchanged/);
+  assert.equal(opened.dialog.open, true);
+});
+
+
+test('Routine reordering identifies repeated Configurations separately through multiple saves', async () => {
+  const app = await harness(storage(), { ...startData([home]), routines: [{ id: 4, gym_id: 1, name: 'Repeated', exercise_count: 3 }] });
+  let nextId = 100;
+  let routine = { id: 4, gym_id: 1, name: 'Repeated', exercises: [routineExercise(1, 'Bench Press', 2),
+    routineExercise(1, 'Bench Press', 5), routineExercise(2, 'Plank', 3)] };
+  const parent = await openRoutinesScreen(app, {
+    'GET /api/routines?gym_id=1': () => ({ routines: [routine] }),
+    'PUT /api/routines/4': body => {
+      routine = { ...routine, exercises: body.exercises.map(item => ({ ...routineExercise(item.profile_id,
+        item.profile_id === 1 ? 'Bench Press' : 'Plank', item.set_count), id: ++nextId })) };
+      return routine;
+    },
+  });
+  await parent.click('[data-open-routine]', { openRoutine: '4' });
+  const opened = reorderDOM(app);
+  await parent.click('[data-reorder-routine]', {});
+  await opened.step(1, -1);
+  assert.deepEqual(parent.requests.at(-1)[1].exercises, [{ profile_id: 1, set_count: 5 }, { profile_id: 1, set_count: 2 }, { profile_id: 2, set_count: 3 }]);
+  await opened.step(1, 1);
+  await opened.step(1, 1);
+  assert.deepEqual(parent.requests.at(-1)[1].exercises, [{ profile_id: 1, set_count: 2 }, { profile_id: 2, set_count: 3 }, { profile_id: 1, set_count: 5 }]);
+  assert.match(opened.nodes['#reorder-status'].textContent, /Bench Press moved to position 3/);
+});
+
+test('Completed Workout detail offers no reorder entry point or name hold', async () => {
+  const app = await harness();
+  const opened = await openHistoryDetail(app, completedDetail(), {});
+  assert.doesNotMatch(opened.nodes['#history-detail'].innerHTML, /data-reorder|Reorder exercises|data-move-exercise/);
 });

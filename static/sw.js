@@ -1,5 +1,5 @@
-const CACHE = "gymdex-shell-v18";
-const SHELL = ["/", "/index.html", "/styles.css", "/app.js", "/app.mjs", "/workout-editor.mjs", "/drafts.mjs", "/rest-timer.mjs", "/keyboard.mjs", "/confirm-sheet.mjs", "/choice-field.mjs", "/routines.mjs", "/manifest.webmanifest", "/icon-192.png", "/icon-512.png", "/icon-maskable-512.png", "/apple-touch-icon.png", "/fonts/Geist-Variable.woff2"];
+const CACHE = "gymdex-shell-v19";
+const SHELL = ["/", "/index.html", "/styles.css", "/app.js", "/app.mjs", "/workout-editor.mjs", "/drafts.mjs", "/rest-timer.mjs", "/keyboard.mjs", "/confirm-sheet.mjs", "/choice-field.mjs", "/routines.mjs", "/exercise-reorder.mjs", "/manifest.webmanifest", "/icon-192.png", "/icon-512.png", "/icon-maskable-512.png", "/apple-touch-icon.png", "/fonts/Geist-Variable.woff2"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)));

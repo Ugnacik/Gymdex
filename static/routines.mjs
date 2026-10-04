@@ -1,3 +1,5 @@
+import { bindReorderNameHold, openExerciseReorder } from "./exercise-reorder.mjs";
+
 // Routines: saved plans of Exercise Configurations with a set count for one Gym (see
 // CONTEXT.md and docs/adr/0002-routines.md). The start screen offers the selected Gym's
 // Routines beside plain Start; the Routines screen creates, edits and deletes them.
@@ -37,7 +39,9 @@ export function openRoutines(context, gym) {
   let view = "list";
   let busy = false;
   let changed = false;
+  const stopNameHold = bindReorderNameHold(content, document, () => reorderExercises());
   dialog.addEventListener("close", () => {
+    stopNameHold();
     dialog.remove();
     if (changed) onClose();
     document.querySelector("#open-routines")?.focus();
@@ -66,10 +70,11 @@ export function openRoutines(context, gym) {
         <button type="button" class="text-button manage-remove" data-delete-routine aria-label="Delete ${name}">Delete</button>
       </div></div>
       <p>Starting it adds each exercise with this many empty sets. Last workout values show as usual.</p>
+      ${count > 1 ? `<button type="button" class="secondary" data-reorder-routine>Reorder exercises</button>` : ""}
       ${count ? `<ol class="routine-exercises">${routine.exercises.map((item, index) => {
         const label = escapeHtml(exerciseDisplayName(item));
         return `<li class="exercise-entry routine-exercise">
-          <div class="history-exercise-heading"><h3>${label}</h3><button type="button" class="remove-exercise" data-remove-routine-exercise="${index}" aria-label="Remove ${label}"><span aria-hidden="true">×</span></button></div>
+          <div class="history-exercise-heading"><h3 data-reorder-name="${index}">${label}</h3><button type="button" class="remove-exercise" data-remove-routine-exercise="${index}" aria-label="Remove ${label}"><span aria-hidden="true">×</span></button></div>
           <p class="meta">${escapeHtml(configurationLabel(item))}</p>
           ${item.archived ? `<p class="history-notice">Archived: skipped when this routine starts. Restore it in Manage.</p>` : ""}
           <label class="field routine-sets">Sets<select data-set-count="${index}" aria-label="Sets of ${label}">${Array.from({ length: ROUTINE_MAX_SETS }, (_, step) => step + 1)
@@ -81,6 +86,27 @@ export function openRoutines(context, gym) {
         </li>`;
       }).join("")}</ol>` : `<p>No exercises yet.</p>`}
       <button type="button" class="primary accent routine-add" data-add-routine-exercise>Add exercise</button>`;
+  }
+
+  function reorderExercises() {
+    const routine = current();
+    if (busy || !routine || routine.exercises.length < 2) return;
+    // Saves replace row ids, and a Configuration may occur more than once.
+    // Stable tokens identify each occurrence for the lifetime of this order list.
+    const occurrences = routine.exercises.map((_, index) => index);
+    openExerciseReorder(document, {
+      items: routine.exercises.map((item, index) => ({ id: occurrences[index], name: exerciseDisplayName(item), detail: `${configurationLabel(item)} · ${plural(item.set_count, "set")}` })),
+      escapeHtml,
+      onMove: async (id, to) => {
+        const exercises = [...current().exercises];
+        const from = occurrences.indexOf(id);
+        exercises.splice(to, 0, ...exercises.splice(from, 1));
+        const saved = await saveExercises(exercises);
+        if (saved) occurrences.splice(to, 0, ...occurrences.splice(from, 1));
+        return saved;
+      },
+      onClose: () => find('[data-reorder-routine]')?.focus(),
+    });
   }
 
   function replaceRoutine(saved) {
@@ -126,6 +152,7 @@ export function openRoutines(context, gym) {
     if (hit("[data-routine-back]")) { view = "list"; render(); content.focus(); return; }
     const routine = current();
     if (!routine) return;
+    if (hit("[data-reorder-routine]")) return reorderExercises();
     // Add exercise opens the workout's picker: its search covers this Gym's saved
     // configurations and the catalog together.
     if (hit("[data-add-routine-exercise]")) {
