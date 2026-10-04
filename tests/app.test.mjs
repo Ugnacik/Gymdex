@@ -1635,7 +1635,7 @@ test('history offers archived gyms as filters and hides Repeat for a workout at 
   assert.match(html, /Restore Annex &lt;b&gt; in Manage to repeat this workout\./);
 });
 
-test('Manage archives, deletes and restores Exercise Configurations', async () => {
+test('Manage uses Delete for all Exercise Configurations and preserves Restore', async () => {
   const app = await harness(storage(), startData([home]));
   const questions = [];
   const labels = [];
@@ -1667,21 +1667,24 @@ test('Manage archives, deletes and restores Exercise Configurations', async () =
   });
   let html = content.innerHTML;
   assert.match(html, /data-section="configurations">\s*<summary><h3>Exercise Configurations<\/h3><span>3<\/span>/);
-  assert.match(html, /Machine · Press &lt;1&gt;[\s\S]*data-manage-remove="configuration:5"[^>]*>Archive<\/button>/);
+  assert.match(html, /Machine · Press &lt;1&gt;[\s\S]*data-manage-remove="configuration:5"[^>]*>Delete<\/button>/);
   assert.match(html, /data-manage-remove="configuration:6"[^>]*>Delete<\/button>/);
   assert.match(html, /Sled · Recent hides it while Heavy Sled Push is archived/);
   assert.match(html, /Archived \(1\)[\s\S]*Home · Machine · Old[\s\S]*data-manage-restore="configuration:8"[^>]*>Restore<\/button>/);
   assert.doesNotMatch(html, /<1>/);
+  assert.match(html, /Delete removes this saved choice without deleting recorded Sets or history/);
+  assert.match(html, /Choosing the same exercise, equipment, manufacturer and label again restores one/);
   // Several configurations of one exercise at a gym are told apart by their equipment details.
   assert.match(html, /<span class="manage-name">Incline Bench Press<\/span><span class="meta">Machine · Press &lt;1&gt;<\/span>/);
-  assert.match(html, /aria-label="Archive Incline Bench Press \(Machine · Press &lt;1&gt;\)"/);
+  assert.match(html, /aria-label="Delete Incline Bench Press \(Machine · Press &lt;1&gt;\)"/);
 
   await click('[data-manage-remove]', { manageRemove: 'configuration:5' });
-  assert.match(questions[0], /^Archive Incline Bench Press \(Machine · Press <1>\)\? It is used in recorded workouts/);
-  assert.equal(app.nodes['#toast'].textContent, 'Incline Bench Press (Machine · Press <1>) archived.');
+  assert.match(questions[0], /^Delete Incline Bench Press \(Machine · Press <1>\)\? Recorded Sets and history stay/);
+  assert.equal(app.nodes['#toast'].textContent, 'Incline Bench Press (Machine · Press <1>) deleted. Recorded Sets and history stay. Restore it under Archived.');
+  assert.match(questions[0], /Restore it under Archived, or choose the same exercise, equipment, manufacturer and label again/);
   await click('[data-manage-remove]', { manageRemove: 'configuration:6' });
   assert.match(questions[1], /^Delete Incline Bench Press \(Machine · Press 2\)\? It has never been used/);
-  assert.deepEqual(labels, ['Archive', 'Delete']);
+  assert.deepEqual(labels, ['Delete', 'Delete']);
   assert.equal(app.nodes['#toast'].textContent, 'Incline Bench Press (Machine · Press 2) deleted.');
   html = content.innerHTML;
   assert.doesNotMatch(html, /configuration:6/);

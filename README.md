@@ -200,15 +200,12 @@ Archived gyms are listed under **Archived** at the end of the Gyms section, and
 name; restore the archived gym instead.
 
 Exercise Configurations lists the equipment and machine details saved for each
-gym, grouped by gym. Its remove button works the same way:
-
-- **Delete** appears for a configuration that no workout uses, for example one
-  added to a workout that was cancelled. It is removed permanently, also from
-  any routine that lists it.
-- **Archive** appears for a configuration used in a workout. It disappears from
-  Recent in the picker, which then has room for the next most recent configuration, and
-  Repeat this workout and starting a routine leave it out. History, progress, "Last workout", and the
-  CSV export keep it.
+gym, grouped by gym. **Delete** removes a saved choice without deleting its
+recorded Sets or history. A configuration used in a workout stays under
+**Archived** but disappears from Recent; Repeat this workout and starting a
+routine leave it out. History, progress, "Last workout", and the CSV export
+keep it. A configuration that no workout uses is removed permanently, also
+from any routine that lists it.
 
 Archived configurations are listed under **Archived** with their gym, and
 **Restore** offers one under Recent again. Choosing the same exercise,
