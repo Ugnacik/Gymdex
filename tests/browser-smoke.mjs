@@ -73,11 +73,16 @@ try {
   await page.getByRole('radio', { name: 'Duration in seconds' }).check();
   await page.locator('#equipment-choice select').selectOption({ label: 'Machine' });
   await page.locator('#add-equipment').click();
+  await page.locator('.custom-muscle-groups summary').click();
+  await page.locator('#custom-exercise-form').getByLabel('Back', { exact: true }).check();
+  await page.locator('#custom-exercise-form').getByLabel('Abs', { exact: true }).check();
   await page.locator('#custom-exercise-form button[type=submit]').click();
   await page.getByRole('button', { name: 'Add to routine', exact: true }).click();
   await page.locator('.routine-exercise').nth(1).waitFor();
   await screenshot('routine-from-catalog');
   check('Custom exercise can be created in a routine', (await read('/api/routines?gym_id=1')).routines[0].exercises.length === 2);
+  const customVariation = (await read('/api/catalog?gym_id=1')).catalog.find(item => item.exercise_name === 'Long Custom Duration Exercise For Browser Testing');
+  check('Custom Duration Variation keeps optional multiple Muscle Groups', JSON.stringify(customVariation.muscle_groups) === JSON.stringify(['Back', 'Abs']));
   await page.locator('#close-routines').click();
   await page.locator('[data-start-routine]').click();
   await page.locator('.set-form').first().waitFor();
@@ -234,6 +239,24 @@ try {
     check(`No horizontal overflow at ${width}px`, await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     await screenshot('start-' + width);
   }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.locator('#open-manage').click();
+  await page.locator('[data-section="exercises"] > summary').click();
+  await page.locator(`[data-manage-muscle-groups="variation:${customVariation.id}"]`).click();
+  const muscleGroupForm = page.locator(`[data-manage-muscle-groups-form="variation:${customVariation.id}"]`);
+  check('Manage restores checked Muscle Groups', await muscleGroupForm.getByLabel('Back', { exact: true }).isChecked()
+    && await muscleGroupForm.getByLabel('Abs', { exact: true }).isChecked());
+  await muscleGroupForm.getByLabel('Back', { exact: true }).uncheck();
+  await muscleGroupForm.getByLabel('Forearms', { exact: true }).check();
+  await muscleGroupForm.getByRole('button', { name: 'Save Muscle Groups', exact: true }).click();
+  await page.waitForFunction(id => document.querySelector(`[data-manage-muscle-groups-form="variation:${id}"] input[value="Forearms"]`)?.checked, customVariation.id);
+  check('Manage corrects Muscle Groups', JSON.stringify((await read('/api/catalog?gym_id=1')).catalog.find(item => item.id === customVariation.id).muscle_groups) === JSON.stringify(['Forearms', 'Abs']));
+  await muscleGroupForm.getByRole('button', { name: 'Clear', exact: true }).click();
+  await page.waitForFunction(id => !document.querySelector(`[data-manage-muscle-groups-form="variation:${id}"] input:checked`), customVariation.id);
+  check('Manage clears Muscle Groups', (await read('/api/catalog?gym_id=1')).catalog.find(item => item.id === customVariation.id).muscle_groups.length === 0);
+  check('Muscle Group editor has no phone overflow', await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  await screenshot('manage-muscle-groups');
+  await page.locator('#close-manage').click();
   check('No unexpected JavaScript exceptions', errors.length === 0);
   await writeFile(join(artifacts, 'results.json'), JSON.stringify({ checks, errors, port }, null, 2));
   console.log(`${checks.length} browser checks passed. Artifacts: ${artifacts}`);

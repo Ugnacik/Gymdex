@@ -138,6 +138,7 @@ class GymdexHandler(BaseHTTPRequestHandler):
                     text_field(payload, "tracking_type"),
                     payload.get("equipment"),
                     payload.get("assisted", False),
+                    payload.get("muscle_groups", []),
                 ),
                 status=HTTPStatus.CREATED,
             )
@@ -240,6 +241,10 @@ class GymdexHandler(BaseHTTPRequestHandler):
             return self._with_db(lambda connection: db.change_workout_exercise_configuration(
                 connection, workout_id, exercise_id, text_field(payload, "equipment"),
                 text_field(payload, "manufacturer"), text_field(payload, "label"),
+            ))
+        if kind == "variation" and "muscle_groups" in payload:
+            return self._with_db(lambda connection: db.set_variation_muscle_groups(
+                connection, int(parts[3]), payload["muscle_groups"],
             ))
         if kind == "variation" and "equipment" in payload:
             return self._with_db(lambda connection: db.set_variation_equipment(

@@ -138,7 +138,7 @@ class RoutineTests(unittest.TestCase):
         db.initialize(self.connection)
         db.initialize(self.connection)
 
-        self.assertEqual(self.connection.execute('PRAGMA user_version').fetchone()[0], 5)
+        self.assertEqual(self.connection.execute('PRAGMA user_version').fetchone()[0], 6)
         self.assertEqual(db.routines_for_gym(self.connection, self.home['id'])['routines'], [])
         self.assertEqual(db.workout_history(self.connection)['workouts'][0]['id'], workout['id'])
 
