@@ -723,6 +723,10 @@ textarea {
 .set-form fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
 .set-form legend { float: left; padding: 0; margin: 0 10px 2px 0; color: var(--ink); font-size: 0.92rem; font-weight: 650; letter-spacing: -0.01em; line-height: 44px; }
 .set-form legend + * { clear: none; }
+/* The Set number opens its Effort; a recorded Effort follows it in orange. */
+.set-number { display: block; min-width: 44px; min-height: 44px; margin: 0 0 0 -8px; padding: 0 8px; border: 0; border-radius: 999px; background: transparent; color: inherit; font-weight: inherit; letter-spacing: inherit; line-height: inherit; text-align: left; transition: background-color 200ms var(--ease-out); }
+.set-number:active { background: var(--surface-3); }
+.set-effort { color: var(--accent); white-space: pre; }
 .remove-set {
   position: absolute;
   top: 2px;
@@ -1126,6 +1130,25 @@ textarea {
 .confirm-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .confirm-actions button { min-width: 0; min-height: 54px; padding: 0 12px; overflow-wrap: anywhere; }
 .confirm-body .set-status:empty { display: none; }
+.choice-hint { margin: -12px 4px 18px; color: var(--muted); font-size: 0.86rem; line-height: 1.4; }
+.choice-options { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin-bottom: 14px; }
+.choice-option, .effort-options label {
+  min-width: 0;
+  min-height: 54px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--surface-3);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  color: var(--ink);
+  font-size: 1.05rem;
+  font-weight: 620;
+  font-variant-numeric: tabular-nums;
+  transition: transform 260ms var(--ease), background-color 200ms var(--ease-out), box-shadow 200ms var(--ease-out), color 200ms var(--ease-out);
+}
+.choice-option.wide { grid-column: 1 / -1; }
+.choice-option[aria-pressed="true"], .effort-options label:has(input:checked) { background: var(--accent-soft); box-shadow: inset 0 0 0 1.5px var(--accent-line); color: var(--accent); }
+.choice-option:active, .effort-options label:active { transform: scale(0.97); }
+.choice-cancel { width: 100%; background: transparent; }
 
 /* ---------- History ---------- */
 
@@ -1198,6 +1221,12 @@ textarea {
 .history-set-form .set-status, .history-note-form .set-status, .manage-rename-form .set-status { margin: 0; }
 .history-set-form .set-status:empty, .history-note-form .set-status:empty, .manage-rename-form .set-status:empty, .history-delete-form .set-status:empty { display: none; }
 .history-set-form .set-complete { margin-top: 0; }
+.effort-options { min-width: 0; margin: 0; padding: 0; border: 0; }
+.effort-options legend { margin-bottom: 5px; padding: 0; color: var(--muted); font-size: 0.76rem; font-weight: 560; }
+.effort-options > div { display: flex; flex-wrap: wrap; gap: 6px; }
+.effort-options label { position: relative; display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; padding: 0 12px; background: var(--surface-2); font-size: 0.92rem; cursor: pointer; }
+.effort-options input { position: absolute; inset: 0; width: 100%; height: 100%; min-height: 0; margin: 0; padding: 0; border-radius: inherit; opacity: 0; cursor: pointer; -webkit-appearance: none; appearance: none; }
+.effort-options label:has(input:focus-visible) { outline: 3px solid var(--accent); outline-offset: 2px; }
 .history-note-toggle { display: block; min-height: 44px; margin-left: -12px; padding: 0 12px; font-size: 0.88rem; }
 
 /* ---------- Progress ---------- */

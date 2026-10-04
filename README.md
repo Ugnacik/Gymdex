@@ -13,6 +13,7 @@ Gymdex supports:
   exercise configurations saved at the gym;
 - remembering equipment and machine details separately for each gym;
 - logging sets with optional weight, repetitions or duration, and completion;
+- recording how hard a set was: Failure, or the reps left in reserve;
 - removing and reordering exercises in the active workout, and changing the
   machine an exercise was added with;
 - adding an optional note to a workout and to each of its exercises;
@@ -46,7 +47,7 @@ count toward the completed-set total. Empty completed workouts also appear.
 History requires a connection. Opening it leaves your active
 workout and local drafts intact. Close it to return to your workout.
 Open a completed workout to correct an existing set's weight, reps or duration,
-and completion state. **Add set** appends a set to that exercise, copying the
+Effort, and completion state. **Add set** appends a set to that exercise, copying the
 weight and reps or duration of the set above, and opens it for correction; it
 is Not completed until you mark it completed and save. **Delete set** removes a
 set after a confirmation, and the remaining sets are renumbered. **Delete
@@ -385,6 +386,21 @@ Only completed sets are shown, in order. Tap a set's "Last workout" line to
 copy those values into the set and save them like any other edit; this does not
 mark the set completed.
 
+## Effort
+
+Each set can record how hard it was: **Failure**, or **0, 1, 2, 3 or 4+**
+reps left in reserve. Tap the set's number ("Set 2") to choose; the choice saves
+at once, also on a completed set, and shows beside the number, for example
+"Set 2 · 2 left". Tap the selected value again to clear it. Failure means you
+tried another rep and missed it; 0 means you stopped with nothing left but did
+not try. Duration sets offer only Failure.
+
+Effort is optional and never needed to mark a set Done. It appears in the
+"Last workout" line, completed workouts (where **Edit set** can correct it),
+the sets shown for a tapped progress point, and the CSV export. Tapping "Last
+workout" copies only the weight and result, and charts and best values ignore
+Effort.
+
 ## Compact workout view and finish summary
 
 Tap an exercise heading to collapse or expand its sets. Completion counts stay
@@ -515,7 +531,8 @@ To keep daily backups on the Pi and on a second machine, see
 ## Export and database backup
 
 Use **Export CSV** in Workout history to download workout, exercise, and set rows.
-The CSV includes empty workouts and unfinished sets. The `workout_note` and
+The CSV includes empty workouts and unfinished sets. The `effort` column holds
+each set's Effort (`failure`, `0` to `3`, or `4+`; empty when not recorded). The `workout_note` and
 `exercise_note` columns hold the notes; a note repeats on every row of its
 workout or exercise. It is for spreadsheets and
 analysis; it does not contain the full catalog or gym configurations. Unlike the
