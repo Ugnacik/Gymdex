@@ -704,7 +704,6 @@ const suggestionCatalog = {
     equipment: ['Barbell', 'Machine'],
     variations: ['Boy', 'Front Plank', 'Single Leg', 'Standard'],
     manufacturers: ['Eleiko', 'Hammer Strength', 'Technogym'],
-    labels: ['Rack 2', 'Upstairs'],
     exercises: [
       { name: 'Bench Press', variations: ['Standard'], equipment: ['Barbell', 'Machine'], manufacturers: ['Eleiko'], labels: ['Rack 2'] },
       { name: 'Leg Press', variations: ['Single Leg', 'Standard'], equipment: ['Barbell', 'Machine', 'Sled'],
@@ -810,14 +809,14 @@ test('custom creation sends optional multiple Muscle Groups', async () => {
   assert.deepEqual(JSON.parse(requests.at(-1)[1].body).muscle_groups, ['Back', 'Abs']);
 });
 
-test('the Exercise Configuration form offers manufacturers and machine labels from all Exercises and Gyms', async () => {
+test('the Exercise Configuration form offers manufacturers from all Exercises and machine labels of the same Exercise', async () => {
   const app = await harness();
   const { requests } = await openPickerSheet(app, suggestionCatalog, () => response({ id: 9 }, 201));
   pickVariation(app, 17);
   const manufacturer = app.nodes['#manufacturer-field'];
   const label = app.nodes['#machine-label-field'];
   assert.deepEqual(optionValues(manufacturer, 'manufacturer-choice'), ['None', 'Eleiko', 'Hammer Strength', 'Technogym', 'Other…']);
-  assert.deepEqual(optionValues(label, 'machine-label-choice'), ['None', 'Rack 2', 'Upstairs', 'Other…']);
+  assert.deepEqual(optionValues(label, 'machine-label-choice'), ['None', 'Upstairs', 'Other…']);
   assert.match(manufacturer.innerHTML, /Manufacturer <small>\(optional\)<\/small>/);
   choose(manufacturer, 'manufacturer-choice', 'Technogym');
   choose(label, 'machine-label-choice', OTHER);
@@ -827,14 +826,14 @@ test('the Exercise Configuration form offers manufacturers and machine labels fr
   assert.deepEqual(JSON.parse(added[1].body), { variation_id: 17, equipment: 'Sled', manufacturer: 'Technogym', label: 'Downstairs' });
 });
 
-test('an Exercise never configured offers global machine details but starts empty', async () => {
+test('an Exercise never configured offers global manufacturers, no machine labels, and starts empty', async () => {
   const app = await harness();
   const { requests } = await openPickerSheet(app, suggestionCatalog, () => response({ id: 9 }, 201));
   pickVariation(app, 30);
   const manufacturer = app.nodes['#manufacturer-field'];
   assert.equal(manufacturer.querySelector('#manufacturer-choice').value, '');
   assert.deepEqual(optionValues(manufacturer, 'manufacturer-choice'), ['None', 'Eleiko', 'Hammer Strength', 'Technogym', 'Other…']);
-  assert.equal(app.nodes['#machine-label-field'].querySelector('#machine-label-choice').value, '');
+  assert.doesNotMatch(app.nodes['#machine-label-field'].innerHTML, /<select/);
   await app.nodes['#configuration-form'].events.submit({ preventDefault() {}, currentTarget: app.nodes['#configuration-form'] });
   const added = requests.find(([path]) => path === '/api/workouts/1/exercises');
   assert.deepEqual(JSON.parse(added[1].body), { variation_id: 30, equipment: 'Bodyweight', manufacturer: '', label: '' });

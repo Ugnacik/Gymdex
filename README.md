@@ -172,8 +172,9 @@ Exercise Variations.
 
 ### Suggested values
 
-Variation names, Manufacturers and Machine labels can be reused across Exercises
-and Gyms, including when creating a new Exercise. Choose **Other…** to enter a
+Variation names and Manufacturers can be reused across Exercises and Gyms,
+including when creating a new Exercise. Machine labels are offered only for the
+Exercise they were entered on, at any Gym. Choose **Other…** to enter a
 new value. Variation defaults to Standard; choosing an existing Variation for
 the same Exercise uses it instead of creating another one. Manufacturer and
 Machine label remain optional and start as None.

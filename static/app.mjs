@@ -1686,15 +1686,15 @@ function equipmentProblem(names, name) {
   return "";
 }
 
-// Equipment stays relevant to the typed Exercise; names and machine details can be reused globally.
+// Equipment and machine labels stay relevant to the typed Exercise; Variation names and
+// manufacturers can be reused globally.
 function exerciseSuggestions(name) {
   const suggestions = state.picker.suggestions ?? { equipment: [], exercises: [] };
   const key = cleanEquipmentName(name).toLowerCase();
   const known = suggestions.exercises.find((item) => item.name.toLowerCase() === key)
     ?? { variations: [], equipment: suggestions.equipment, manufacturers: [], labels: [] };
   return { ...known, choices: suggestions.variations ?? known.variations,
-    manufacturers: suggestions.manufacturers ?? known.manufacturers,
-    labels: suggestions.labels ?? known.labels };
+    manufacturers: suggestions.manufacturers ?? known.manufacturers };
 }
 
 // Standard remains the default for a new Variation, with every previously entered name reusable.
@@ -1868,7 +1868,7 @@ function renderConfiguration(change = null) {
     state.selectedEquipment = button.dataset.equipment;
     document.querySelectorAll("[data-equipment]").forEach((option) => option.setAttribute("aria-pressed", String(option === button)));
   }));
-  // Machine details entered for any Exercise at any Gym can be reused.
+  // Manufacturers entered for any Exercise, and this Exercise's machine labels, can be reused from any Gym.
   const known = exerciseSuggestions(item.exercise_name);
   const details = {
     manufacturer: new ChoiceField(document.querySelector("#manufacturer-field"), { id: "manufacturer", name: "manufacturer",
