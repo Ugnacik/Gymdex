@@ -106,10 +106,25 @@ try {
   await page.locator('.exercise-summary').first().click();
   check('Collapsing retains set values', await set.locator('[name=weight]').inputValue() === '42.5');
   await page.evaluate(() => navigator.serviceWorker.ready.then(() => true));
-  await page.locator('.exercise-options > summary').first().click();
-  await page.locator('.exercise-options .note summary').first().click();
-  await page.locator('[data-note-target="exercise:1"]').fill('Seat setting 3');
+  await page.locator('.workout-exercise-card > .note summary').first().click();
+  await page.locator('[data-note-target="exercise:1"]').fill('Seat setting 3. Keep shoulders down through the whole set.');
   await page.locator('[data-note-target="exercise:1"]').blur();
+  await page.waitForFunction(() => document.querySelector('#sync-status')?.textContent.includes('All changes saved'));
+  await page.locator('.workout-exercise-card > .note summary').first().click();
+  for (const width of [320, 360, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    check(`Saved exercise note fits ${width}px`, await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth));
+    const note = await page.locator('.workout-exercise-card > .note').first().boundingBox();
+    const heading = await page.locator('.exercise-summary').first().boundingBox();
+    check(`Exercise note is above heading at ${width}px`, note.y + note.height <= heading.y);
+    const done = await set.locator('[name=completed]').boundingBox();
+    check(`Done stays within ${width}px`, done.x >= 0 && done.x + done.width <= width);
+  }
+  await page.locator('.exercise-summary').first().click();
+  check('Saved note stays visible when the exercise collapses', await page.locator('.workout-exercise-card > .note summary').first().isVisible());
+  await page.locator('.exercise-summary').first().click();
+  await screenshot('exercise-note-above-heading');
+  await page.locator('.exercise-options > summary').first().click();
   await page.locator('.exercise-options > summary').nth(1).click();
   await page.getByRole('button', { name: 'Move Long Custom Duration Exercise For Browser Testing up', exact: true }).click();
   await page.waitForFunction(() => document.querySelector('.exercise-summary h3')?.textContent.startsWith('Long Custom'));
@@ -122,7 +137,7 @@ try {
   await page.waitForFunction(() => document.querySelector('.exercise-body .meta')?.textContent.startsWith('Machine'));
   check('Machine change preserves sets and visible trigger focus', (await read('/api/bootstrap')).workout_exercises[0].sets[0].weight === 42.5
     && await page.evaluate(() => document.activeElement.matches('[data-change-machine]') && document.activeElement.getClientRects().length > 0));
-  await page.locator('.exercise-options .note summary').first().click();
+  await page.locator('.workout-exercise-card > .note summary').first().click();
   await context.setOffline(true);
   await set.locator('[name=weight]').fill('45.5');
   await set.locator('[name=weight]').blur();
@@ -131,7 +146,7 @@ try {
   await page.reload();
   await page.locator('.set-form').first().waitFor();
   check('Offline draft survives reload', await page.locator('.set-form').first().locator('[name=weight]').inputValue() === '45.5');
-  check('Offline note draft is visible inside restored options', await page.locator('[data-note-target="exercise:1"]').isVisible()
+  check('Offline note draft is visible above the restored exercise', await page.locator('[data-note-target="exercise:1"]').isVisible()
     && await page.locator('[data-note-target="exercise:1"]').inputValue() === 'Offline seat setting');
   await context.setOffline(false);
   await page.waitForFunction(() => document.querySelector('#sync-status')?.textContent.includes('All changes saved'));
@@ -173,6 +188,9 @@ try {
   await page.locator('#close-history').click();
   await page.locator('#summary-history').click();
   await page.locator('[data-repeat-workout]').waitFor();
+  const historyNote = await page.locator('#history-detail .exercise-entry .note-text').first().boundingBox();
+  const historyHeading = await page.locator('#history-detail .history-exercise-heading').first().boundingBox();
+  check('Completed workout note is above its exercise heading', historyNote.y + historyNote.height <= historyHeading.y);
   for (const selector of ['#close-history', '#history-back']) {
     const bounds = await page.locator(selector).boundingBox();
     check(selector + ' visible when detail opens', bounds.y >= 0 && bounds.y + bounds.height <= 844);

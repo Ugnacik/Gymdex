@@ -112,8 +112,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .status { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: 0.78rem; font-weight: 520; white-space: nowrap; }
 .status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--surface-3); box-shadow: 0 0 0 1px var(--hairline-strong); }
 .status-active { color: var(--accent); }
-.status-active::before { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); animation: live 2.4s var(--ease-out) infinite; }
-@keyframes live { 50% { box-shadow: 0 0 0 6px rgba(255, 122, 61, 0); } }
+.status-active::before { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 
 /* Progress and History as one segmented pill. */
 .app-header nav {
@@ -283,6 +282,8 @@ textarea {
 /* ---------- Start screen ---------- */
 
 .gym-list, .exercise-list, .recent-list { display: grid; gap: 10px; }
+/* Notes truncate within the card instead of widening its grid column. */
+.workout-shell > .exercise-list { grid-template-columns: minmax(0, 1fr); }
 
 .gym-card, .exercise-card, .recent-card {
   position: relative;
@@ -678,7 +679,7 @@ textarea {
   overflow-wrap: anywhere;
 }
 .exercise-entry .meta { margin: 4px 0 0; color: var(--muted); font-size: 0.88rem; }
-.workout-exercise { padding: 6px 14px 14px; }
+.workout-exercise-card { padding: 6px 14px 14px; }
 .exercise-summary {
   display: flex;
   align-items: center;
@@ -703,7 +704,7 @@ textarea {
   transition: background-color 240ms var(--ease-out), color 240ms var(--ease-out);
 }
 .workout-exercise:has(.set-form):not(:has(.set-form:not(.is-complete))) > .exercise-summary > span { background: var(--accent-soft); color: var(--accent); }
-.workout-exercise:not([open]) { padding-bottom: 6px; }
+.workout-exercise-card:has(.workout-exercise:not([open])) { padding-bottom: 6px; }
 .exercise-body > .meta { margin: -6px 0 12px 2px; }
 
 .sets-list { display: grid; gap: 8px; }
@@ -1272,7 +1273,7 @@ textarea {
   .summary-actions { grid-template-columns: minmax(0, 1fr); }
   .shell { padding-left: max(14px, env(safe-area-inset-left)); padding-right: max(14px, env(safe-area-inset-right)); }
   .app-header nav .text-button { padding: 0 11px; }
-  .workout-exercise { padding: 6px 10px 12px; }
+  .workout-exercise-card { padding: 6px 10px 12px; }
   .set-form { padding: 8px 10px 4px; }
   .set-form .set-inputs { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 52px; gap: 6px; }
   .rest-readout strong { font-size: 2.35rem; }

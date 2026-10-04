@@ -58,7 +58,7 @@ and deleted workout immediately affects progress and future "Last workout"
 reference values. Adding exercises to a completed workout is not supported.
 
 The workout's note appears under its start and finish times, and each
-exercise's note under its equipment. **Add workout note**, **Edit workout note**,
+exercise's note above its heading. **Add workout note**, **Edit workout note**,
 **Add note** and **Edit note** open a text box; **Save note** saves it, and
 saving an empty box removes the note.
 
