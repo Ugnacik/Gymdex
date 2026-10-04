@@ -71,6 +71,7 @@ GYMDEX_DB_PATH=/tmp/gymdex-preview/gymdex.sqlite3 python3 -m gymdex.server --por
 - Test meaningful logic or observable behavior. Do not add tests that merely assert callback wiring or mirror the implementation.
 - Backend behavior changes ship with focused tests for that behavior.
 - With permission, user-visible frontend changes get one pass in a real client after the work is integrated.
+- After every user-visible frontend change, show me what it looks like: phone-sized screenshots of each changed screen and state, plus a short video when the change is an interaction. Take them from a preview on copied data, save them in `~/gymdex-screenshots/<date>-<topic>/` (not `/tmp`, which may be cleared before I look), and list the paths in your report.
 
 ## Branches and worktrees
 
@@ -101,7 +102,7 @@ Most code changes do not need a documentation change. Agents can read the code.
 
 ## Plans and work artifacts
 
-- Do not commit implementation plans, research notes, screenshots, or scratch files. Keep temporary material outside the repository, for example in `/tmp`.
+- Do not commit implementation plans, research notes, screenshots, or scratch files. Keep temporary material outside the repository, for example in `/tmp`; screenshots and videos for me go in `~/gymdex-screenshots/` (see Verifying).
 - `docs/backlog.md` is the only to-do list. When work from it lands, remove the item.
 
 ## Where code lives
