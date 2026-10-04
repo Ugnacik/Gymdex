@@ -1971,7 +1971,7 @@ function renderSet(entry, set, index) {
     : "No completed set";
   return `<form class="set-form${set.completed ? " is-complete" : ""}" data-set-id="${set.id}" data-entry-id="${entry.id}" data-assisted="${assisted}">
     <fieldset>
-      <legend><button type="button" class="set-number" data-set-effort aria-haspopup="dialog">Set ${set.position}<span class="set-effort">${effort ? ` · ${escapeHtml(effortText(effort, { short: true }))}` : ""}</span></button></legend>
+      <legend>Set ${set.position}</legend>
       <input type="hidden" name="effort" value="${escapeHtml(effort ?? "")}" />
       <button type="button" class="remove-set" aria-label="Remove ${escapeHtml(name)}"><span aria-hidden="true">×</span></button>
       ${previous
@@ -1980,6 +1980,7 @@ function renderSet(entry, set, index) {
       <div class="set-inputs">
         <label>${assisted ? "Assist kg" : "kg"} <input name="weight" type="text" inputmode="decimal" pattern="${WEIGHT_PATTERN}" autocomplete="off" title="A number such as 62.5 or 62,5" aria-label="${escapeHtml(name)} ${assisted ? "assistance" : "weight"} in kilograms" value="${set.weight === null ? "" : Math.abs(set.weight)}" /></label>
         <label>${unit === "sec" ? "Seconds" : "Reps"} <input name="result" type="number" inputmode="numeric" min="1" max="1000000" step="1" aria-label="${escapeHtml(name)} ${unit}" value="${set.result ?? ""}" ${set.completed ? "required" : ""} /></label>
+        ${renderEffortButton(entry, name, effort)}
         <label class="set-complete">Done <input name="completed" type="checkbox" aria-label="Mark ${escapeHtml(name)} completed and save" ${set.completed ? "checked" : ""} /></label>
       </div>
       <div class="set-actions">
@@ -1988,6 +1989,23 @@ function renderSet(entry, set, index) {
       </div>
     </fieldset>
   </form>`;
+}
+
+// The Effort button sits in the label row over the result column. Repetitions Sets open the
+// Effort sheet from it ("RIR", "RIR 2", "Failure"); Duration Sets toggle Failure directly.
+function effortButtonState(entry, name, effort) {
+  const duration = entry.tracking_type === "duration";
+  return {
+    text: duration ? "Failure" : effort ? effortText(effort, { short: true }) : "RIR",
+    label: `Effort for ${name}: ${effort ? effortText(effort) : "none"}`,
+    pressed: duration ? String(effort === "failure") : null,
+  };
+}
+
+function renderEffortButton(entry, name, effort) {
+  const { text, label, pressed } = effortButtonState(entry, name, effort);
+  return `<button type="button" class="effort-button" data-set-effort data-recorded="${Boolean(effort)}" aria-label="${escapeHtml(label)}"
+    ${pressed === null ? 'aria-haspopup="dialog"' : `aria-pressed="${pressed}"`}>${escapeHtml(text)}</button>`;
 }
 
 function setValues(form) {
@@ -2002,8 +2020,8 @@ function setValues(form) {
   return values;
 }
 
-// Tapping a Set's number offers its Effort. Picking saves at once like Done, without
-// changing completion; picking the selected value again clears it.
+// Picking an Effort saves at once like Done, without changing completion; picking the
+// selected value again clears it. Duration Sets have only Failure, so a tap toggles it.
 async function chooseSetEffort(form) {
   if (!state.editor || state.editor.busy) return;
   const entry = state.data.workout_exercises.find((item) => item.id === Number(form.dataset.entryId));
@@ -2011,18 +2029,22 @@ async function chooseSetEffort(form) {
   if (!set) return;
   const current = form.elements.effort.value || null;
   const duration = entry.tracking_type === "duration";
-  const picked = await choose(`Effort for ${exerciseDisplayName(entry)}, set ${set.position}`, {
+  const picked = duration ? "failure" : await choose(`Effort for ${exerciseDisplayName(entry)}, set ${set.position}`, {
     choices: effortsFor(entry.tracking_type).map((value) => value === "failure"
       ? { value, label: "Failure", wide: true }
       : { value, label: value, name: effortText(value) }),
     selected: current,
-    hint: `${duration ? "Failure: you tried to keep going and could not."
-      : "Failure: you tried another rep and missed it. Numbers are reps left in reserve; 0 means none was left."}${current ? " Tap the selected value to clear it." : ""}`,
+    hint: `Failure: you tried another rep and missed it. Numbers are reps left in reserve; 0 means none was left.${current ? " Tap the selected value to clear it." : ""}`,
   });
   if (picked === undefined || state.editor.busy || !form.isConnected) return;
   const effort = picked === current ? null : picked;
   form.elements.effort.value = effort ?? "";
-  form.querySelector(".set-effort").textContent = effort ? ` · ${effortText(effort, { short: true })}` : "";
+  const button = form.querySelector("[data-set-effort]");
+  const { text, label, pressed } = effortButtonState(entry, `${exerciseDisplayName(entry)}, set ${set.position}`, effort);
+  button.textContent = text;
+  button.dataset.recorded = String(Boolean(effort));
+  button.setAttribute("aria-label", label);
+  if (pressed !== null) button.setAttribute("aria-pressed", pressed);
   form.elements.result.required = form.elements.completed.checked;
   const valid = form.checkValidity();
   state.editor.edit(form.dataset.setId, setValues(form), { valid });
@@ -2201,8 +2223,7 @@ async function removeExercise(entryId) {
 
 async function removeSet(form) {
   if (state.editor.busy) return;
-  const position = state.data.workout_exercises.flatMap((entry) => entry.sets).find((set) => set.id === Number(form.dataset.setId))?.position;
-  if (!await ask(`Remove set ${position}?`, { confirmLabel: "Remove", danger: true })) return;
+  if (!await ask(`Remove set ${form.querySelector("legend").textContent.replace("Set ", "")}?`, { confirmLabel: "Remove", danger: true })) return;
   const entryNode = form.closest(".exercise-entry");
   const addButton = entryNode.querySelector(".add-set");
   if (await state.editor.remove(form.dataset.setId)) {
