@@ -1,7 +1,8 @@
 # Gymdex changes to make
 
-## Under consideration: failure and RPE, following Strong
+## Set effort: Failure or reps in reserve
 
-- Consider marking a Set as completed to failure and optionally recording its difficulty (RPE), using Strong's interaction as the reference.
-- Verify Strong's current behavior before specifying the controls; this remains an idea to evaluate, not a decided implementation.
-- Keep normal Set completion fast. Allow clearing or correcting either value, and include Completed Workout editing if implemented.
+- Each Set may record one optional effort value: **Failure** (another rep was tried and missed), or **0, 1, 2, 3 or 4+** reps left. Duration Sets offer only Failure.
+- Tapping the Set number opens the choice; tapping the selected value again clears it. Marking a Set Done stays a single tap, and filling from Last workout copies only kg and the result.
+- Show the value on the Set row, the Last workout line, Completed Workouts (including editing them), Progress's table and point detail, and the CSV export. Charts and best values do not change.
+- Strong's reference behaviour: a Failure Set tag and a separate RPE 6–10 entry. Failure and RPE were merged into one choice here, so they cannot contradict each other.
