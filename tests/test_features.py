@@ -256,7 +256,7 @@ class FeatureTests(unittest.TestCase):
         self.assertEqual(self.request('PUT', path, {
             'weight': 42.5, 'result': 9, 'completed': True,
         }), (200, {'id': set_item['id'], 'position': 1, 'weight': 42.5,
-                  'result': 9, 'completed': 1}))
+                  'result': 9, 'completed': 1, 'effort': None}))
         self.assertEqual(db.completed_workout(self.connection, workout['id'])
                          ['workout_exercises'][0]['sets'][0]['result'], 9)
         self.assertEqual(self.request('PUT', f'/api/history/{other["id"]}/sets/{set_item["id"]}', {

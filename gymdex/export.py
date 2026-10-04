@@ -11,7 +11,7 @@ COLUMNS = (
     "workout_id", "gym", "started_at_utc", "completed_at_utc",
     "workout_exercise_id", "exercise_position", "exercise", "variation",
     "equipment", "manufacturer", "machine_label", "tracking_type",
-    "set_id", "set_position", "weight_kg", "result", "completed",
+    "set_id", "set_position", "weight_kg", "result", "completed", "effort",
     "workout_note", "exercise_note",
 )
 
@@ -36,7 +36,7 @@ def workout_csv(connection: sqlite3.Connection) -> str:
                   e.label_snapshot AS machine_label,
                   e.tracking_type_snapshot AS tracking_type,
                   s.id AS set_id, s.position AS set_position,
-                  s.weight AS weight_kg, s.result, s.completed,
+                  s.weight AS weight_kg, s.result, s.completed, s.effort,
                   w.note AS workout_note, e.note AS exercise_note
            FROM workouts w
            JOIN gyms g ON g.id = w.gym_id

@@ -74,6 +74,54 @@ class SetTests(unittest.TestCase):
         self.save(item, result=None, weight=None, completed=False)
         self.assertIsNone(self.first_set()['result'])
 
+    def save_effort(self, item, **effort):
+        return db.update_set(self.connection, item['id'], dict(result=8, weight=40, completed=True) | effort)
+
+    def test_effort_is_kept_when_absent_cleared_by_null_and_stored_by_value(self):
+        item = self.first_set()
+        self.assertIsNone(item['effort'])
+        self.assertEqual(self.save_effort(item, effort='2')['effort'], '2')
+        # Cached clients and queued offline drafts omit effort; their saves keep it.
+        self.assertEqual(self.save_effort(item)['effort'], '2')
+        self.assertEqual(db.bootstrap(self.connection)['workout_exercises'][0]['sets'][0]['effort'], '2')
+        self.assertEqual(self.save_effort(item, effort='failure')['effort'], 'failure')
+        self.assertIsNone(self.save_effort(item, effort=None)['effort'])
+        self.assertIsNone(self.first_set()['effort'])
+
+    def test_invalid_effort_is_rejected_without_changing_the_set(self):
+        item = self.first_set()
+        self.save_effort(item, effort='4+')
+        for effort in ['Failure', '4', '5', '', 0, 4, True, ['1']]:
+            with self.subTest(effort=effort), self.assertRaises(ValueError):
+                self.save_effort(item, effort=effort, result=12)
+        self.assertEqual((self.first_set()['effort'], self.first_set()['result']), ('4+', 8))
+        status, body = self.request('PUT', f'/api/sets/{item["id"]}', dict(result=8, weight=None, completed=True, effort='9'))
+        self.assertEqual(status, 400)
+        self.assertIn('Effort', body['error'])
+
+    def test_duration_sets_record_only_failure(self):
+        plank = self.add_exercise(self.plank, 'Bodyweight')
+        item = self.first_set(plank)
+        self.assertEqual(self.save_effort(item, effort='failure')['effort'], 'failure')
+        for effort in ['0', '1', '4+']:
+            with self.subTest(effort=effort), self.assertRaises(ValueError):
+                self.save_effort(item, effort=effort, result=99)
+        self.assertEqual((self.first_set(plank)['effort'], self.first_set(plank)['result']), ('failure', 8))
+        self.assertIsNone(self.save_effort(item, effort=None)['effort'])
+
+    def test_added_set_does_not_copy_effort(self):
+        self.save_effort(self.first_set(), effort='failure')
+        added = db.add_set(self.connection, self.entry['id'])
+        self.assertEqual((added['result'], added['effort']), (8, None))
+
+    def test_last_workout_sets_include_effort(self):
+        self.save_effort(self.first_set(), effort='1')
+        db.complete_workout(self.connection, self.workout['id'])
+        self.workout = db.start_workout(self.connection, self.gym['id'])
+        self.add_exercise(self.press, 'Barbell')
+        previous = db.bootstrap(self.connection)['workout_exercises'][0]['previous_sets']
+        self.assertEqual([(s['result'], s['effort']) for s in previous], [(8, '1')])
+
     def test_removing_a_set_renumbers_the_remaining_sets_and_missing_ids_are_not_found(self):
         first = self.first_set()
         second = db.add_set(self.connection, self.entry['id'])
