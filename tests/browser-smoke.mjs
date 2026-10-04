@@ -44,6 +44,8 @@ try {
   const screenshot = name => page.screenshot({ path: join(artifacts, name + '.png') });
   const check = (name, value) => { assert.ok(value, name); checks.push(name); };
   async function verifyCreateAccessible(surface) {
+    // Measure only after the sheet's entrance slide, or results and Create are read on different frames.
+    await page.locator('#picker .sheet').evaluate(sheet => Promise.all(sheet.getAnimations().map(animation => animation.finished)));
     const search = page.locator('#exercise-search');
     await search.fill('');
     await page.locator('#muscle-group-filter').selectOption('');
