@@ -119,3 +119,17 @@ Most code changes do not need a documentation change. Agents can read the code.
 - Comments describe how a thing is used, and move when the code moves. Use them mostly to describe functions, not to annotate every line of behavior.
 - No continuously repainting animations; they drain the phone's battery and stutter.
 - If a rule here fights the task in front of you, say so loudly and get my sign-off before breaking it.
+
+## Agent skills
+
+### Issue tracker
+
+Work items live in `docs/backlog.md`, the only to-do list. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default five-role vocabulary, written as inline tags on backlog items. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one `CONTEXT.md` and `docs/adr/` at the root. See `docs/agents/domain.md`.
