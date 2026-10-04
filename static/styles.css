@@ -994,9 +994,53 @@ textarea {
 .equipment-entry { display: flex; align-items: flex-end; gap: 8px; }
 .equipment-entry .choice-field { flex: 1; }
 .equipment-entry .secondary { min-width: 76px; }
-.choice-field { display: grid; gap: 8px; min-width: 0; }
+.choice-field { position: relative; display: grid; gap: 8px; min-width: 0; }
 .choice-field > label { color: var(--ink-2); font-size: 0.86rem; font-weight: 580; }
-.choice-field input[hidden] { display: none; }
+.choice-entry { position: relative; }
+.choice-entry input.has-choices { padding-right: 52px; }
+.choice-toggle {
+  position: absolute;
+  inset: 0 0 0 auto;
+  width: 52px;
+  border: 0;
+  border-radius: 0 var(--radius-control) var(--radius-control) 0;
+  background: var(--icon-select) center / 20px no-repeat;
+  transition: transform 200ms var(--ease-out);
+}
+.choice-toggle[hidden] { display: none; }
+.choice-toggle[aria-expanded="true"] { transform: rotate(180deg); }
+/* Overlays what follows, so opening it moves nothing on the form. */
+.choice-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 5;
+  max-height: 232px;
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+  border-radius: var(--radius-control);
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--hairline-strong), 0 12px 32px rgba(0, 0, 0, 0.5);
+}
+.choice-list[hidden] { display: none; }
+.choice-list button {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 1rem;
+  font-weight: 450;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.choice-list button:active { background: var(--surface-3); }
 #custom-exercise-form .choice-field > label { font-size: 0.86rem; font-weight: 580; }
 .track-by { display: grid; margin: 0 0 14px; padding: 6px 14px; border: 0; border-radius: var(--radius-well); background: var(--surface); box-shadow: inset 0 0 0 1px var(--hairline); }
 .track-by legend { float: left; width: 100%; margin: 6px 0 2px; padding: 0; color: var(--ink-2); font-size: 0.86rem; font-weight: 580; }
