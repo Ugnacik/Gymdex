@@ -1170,6 +1170,27 @@ function renderManageRow(kind, item, { name = manageItemName(kind, item), shown 
   </li>`;
 }
 
+// Optional Muscle Groups are intentional training targets shared by every Configuration.
+function renderMuscleGroupChoices(groups, selected = []) {
+  return `<fieldset class="muscle-group-options"><legend>Muscle Groups <small>(optional)</small></legend>
+    <p class="field-help">Choose the areas this Variation is intentionally selected to train.</p>
+    <div>${groups.map((group) => `<label class="assistance-option"><input type="checkbox" name="muscle_group" value="${escapeHtml(group)}"${selected.includes(group) ? " checked" : ""} />${escapeHtml(group)}</label>`).join("")}</div>
+  </fieldset>`;
+}
+
+function selectedMuscleGroups(form) {
+  return [...form.querySelectorAll('input[name="muscle_group"]:checked')].map((input) => input.value);
+}
+
+function renderMuscleGroupEditor(variation, groups, open) {
+  const key = `variation:${variation.id}`;
+  return `<form class="manage-rename-form" data-manage-muscle-groups-form="${key}"${open.has(`muscle-groups:${key}`) ? "" : " hidden"}>
+    ${renderMuscleGroupChoices(groups, variation.muscle_groups ?? [])}
+    <div class="history-edit-actions"><button type="submit" class="secondary">Save Muscle Groups</button><button type="submit" class="text-button" value="clear">Clear</button></div>
+    <p class="set-status" role="status"></p>
+  </form>`;
+}
+
 // A custom Variation's Equipment editor. Values recorded in workouts, and the last value, stay.
 function renderEquipmentEditor(variation, open) {
   const key = `variation:${variation.id}`;
@@ -1196,14 +1217,14 @@ function renderCustomExercises(overview, open) {
     return `<ul class="manage-list manage-exercise">${renderManageRow("exercise", exercise, { rename: exercise.renamable, remove: false,
       detail: exercise.renamable ? "" : "Starter catalog exercise" })}</ul>
       <ul class="manage-list manage-variations">${members.map((variation) => renderManageRow("variation", variation, { name: variation.name, rename: true,
-        detail: [variation.tracking_type === "duration" ? "Duration" : "Repetitions", ...variation.equipment.map((equipment) => equipment.name)].join(" · "),
-        actions: `<button type="button" class="text-button" data-manage-equipment="variation:${variation.id}" aria-label="Edit equipment of ${escapeHtml(exerciseDisplayName(variation))}">Equipment</button>`,
-        editor: renderEquipmentEditor(variation, open) })).join("")}</ul>`;
+        detail: [variation.tracking_type === "duration" ? "Duration" : "Repetitions", ...variation.equipment.map((equipment) => equipment.name), ...(variation.muscle_groups ?? [])].join(" · "),
+        actions: `<button type="button" class="text-button" data-manage-equipment="variation:${variation.id}" aria-label="Edit equipment of ${escapeHtml(exerciseDisplayName(variation))}">Equipment</button><button type="button" class="text-button" data-manage-muscle-groups="variation:${variation.id}" aria-label="Edit Muscle Groups of ${escapeHtml(exerciseDisplayName(variation))}">Muscle Groups</button>`,
+        editor: renderEquipmentEditor(variation, open) + renderMuscleGroupEditor(variation, overview.muscle_groups ?? [], open) })).join("")}</ul>`;
   }).join("");
   return renderManageSection("exercises", "Custom Exercise Variations", active.length, variations.length ? `
       <p class="manage-help">Delete removes a variation with no workouts. Archive keeps a variation with workouts in history and progress but stops offering it in the exercise picker.</p>
       ${groups || "<p>All custom variations are archived.</p>"}
-      ${renderManageArchived("exercises", archived.map((variation) => renderManageRow("variation", variation)), open)}`
+      ${renderManageArchived("exercises", archived.map((variation) => renderManageRow("variation", variation, { detail: (variation.muscle_groups ?? []).join(" · ") })), open)}`
     : `<p>No custom variations yet. Create one with Create custom exercise when adding an exercise to a workout.</p>`, open);
 }
 
@@ -1313,6 +1334,15 @@ function openManage() {
       else form.elements.name.focus();
       return;
     }
+    const muscleGroups = target.closest?.("[data-manage-muscle-groups]");
+    if (muscleGroups) {
+      const key = muscleGroups.dataset.manageMuscleGroups;
+      const form = content.querySelector(`[data-manage-muscle-groups-form="${key}"]`);
+      form.hidden = !form.hidden;
+      if (form.hidden) open.delete(`muscle-groups:${key}`);
+      else { open.add(`muscle-groups:${key}`); form.querySelector("input")?.focus(); }
+      return;
+    }
     const equipment = target.closest?.("[data-manage-equipment]");
     if (equipment) {
       const key = equipment.dataset.manageEquipment;
@@ -1375,6 +1405,24 @@ function openManage() {
     } catch (error) { status.textContent = error.message; }
   }
   content.addEventListener("submit", async (event) => {
+    const muscleGroupForm = event.target.closest?.("[data-manage-muscle-groups-form]");
+    if (muscleGroupForm) {
+      event.preventDefault();
+      const selected = itemFor(muscleGroupForm.dataset.manageMuscleGroupsForm);
+      if (!selected) return;
+      const status = muscleGroupForm.querySelector(".set-status");
+      const buttons = muscleGroupForm.querySelectorAll('[type="submit"]');
+      buttons.forEach((button) => { button.disabled = true; });
+      status.textContent = "Saving Muscle Groups…";
+      try {
+        const groups = event.submitter?.value === "clear" ? [] : selectedMuscleGroups(muscleGroupForm);
+        await api(selected.path, { method: "PUT", body: JSON.stringify({ muscle_groups: groups }) });
+        showToast(groups.length ? "Muscle Groups saved." : "Muscle Groups cleared.");
+        await refresh();
+        content.querySelector(`[data-manage-muscle-groups-form="${muscleGroupForm.dataset.manageMuscleGroupsForm}"]`)?.querySelector("input")?.focus();
+      } catch (error) { status.textContent = error.message; buttons.forEach((button) => { button.disabled = false; }); }
+      return;
+    }
     const equipmentForm = event.target.closest?.("[data-manage-equipment-form]");
     if (equipmentForm) {
       event.preventDefault();
@@ -1627,7 +1675,7 @@ function variationChoices(known) {
 
 function variationHelp(known) {
   return known.variations.length
-    ? `${known.name} already has: ${known.variations.join(", ")}. Choose an existing variation to keep its tracking, equipment and Assisted settings, or Other… for a new name.`
+    ? `${known.name} already has: ${known.variations.join(", ")}. Choose an existing variation to keep its tracking, equipment, Muscle Groups and Assisted settings, or Other… for a new name.`
     : "";
 }
 
@@ -1652,6 +1700,7 @@ function renderCustomExerciseForm(query = "") {
       </div>
       <p class="field-help" id="equipment-help">Choose or type one option, then tap Add. You can choose one for each gym machine when logging.</p>
       <label class="assistance-option"><input name="assisted" type="checkbox" /> Assisted (weight is counterweight)</label>
+      <details class="custom-muscle-groups"><summary>Muscle Groups (optional)</summary>${renderMuscleGroupChoices(state.picker.muscle_groups ?? [])}</details>
       <button class="primary accent" type="submit">Continue</button>
     </form>`;
   sheet.querySelector("#back-to-picker").addEventListener("click", () => renderPicker(query));
@@ -1725,6 +1774,7 @@ function renderCustomExerciseForm(query = "") {
       const created = await api("/api/exercises", { method: "POST", body: JSON.stringify({
         name: values.get("name"), variation_name: variation.value,
         tracking_type: values.get("tracking_type"), equipment, assisted: values.get("assisted") === "on",
+        muscle_groups: selectedMuscleGroups(form),
       }) });
       state.picker.catalog.push(created);
       chooseExercise(created.id);

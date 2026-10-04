@@ -149,12 +149,16 @@ the list, or choose **Other…** and type a new one, then tap Add (or press
 Enter while typing). Each choice appears as a chip you can remove with its ×,
 and an added choice leaves the list. An empty variation name becomes Standard.
 Check Assisted when the variation's weight is a machine counterweight.
+Optionally choose Muscle Groups this Variation is intentionally selected to
+train. Several groups can apply; incidental involvement does not count.
 Using an existing exercise name with a new variation name adds another variation.
 Choosing a variation that Exercise already has uses it with its existing tracking,
-equipment and Assisted settings. The resulting catalog
+equipment, Muscle Groups and Assisted settings. The resulting catalog
 entry is available at every gym; machine details are still recorded for the
 gym when you add it to a workout. Rename, edit the equipment of, or remove
-created variations in [Manage](#manage-gyms-and-exercises).
+created variations in [Manage](#manage-gyms-and-exercises). Muscle Groups can
+also be assigned, changed or cleared there, including for existing Custom
+Exercise Variations.
 
 ### Suggested values
 

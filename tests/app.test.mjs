@@ -601,7 +601,7 @@ test('custom exercise creation offers the new variation for the active workout',
     await customForm.events.submit({ preventDefault() {}, currentTarget: customForm });
   } finally { globalThis.FormData = originalFormData; }
   assert.equal(requests[1][0], '/api/exercises');
-  assert.deepEqual(JSON.parse(requests[1][1].body), { name: 'Leg Press', variation_name: 'Single Leg', tracking_type: 'repetitions', equipment: ['Machine', 'Cable'], assisted: false });
+  assert.deepEqual(JSON.parse(requests[1][1].body), { name: 'Leg Press', variation_name: 'Single Leg', tracking_type: 'repetitions', equipment: ['Machine', 'Cable'], assisted: false, muscle_groups: [] });
   assert.match(sheet.innerHTML, /Single Leg Leg Press/);
   assert.match(sheet.innerHTML, /data-equipment="Machine"/);
 });
@@ -640,7 +640,7 @@ test('custom creation offers global Variation names and keeps Equipment relevant
   const name = sheetNodes['[name="name"]'];
   name.value = ' leg  press';
   name.events.input();
-  assert.match(sheetNodes['#variation-help'].textContent, /Choose an existing variation to keep its tracking, equipment and Assisted settings/);
+  assert.match(sheetNodes['#variation-help'].textContent, /Choose an existing variation to keep its tracking, equipment, Muscle Groups and Assisted settings/);
   choose(variationField, 'variation-name-choice', OTHER);
   type(variationField, 'variation-name', 'Wide');
   assert.deepEqual(optionValues(equipmentField, 'equipment-entry-choice'), ['Choose equipment', 'Barbell', 'Machine', 'Sled', 'Other…']);
@@ -653,13 +653,14 @@ test('custom creation offers global Variation names and keeps Equipment relevant
   globalThis.FormData = class { constructor() { return new Map([['name', 'leg press'], ['tracking_type', 'duration']]); } };
   try { await customForm.events.submit({ preventDefault() {}, currentTarget: customForm }); }
   finally { globalThis.FormData = originalFormData; }
-  assert.deepEqual(JSON.parse(requests.at(-1)[1].body), { name: 'leg press', variation_name: 'Wide', tracking_type: 'duration', equipment: ['Sled', 'Hack'], assisted: false });
+  assert.deepEqual(JSON.parse(requests.at(-1)[1].body), { name: 'leg press', variation_name: 'Wide', tracking_type: 'duration', equipment: ['Sled', 'Hack'], assisted: false, muscle_groups: [] });
 });
 
 test('a reused Variation name creates a new Exercise, while an existing Variation is selected with its metadata', async () => {
   const app = await harness();
   const catalog = structuredClone(suggestionCatalog);
   catalog.catalog[2].assisted = true;
+  catalog.catalog[2].muscle_groups = ['Abs'];
   const { sheet, sheetNodes, customForm, requests } = await openPickerSheet(app, catalog, () => response({ id: 40,
     exercise_name: 'New Exercise', variation_name: 'Boy', tracking_type: 'repetitions', equipment: ['Machine'] }, 201));
   app.nodes['#create-exercise'].events.click();
@@ -681,6 +682,7 @@ test('a reused Variation name creates a new Exercise, while an existing Variatio
   assert.match(sheet.innerHTML, /data-equipment="Bodyweight"/);
   assert.equal(catalog.catalog[2].tracking_type, 'duration');
   assert.equal(catalog.catalog[2].assisted, true);
+  assert.deepEqual(catalog.catalog[2].muscle_groups, ['Abs']);
   await app.nodes['#configuration-form'].events.submit({ preventDefault() {}, currentTarget: app.nodes['#configuration-form'] });
   const added = requests.find(([path]) => path === '/api/workouts/1/exercises');
   assert.equal(JSON.parse(added[1].body).variation_id, 30);
@@ -699,6 +701,26 @@ test('typing an existing Variation name ignores case and uses it without requiri
   assert.equal(requests.length, 1, 'only the catalogue was fetched');
   assert.match(app.nodes['#picker .sheet'].innerHTML, /data-equipment="Sled"/);
   assert.match(app.nodes['#picker .sheet'].innerHTML, /data-equipment="Machine"/);
+});
+
+test('custom creation sends optional multiple Muscle Groups', async () => {
+  const app = await harness();
+  const catalog = { ...suggestionCatalog, muscle_groups: ['Chest', 'Back', 'Abs'] };
+  const { sheet, sheetNodes, customForm, requests } = await openPickerSheet(app, catalog, () => response({
+    id: 40, exercise_name: 'New Exercise', variation_name: 'Standard', tracking_type: 'repetitions',
+    equipment: ['Machine'], muscle_groups: ['Back', 'Abs'],
+  }, 201));
+  app.nodes['#create-exercise'].events.click();
+  assert.match(sheet.innerHTML, /<summary>Muscle Groups \(optional\)<\/summary>/);
+  assert.match(sheet.innerHTML, /name="muscle_group" value="Back"/);
+  choose(sheetNodes['#equipment-choice'], 'equipment-entry-choice', 'Machine');
+  customForm.querySelectorAll = selector => selector === 'input[name="muscle_group"]:checked'
+    ? [{ value: 'Back' }, { value: 'Abs' }] : [];
+  const originalFormData = globalThis.FormData;
+  globalThis.FormData = class { constructor() { return new Map([['name', 'New Exercise'], ['tracking_type', 'repetitions']]); } };
+  try { await customForm.events.submit({ preventDefault() {}, currentTarget: customForm }); }
+  finally { globalThis.FormData = originalFormData; }
+  assert.deepEqual(JSON.parse(requests.at(-1)[1].body).muscle_groups, ['Back', 'Abs']);
 });
 
 test('the Exercise Configuration form offers manufacturers and machine labels from all Exercises and Gyms', async () => {
@@ -1719,7 +1741,7 @@ test('Manage lists custom exercises with rename, equipment and Delete or Archive
   assert.match(html, /data-manage-rename="exercise:3" aria-label="Rename Sled &lt;i&gt;">Rename<\/button>/);
   assert.doesNotMatch(html, /data-manage-rename="exercise:4"/);
   assert.doesNotMatch(html, /data-manage-remove="exercise:/);
-  assert.match(html, /data-manage-rename="variation:7"[^>]*>Rename<\/button><button[^>]*data-manage-equipment="variation:7"[^>]*>Equipment<\/button><button[^>]*data-manage-remove="variation:7"[^>]*>Archive<\/button>/);
+  assert.match(html, /data-manage-rename="variation:7"[^>]*>Rename<\/button><button[^>]*data-manage-equipment="variation:7"[^>]*>Equipment<\/button><button[^>]*data-manage-muscle-groups="variation:7"[^>]*>Muscle Groups<\/button><button[^>]*data-manage-remove="variation:7"[^>]*>Archive<\/button>/);
   assert.match(html, /data-manage-remove="variation:9"[^>]*>Delete<\/button>/);
   // × only on unused equipment, and never on the last value.
   const editor = html.match(/<form class="manage-rename-form manage-equipment-form" data-manage-equipment-form="variation:7" hidden>[\s\S]*?<\/form>/)[0];
@@ -1740,6 +1762,35 @@ test('Manage lists custom exercises with rename, equipment and Delete or Archive
   assert.ok(requests.some(([key]) => key === 'POST /api/manage/variations/8/restore'));
   assert.equal(app.nodes['#toast'].textContent, 'Old Sled <i> restored.');
   assert.match(content.innerHTML, /data-manage-rename="exercise:3"/);
+});
+
+test('Manage saves, clears and displays Custom Variation Muscle Groups', async () => {
+  const app = await harness(storage(), startData([home]));
+  let groups = ['Back'];
+  const { content, requests, click } = await openManage(app, {
+    'GET /api/manage': () => manageOverview([], { muscle_groups: ['Back', 'Forearms', 'Abs'],
+      exercises: [sled([{ ...heavy, muscle_groups: groups }])] }),
+    'PUT /api/manage/variations/7': () => { groups = requests.at(-1)[1].muscle_groups; return { ...heavy, muscle_groups: groups }; },
+  });
+  assert.match(content.innerHTML, /Duration · Sled · Prowler &lt;b&gt; · Back/);
+  assert.match(content.innerHTML, /name="muscle_group" value="Back" checked/);
+  const status = node(), button = node(), input = node();
+  const form = Object.assign(node(), { hidden: true, dataset: { manageMuscleGroupsForm: 'variation:7' },
+    closest: selector => selector === '[data-manage-muscle-groups-form]' ? form : null,
+    querySelector: selector => selector === '.set-status' ? status : input,
+    querySelectorAll: selector => selector === '[type="submit"]' ? [button] : [{ value: 'Forearms' }, { value: 'Abs' }],
+  });
+  content.querySelector = () => form;
+  await click('[data-manage-muscle-groups]', { manageMuscleGroups: 'variation:7' });
+  assert.equal(form.hidden, false);
+  await content.events.submit({ target: form, preventDefault() {} });
+  assert.deepEqual(requests.find(([key]) => key === 'PUT /api/manage/variations/7')[1], { muscle_groups: ['Forearms', 'Abs'] });
+  assert.equal(app.nodes['#toast'].textContent, 'Muscle Groups saved.');
+  assert.match(content.innerHTML, /Forearms · Abs/);
+  await content.events.submit({ target: form, submitter: { value: 'clear' }, preventDefault() {} });
+  assert.deepEqual(requests.at(-2)[1], { muscle_groups: [] });
+  assert.equal(app.nodes['#toast'].textContent, 'Muscle Groups cleared.');
+  assert.doesNotMatch(content.innerHTML, /value="Back" checked|value="Forearms" checked|value="Abs" checked/);
 });
 
 test('Manage renames a custom exercise', async () => {

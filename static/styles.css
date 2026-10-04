@@ -1322,3 +1322,11 @@ textarea {
   .app-header nav { margin-left: auto; }
   .app-header nav .text-button { padding: 0 8px; font-size: 0.85rem; }
 }
+
+/* Muscle Group choices stay optional and use the same touch-sized checkboxes as Assistance. */
+.custom-muscle-groups { margin-bottom: 14px; }
+.custom-muscle-groups summary { min-height: 48px; padding: 12px 0; cursor: pointer; }
+.muscle-group-options { min-width: 0; margin: 0; padding: 8px 0; border: 0; }
+.muscle-group-options legend { color: var(--ink-2); font-weight: 580; }
+.muscle-group-options > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; }
+.muscle-group-options .assistance-option { margin-bottom: 0; }
