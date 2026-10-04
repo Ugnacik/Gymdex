@@ -510,7 +510,7 @@ test('a finished rest still completes when the browser has no Web Audio', async 
   assert.equal(app.nodes['#rest-status'].textContent, 'Rest complete');
 });
 
-// Stand-ins for the elements of the picker sheet, which Add exercise and Change machine open.
+// Stand-ins for the elements of the picker sheet, which Add exercise and Edit manufacturer / machine open.
 function pickerSheet(app) {
   const wrapper = node();
   wrapper.remove = () => { delete app.nodes['#picker']; };
@@ -735,16 +735,22 @@ const legPressEntry = { id: 3, variation_id: 17, exercise_name: 'Leg Press', var
   manufacturer: 'Cybex', label: '', note: 'Seat 4', tracking_type: 'repetitions', previous_sets: [],
   sets: [{ id: 2, position: 1, weight: null, result: null, completed: false }] };
 
-test('Change machine saves set drafts, then switches the exercise to the machine chosen in its sheet', async () => {
+test('Edit manufacturer / machine saves set drafts, then switches the exercise to the machine chosen in its sheet', async () => {
   const app = await harness(storage(), { workout_exercises: [legPressEntry] });
-  assert.match(app.nodes['#app'].innerHTML, /<p class="meta">Machine · Cybex<\/p>[\s\S]*data-change-machine="3" aria-label="Change machine for Single Leg Leg Press">Change machine<\/button>/);
+  assert.match(app.nodes['#app'].innerHTML, /<p class="meta">Machine · Cybex<\/p>[\s\S]*data-change-machine="3" aria-label="Edit manufacturer \/ machine for Single Leg Leg Press">Edit manufacturer \/ machine<\/button>/);
+  const html = app.nodes['#app'].innerHTML;
+  assert.equal((html.match(/data-change-machine="3"/g) ?? []).length, 1);
+  assert.ok(html.indexOf('data-change-machine="3"') < html.indexOf('class="sets-list"'));
+  assert.ok(html.indexOf('data-change-machine="3"') < html.indexOf('class="exercise-options"'));
   const { sheet } = pickerSheet(app);
   const changed = { ...structuredClone(legPressEntry), equipment: 'Sled', manufacturer: 'Technogym', label: 'Upstairs',
+    note: 'Seat 5', previous_sets: [{ position: 1, weight: 70, result: 12 }],
     sets: [{ id: 2, position: 1, weight: 100, result: null, completed: false }] };
   const requests = [];
   app.env.fetch = async (url, options = {}) => {
     requests.push([`${options.method ?? 'GET'} ${url}`, options.body && JSON.parse(options.body)]);
     if (url === '/api/sets/2') return response({ id: 2, position: 1, weight: 100, result: null, completed: false });
+    if (url === '/api/workout-exercises/3/note') return response({ id: 3, note: 'Seat 5' });
     if (url.startsWith('/api/catalog')) return response(structuredClone(suggestionCatalog));
     if (url.endsWith('/configuration')) return response({ id: 3, equipment: 'Sled', manufacturer: 'Technogym', label: 'Upstairs' });
     if (url === '/api/bootstrap') return response({ gyms: [], active_workout: { id: 1, gym_id: 1, gym_name: 'Home', started_at: '2026-09-22 10:00:00' }, workout_exercises: [changed] });
@@ -757,10 +763,13 @@ test('Change machine saves set drafts, then switches the exercise to the machine
   app.env.document.querySelectorAll = (selector) => selector === '[data-equipment]' ? equipmentButtons : querySelectorAll(selector);
   app.form.elements.weight.value = '100';
   app.form.events.input();
+  const note = app.noteField('exercise:3');
+  note.value = 'Seat 5';
+  note.events.input();
 
   await clickIn(app, '[data-change-machine]', { changeMachine: '3' });
-  assert.deepEqual(requests.map(([request]) => request), ['PUT /api/sets/2', 'GET /api/catalog?gym_id=1'], 'the set draft is saved first');
-  assert.match(sheet.innerHTML, /<h2 id="picker-title">Change machine<\/h2><button class="text-button" id="close-picker">Cancel<\/button>/);
+  assert.deepEqual(requests.map(([request]) => request), ['PUT /api/sets/2', 'PUT /api/workout-exercises/3/note', 'GET /api/catalog?gym_id=1'], 'set and note drafts are saved first');
+  assert.match(sheet.innerHTML, /<h2 id="picker-title">Edit manufacturer \/ machine<\/h2><button class="text-button" id="close-picker">Cancel<\/button>/);
   assert.match(sheet.innerHTML, /Single Leg Leg Press keeps its sets and note\./);
   assert.match(sheet.innerHTML, /data-equipment="Sled" aria-pressed="false"[\s\S]*data-equipment="Machine" aria-pressed="true"/);
   assert.match(sheet.innerHTML, /<button class="primary accent" type="submit">Save<\/button>/);
@@ -778,12 +787,14 @@ test('Change machine saves set drafts, then switches the exercise to the machine
   assert.deepEqual(equipmentButtons.map((button) => button.pressed), ['true', 'false']);
 
   await app.nodes['#configuration-form'].events.submit({ preventDefault() {}, currentTarget: app.nodes['#configuration-form'] });
-  assert.deepEqual(requests.slice(2), [
+  assert.deepEqual(requests.slice(3), [
     ['PUT /api/workouts/1/exercises/3/configuration', { equipment: 'Sled', manufacturer: 'Technogym', label: 'Upstairs' }],
     ['GET /api/bootstrap', undefined]]);
   assert.equal(app.nodes['#picker'], undefined, 'the sheet closes');
   assert.match(app.nodes['#app'].innerHTML, /<p class="meta">Sled · Technogym · Upstairs<\/p>/);
   assert.match(app.nodes['#app'].innerHTML, /data-set-id="2"/);
+  assert.equal(app.noteField('exercise:3').value, 'Seat 5');
+  assert.match(app.nodes['#app'].innerHTML, /data-previous-weight="70" data-previous-result="12"/);
   assert.equal(app.nodes['#toast'].textContent, 'Changed to Sled · Technogym · Upstairs.');
 });
 
@@ -806,7 +817,7 @@ test('Close in the picker and the custom exercise form returns focus to Add exer
   assert.equal(app.nodes['#open-picker'].focused, true);
 });
 
-test('Change machine waits for a set that cannot be saved, and Cancel changes nothing', async () => {
+test('Edit manufacturer / machine waits for a set that cannot be saved, and Cancel changes nothing', async () => {
   const app = await harness(storage(), { workout_exercises: [legPressEntry] });
   pickerSheet(app);
   const requests = [];
@@ -820,7 +831,7 @@ test('Change machine waits for a set that cannot be saved, and Cancel changes no
   await clickIn(app, '[data-change-machine]', { changeMachine: '3' });
   assert.deepEqual(requests, []);
   assert.equal(app.nodes['#picker'], undefined);
-  assert.equal(app.nodes['#toast'].textContent, 'Cannot change the machine yet: fix the highlighted set, then try again.');
+  assert.equal(app.nodes['#toast'].textContent, 'Cannot edit manufacturer or machine yet: fix the highlighted set, then try again.');
 
   app.form.elements.completed.checked = false;
   app.form.events.input();
@@ -831,13 +842,34 @@ test('Change machine waits for a set that cannot be saved, and Cancel changes no
   assert.equal(requests.length, 2);
 });
 
-test('Change machine explains that an archived exercise must be restored first', async () => {
+test('manufacturer editing offline preserves unsaved Sets and Notes until they can be saved', async () => {
+  const app = await harness(storage(), { workout_exercises: [legPressEntry] });
+  pickerSheet(app);
+  app.env.navigator.onLine = false;
+  app.form.elements.weight.value = '85';
+  app.form.events.input();
+  const note = app.noteField('exercise:3');
+  note.value = 'Seat 6';
+  note.events.input();
+  const requests = [];
+  app.env.fetch = async (url) => { requests.push(url); throw new TypeError('Offline'); };
+  await clickIn(app, '[data-change-machine]', { changeMachine: '3' });
+  assert.equal(app.nodes['#picker'], undefined);
+  assert.equal(app.form.elements.weight.value, '85');
+  assert.equal(note.value, 'Seat 6');
+  assert.ok(!requests.some(url => url.startsWith('/api/catalog') || url.endsWith('/configuration')));
+  const reopened = await harness(app.disk, { workout_exercises: [legPressEntry] });
+  assert.equal(reopened.form.elements.weight.value, '85');
+  assert.equal(reopened.noteField('exercise:3').value, 'Seat 6');
+});
+
+test('Edit manufacturer / machine explains that an archived exercise must be restored first', async () => {
   const app = await harness(storage(), { workout_exercises: [{ ...legPressEntry, variation_id: 99 }] });
   pickerSheet(app);
   app.env.fetch = async () => response(structuredClone(suggestionCatalog));
   await clickIn(app, '[data-change-machine]', { changeMachine: '3' });
   assert.equal(app.nodes['#picker'], undefined);
-  assert.equal(app.nodes['#toast'].textContent, 'Single Leg Leg Press is archived. Restore it in Manage to change its machine.');
+  assert.equal(app.nodes['#toast'].textContent, 'Single Leg Leg Press is archived. Restore it in Manage to edit its manufacturer or machine.');
 });
 
 test('progress shows a chart and numeric history for an exercise', async () => {
