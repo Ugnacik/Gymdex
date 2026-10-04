@@ -1111,7 +1111,7 @@ function manageItemName(kind, item) {
 function renderManageRow(kind, item, { name = manageItemName(kind, item), shown = name, detail = "", rename = false, remove = true, actions: more = "", editor = "" } = {}) {
   const key = `${kind}:${item.id}`;
   const label = escapeHtml(name);
-  const removeLabel = item.used ? "Archive" : "Delete";
+  const removeLabel = kind === "configuration" || !item.used ? "Delete" : "Archive";
   const actions = item.archived
     ? `<button type="button" class="text-button" data-manage-restore="${key}" aria-label="Restore ${label}">Restore</button>`
     : `${rename ? `<button type="button" class="text-button" data-manage-rename="${key}" aria-label="Rename ${label}">Rename</button>` : ""}${more}${remove ? `<button type="button" class="text-button manage-remove" data-manage-remove="${key}" aria-label="${removeLabel} ${label}">${removeLabel}</button>` : ""}`;
@@ -1198,7 +1198,7 @@ function renderManage(overview, open) {
       ${gyms.length ? `<ul class="manage-list">${gyms.map((gym) => renderManageRow("gym", gym, { rename: true })).join("")}</ul>` : `<p>No gyms to manage.</p>`}
       ${renderManageArchived("gyms", archivedGyms.map((gym) => renderManageRow("gym", gym)), open)}`, open),
     renderManageSection("configurations", "Exercise Configurations", configurations.length, `
-      <p class="manage-help">Saved for a gym when you add an exercise there, and offered under Recent. Delete removes one never used in a workout. Archive keeps a used one in history but stops offering it under Recent and in Repeat; choosing the same equipment, manufacturer and label again restores it.</p>
+      <p class="manage-help">Saved for a gym when you add an exercise there, and offered under Recent. Delete removes this saved choice without deleting recorded Sets or history. Used choices stay under Archived with Restore and are skipped by Repeat and when starting a Routine. Choosing the same exercise, equipment, manufacturer and label again restores one; unused choices are removed permanently.</p>
       ${configurations.length ? renderManageGroups(configurations, (item) => `${item.gym_name}${item.gym_archived ? " (archived)" : ""}`,
         (item) => renderManageRow("configuration", item, { shown: exerciseDisplayName(item), detail: configurationDetail(item) }))
         : `<p>No exercise configurations yet. Add an exercise to a workout to save one.</p>`}
@@ -1299,17 +1299,21 @@ function openManage() {
     const restore = target.closest?.("[data-manage-restore]");
     const selected = remove ? itemFor(remove.dataset.manageRemove) : restore ? itemFor(restore.dataset.manageRestore) : null;
     if (!selected) return;
-    const { item, name, path } = selected;
+    const { kind, item, name, path } = selected;
     const button = remove || restore;
-    if (remove && !await ask(item.used
+    if (remove && !await ask(kind === "configuration" && item.used
+      ? `Delete ${name}? Recorded Sets and history stay. This saved choice is no longer offered in Recent and is skipped by Repeat and when starting a Routine. Restore it under Archived, or choose the same exercise, equipment, manufacturer and label again.`
+      : item.used
       ? `Archive ${name}? It is used in recorded workouts, so it stays in history and progress but is no longer offered for new workouts. You can restore it here.`
       : `Delete ${name}? It has never been used in a workout, so it is removed permanently.`,
-    { confirmLabel: item.used ? "Archive" : "Delete", danger: true })) return;
+    { confirmLabel: kind === "configuration" || !item.used ? "Delete" : "Archive", danger: true })) return;
     button.disabled = true;
     try {
       if (remove) {
         const { outcome } = await api(path, { method: "DELETE" });
-        await changed(`${name} ${outcome}.`);
+        await changed(kind === "configuration"
+          ? `${name} deleted.${outcome === "archived" ? " Recorded Sets and history stay. Restore it under Archived." : ""}`
+          : `${name} ${outcome}.`);
       } else {
         await api(`${path}/restore`, { method: "POST", body: "{}" });
         await changed(`${name} restored.`);
