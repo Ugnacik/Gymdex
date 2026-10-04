@@ -43,6 +43,65 @@ try {
   const read = async path => (await context.request.get(base + path)).json();
   const screenshot = name => page.screenshot({ path: join(artifacts, name + '.png') });
   const check = (name, value) => { assert.ok(value, name); checks.push(name); };
+  async function verifyCreateAccessible(surface) {
+    const search = page.locator('#exercise-search');
+    await search.fill('');
+    await page.locator('#muscle-group-filter').selectOption('');
+    const create = page.locator('#create-exercise');
+    const createControl = await create.elementHandle();
+    for (const [width, height, overlayKeyboard] of [[390, 844, false], [320, 844, false], [390, 500, false], [390, 844, true]]) {
+      await page.setViewportSize({ width, height });
+      if (overlayKeyboard) {
+        await page.locator('#muscle-group-filter').selectOption('Back');
+        // Simulate an overlay keyboard through the same VisualViewport resize event as keyboard.mjs.
+        await page.evaluate(() => {
+          Object.defineProperties(window.visualViewport, { height: { configurable: true, value: 500 }, offsetTop: { configurable: true, value: 0 } });
+          window.visualViewport.dispatchEvent(new Event('resize'));
+        });
+      }
+      const visibleHeight = overlayKeyboard ? 500 : height;
+      await page.waitForFunction(visible => {
+        const box = document.querySelector('#create-exercise').getBoundingClientRect();
+        return box.top >= 0 && box.bottom <= visible;
+      }, visibleHeight);
+      const resultBox = await page.locator('#picker-results').boundingBox();
+      const createBox = await create.boundingBox();
+      check(`${surface}: Create remains reachable at ${width}x${height}${overlayKeyboard ? ' with simulated overlay keyboard' : ''}`,
+        createBox.height >= 44 && createBox.x >= 0 && createBox.x + createBox.width <= width
+        && createBox.y + createBox.height <= visibleHeight && resultBox.y + resultBox.height <= createBox.y);
+      await page.locator('#picker-results').evaluate(results => { results.scrollTop = results.scrollHeight; });
+      const last = await page.locator('#picker-results [data-variation-id]').last().boundingBox();
+      check(`${surface}: last Exercise scrolls fully above Create at ${width}x${height}${overlayKeyboard ? ' overlay' : ''}`,
+        last.y >= resultBox.y - 1 && last.y + last.height <= resultBox.y + resultBox.height + 1);
+      if (overlayKeyboard) {
+        await screenshot('create-footer-' + surface.toLowerCase() + '-simulated-keyboard');
+        await page.evaluate(() => {
+          delete window.visualViewport.height; delete window.visualViewport.offsetTop;
+          window.visualViewport.dispatchEvent(new Event('resize'));
+        });
+      }
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.locator('#muscle-group-filter').selectOption('Back');
+    await search.fill('New filtered exercise');
+    check(`${surface}: Create stays the same control when filters give no matches`, await createControl.evaluate(button =>
+      button === document.querySelector('#create-exercise') && !button.closest('#picker-results')));
+    await create.click();
+    check(`${surface}: Create prefills the current search and restores ordinary form scrolling`,
+      await page.locator('#custom-exercise-form input[name=name]').inputValue() === 'New filtered exercise'
+      && await page.locator('#picker .sheet').evaluate(sheet => !sheet.classList.contains('picker-catalog') && getComputedStyle(sheet).overflowY === 'auto'));
+    await page.locator('#back-to-picker').click();
+    check(`${surface}: creation Back preserves query and filter`, await search.inputValue() === 'New filtered exercise'
+      && await page.locator('#muscle-group-filter').inputValue() === 'Back');
+    await page.locator('#clear-muscle-group-filter').click();
+    check(`${surface}: stable Create footer keeps Clear query semantics`, await search.inputValue() === 'New filtered exercise');
+    await search.fill('Bench');
+    await page.locator('#picker-results [data-variation-id]').first().click();
+    check(`${surface}: ordinary Exercise still opens Configuration in one tap with form scrolling`, await page.locator('#configuration-form').isVisible()
+      && await page.locator('#picker .sheet').evaluate(sheet => !sheet.classList.contains('picker-catalog') && getComputedStyle(sheet).overflowY === 'auto'));
+    await page.locator('#back-to-picker').click();
+    await search.fill('');
+  }
   async function verifyMuscleGroupPicker(surface) {
     const search = page.locator('#exercise-search');
     await page.locator('#muscle-group-filter').selectOption('Back');
@@ -102,6 +161,7 @@ try {
   await page.getByRole('textbox', { name: 'Routine name' }).fill('First plan');
   await page.getByRole('button', { name: 'Create routine', exact: true }).click();
   await page.locator('[data-add-routine-exercise]').click();
+  await verifyCreateAccessible('Routine');
   await verifyMuscleGroupPicker('Routine');
   await page.locator('#exercise-search').fill('Bench');
   await page.getByRole('button', { name: 'Bench Press Barbell · Dumbbell · Machine', exact: true }).click();
@@ -195,6 +255,7 @@ try {
   check('Routine starts with correct empty slots', await page.locator('.set-form').count() === 5
     && await page.locator('.set-form input[name=weight], .set-form input[name=result]').evaluateAll(inputs => inputs.every(input => input.value === '')));
   await page.locator('#open-picker').click();
+  await verifyCreateAccessible('Active');
   await verifyMuscleGroupPicker('Active');
   await page.locator('#muscle-group-filter').selectOption('Abs');
   check('Active: a Variation matches either of its Muscle Groups', await page.locator('[data-variation-id]', { hasText: 'Long Custom Duration' }).count() === 1);

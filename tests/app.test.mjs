@@ -407,6 +407,7 @@ test('filtering exercise search changes only the results container', async () =>
   wrapper.remove = () => { delete app.nodes['#picker']; };
   const search = Object.assign(node(), { value: '', setSelectionRange() {} });
   app.nodes['#exercise-search'] = search;
+  app.nodes['#picker .sheet'] = node();
   app.nodes['#close-picker'] = node();
   app.env.document.createElement = () => wrapper;
   app.env.document.body = { append: () => { app.nodes['#picker'] = wrapper; } };
@@ -588,7 +589,8 @@ test('Muscle Group and search intersect across Catalog and all saved choices, an
   assert.match(results(), /data-profile-id="20"/);
   select('Shoulders');
   assert.match(results(), /<h3>No matches/);
-  assert.match(results(), /id="create-exercise"/);
+  assert.match(wrapper.innerHTML, /id="create-exercise"/);
+  assert.doesNotMatch(results(), /id="create-exercise"/);
   query('');
   assert.match(results(), /data-variation-id="3"/);
   assert.doesNotMatch(results(), /data-variation-id="1"|data-variation-id="2"|data-variation-id="4"/);
@@ -613,8 +615,12 @@ test('new picker openings reset Muscle Group and query; creation Back retains bo
   search.value = 'Row'; search.events.input({ target: search });
   app.nodes['#muscle-group-filter'].value = 'Back';
   app.nodes['#muscle-group-filter'].events.change();
+  assert.equal(app.nodes['#picker .sheet'].className, 'sheet picker-catalog');
   app.nodes['#create-exercise'].events.click();
+  assert.equal(app.nodes['#picker .sheet'].className, 'sheet');
+  assert.match(app.nodes['#picker .sheet'].innerHTML, /name="name"[^>]*value="Row"/);
   sheetNodes['#back-to-picker'].events.click();
+  assert.equal(app.nodes['#picker .sheet'].className, 'sheet picker-catalog');
   assert.match(app.nodes['#picker'].innerHTML, /value="Row"/);
   assert.match(app.nodes['#picker'].innerHTML, /value="Back" selected/);
   app.nodes['#close-picker'].events.click();

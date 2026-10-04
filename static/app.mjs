@@ -1619,7 +1619,10 @@ function renderPicker(query = state.pickerQuery) {
         <label class="field">Muscle Group<select id="muscle-group-filter"><option value="">All Muscle Groups</option>${(state.picker.muscle_groups ?? []).map((group) => `<option value="${escapeHtml(group)}"${state.pickerMuscleGroup === group ? " selected" : ""}>${escapeHtml(group)}</option>`).join("")}</select></label>
         <button type="button" class="text-button" id="clear-muscle-group-filter"${state.pickerMuscleGroup ? "" : " hidden"}>Clear filter</button>
       </div>
-      <div id="picker-results"></div>`);
+      <div id="picker-results"></div>
+      <div class="picker-create"><button class="secondary create-exercise-button" type="button" id="create-exercise">Create custom exercise</button></div>`);
+  document.querySelector("#picker .sheet").className = "sheet picker-catalog";
+  document.querySelector("#create-exercise").addEventListener("click", () => renderCustomExerciseForm(state.pickerQuery));
   const search = document.querySelector("#exercise-search");
   search.focus();
   search.setSelectionRange(search.value.length, search.value.length);
@@ -1659,11 +1662,9 @@ function renderPickerResults(query) {
       <div class="section-title"><h3>Exercise catalog</h3><span>${filtered.length}</span></div>
       <div class="exercise-list">${filtered.map((item) => `<button class="exercise-card" data-variation-id="${item.id}"><strong>${escapeHtml(exerciseDisplayName(item))}</strong><span>${escapeHtml(item.equipment.join(" · "))}</span></button>`).join("") || (configurations.length
         ? `<p class="picker-note">No catalog exercises match. Create a custom exercise if none of the saved ones fit.</p>`
-        : `<div class="empty"><h3>No matches</h3><p>Try another search or Muscle Group, or create a custom exercise.</p></div>`)}</div>
-      <button class="secondary create-exercise-button" type="button" id="create-exercise">Create custom exercise</button>`;
+        : `<div class="empty"><h3>No matches</h3><p>Try another search or Muscle Group, or create a custom exercise.</p></div>`)}</div>`;
   document.querySelectorAll("[data-profile-id]").forEach((button) => button.addEventListener("click", () => addRecent(Number(button.dataset.profileId))));
   document.querySelectorAll("[data-variation-id]").forEach((button) => button.addEventListener("click", () => chooseExercise(Number(button.dataset.variationId))));
-  document.querySelector("#create-exercise").addEventListener("click", () => renderCustomExerciseForm(query));
 }
 
 // Equipment chips of the custom exercise form and Manage. × appears only on removable values.
@@ -1709,6 +1710,7 @@ function variationHelp(known) {
 
 function renderCustomExerciseForm(query = "") {
   const sheet = document.querySelector("#picker .sheet");
+  sheet.className = "sheet";
   sheet.innerHTML = `
     <div class="sheet-handle" aria-hidden="true"></div>
     <div class="sheet-header"><button class="text-button" id="back-to-picker">Back</button><button class="text-button" id="close-picker">Close</button></div>
@@ -1846,6 +1848,7 @@ function chooseExercise(variationId) {
 // Workout Exercise's current values and saves them to it instead.
 function renderConfiguration(change = null) {
   const sheet = document.querySelector("#picker .sheet");
+  sheet.className = "sheet";
   const item = state.selectedExercise;
   sheet.innerHTML = `
     <div class="sheet-handle" aria-hidden="true"></div>
