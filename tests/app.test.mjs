@@ -62,7 +62,7 @@ function readPreviousButton(form, html) {
 // The harness workout started 2026-09-22 10:00 UTC; by default the clock reads 25 minutes later.
 async function harness(disk = storage(), initialData = {}, { now = Date.parse('2026-09-22T10:25:00Z') } = {}) {
   const nodes = Object.fromEntries(['#app', '#toast', '#sync-status', '#picker-results', 'main',
-    '#open-picker', '#open-history', '#open-progress', '#open-manage', '#cancel-workout', '#finish', '#add-gym-form', '#start-workout', '#create-exercise',
+    '#open-picker', '#open-settings', '#open-history', '#open-progress', '#open-manage', '#cancel-workout', '#finish', '#add-gym-form', '#start-workout', '#create-exercise',
     '#rest-enabled', '#rest-controls', '#rest-duration', '#rest-clock', '#rest-status', '#rest-start', '#rest-pause', '#rest-stop',
     '#workout-elapsed', '#stale-banner', '#stale-finish', '#stale-keep']
     .map((key) => [key, node()]));
@@ -2090,4 +2090,71 @@ test('the Routines screen explains that it needs a connection', async () => {
   const app = await harness(storage(), { ...startData([home]), routines: [] });
   const { nodes } = await openRoutinesScreen(app, {});
   assert.match(nodes['#routines-message'].textContent, /Routines require a connection/);
+});
+
+
+test('rest defaults recover from missing or malformed preferences and preserve saved choices', async () => {
+  for (const saved of [null, '{broken', '{}', 'null', '[]', '{"duration":0}', '{"duration":3601}', '{"duration":"90"}', '{"duration":1.5}', '{"enabled":true,"duration":0}']) {
+    const disk = storage();
+    if (saved !== null) disk.setItem('gymdex:rest:v1', saved);
+    const app = await harness(disk);
+    assert.equal(app.nodes['#rest-clock'].textContent, '2:00', saved);
+    if (saved?.includes('enabled')) assert.match(app.nodes['#app'].innerHTML, /id="rest-enabled"[^>]*checked/);
+  }
+  for (const duration of [1, 90, 137, 3600]) {
+    for (const enabled of [true, false]) {
+      const disk = storage();
+      disk.setItem('gymdex:rest:v1', JSON.stringify({ enabled, duration }));
+      const app = await harness(disk);
+      assert.match(app.nodes['#app'].innerHTML, new RegExp(`value="${duration}" selected`));
+      assert.match(app.nodes['#app'].innerHTML, enabled ? /id="rest-enabled"[^>]*checked/ : /id="rest-controls" hidden/);
+    }
+  }
+});
+
+test('Settings shares preferences with workout controls and returns without replacing drafts or timer', async () => {
+  const app = await harness();
+  const { dialog, nodes } = historyDOM(app);
+  app.form.elements.weight.value = '42.5';
+  app.form.elements.result.value = '8';
+  app.form.events.input();
+  const note = app.noteField('workout');
+  note.value = 'Still writing';
+  const original = app.nodes['#app'].innerHTML;
+  app.nodes['#open-settings'].events.click();
+  assert.match(dialog.innerHTML, /Back to workout/);
+  assert.equal(dialog.className, 'settings-screen');
+  nodes['#settings-rest-enabled'].events.change({ target: { checked: true } });
+  nodes['#settings-rest-duration'].events.change({ target: { value: '90' } });
+  assert.deepEqual(JSON.parse(app.disk.getItem('gymdex:rest:v1')), { enabled: true, duration: 90 });
+  assert.equal(app.nodes['#rest-duration'].value, '90');
+  assert.equal(app.nodes['#rest-enabled'].checked, true);
+  app.nodes['#rest-start'].events.click();
+  nodes['#settings-rest-duration'].events.change({ target: { value: '180' } });
+  assert.equal(app.nodes['#rest-clock'].textContent, '1:30', 'current countdown keeps its deadline');
+  nodes['#close-settings'].events.click();
+  assert.equal(dialog.removed, true);
+  assert.equal(app.nodes['#app'].innerHTML, original);
+  assert.equal(app.form.elements.weight.value, '42.5');
+  assert.equal(app.noteField('workout'), note);
+  assert.equal(note.value, 'Still writing');
+  assert.equal(app.nodes['#rest-status'].textContent, 'Resting');
+  app.nodes['#rest-duration'].events.change({ target: { value: '60' } });
+  app.nodes['#open-settings'].events.click();
+  assert.match(dialog.innerHTML, /value="60" selected/);
+  nodes['#settings-rest-enabled'].events.change({ target: { checked: false } });
+  assert.equal(app.nodes['#rest-controls'].hidden, true);
+  assert.equal(app.nodes['#rest-status'].textContent, 'Ready after a completed set');
+});
+
+test('Settings is available before a workout and returns to start', async () => {
+  const app = await harness(storage(), { active_workout: null, workout_exercises: [] });
+  const { dialog, nodes } = historyDOM(app);
+  const original = app.nodes['#app'].innerHTML;
+  app.nodes['#open-settings'].events.click();
+  assert.match(dialog.innerHTML, /Back to start/);
+  nodes['#settings-rest-duration'].events.change({ target: { value: '120' } });
+  nodes['#close-settings'].events.click();
+  assert.equal(app.nodes['#app'].innerHTML, original);
+  assert.deepEqual(JSON.parse(app.disk.getItem('gymdex:rest:v1')), { enabled: false, duration: 120 });
 });

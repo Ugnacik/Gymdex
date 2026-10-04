@@ -243,6 +243,14 @@ Exercise Variations section, and **Restore** offers one in the picker again. Cre
 custom exercise with an archived variation's name is refused; restore the
 archived variation instead.
 
+## Settings
+
+Open **Settings** from the header to choose whether the rest timer starts after
+each completed set and how long it runs. The initial interval is 2 minutes;
+your existing saved interval and enabled choice take precedence. Preferences
+stay in this browser. Returning to your workout keeps unfinished Sets, Notes,
+and the current countdown.
+
 ## Rest timer
 
 Turn on Rest timer during an active workout and choose a rest interval. Marking

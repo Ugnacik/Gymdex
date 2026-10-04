@@ -31,11 +31,11 @@ function fixture(durationSeconds = 3) {
   };
 }
 
-test("defaults to a 90 second rest interval, shown in full while idle", () => {
+test("defaults to a 120 second rest interval, shown in full while idle", () => {
   const timer = new RestTimer();
-  assert.equal(DEFAULT_REST_DURATION_SECONDS, 90);
+  assert.equal(DEFAULT_REST_DURATION_SECONDS, 120);
   assert.deepEqual(timer.snapshot(), {
-    status: "idle", durationSeconds: 90, remainingSeconds: 90,
+    status: "idle", durationSeconds: 120, remainingSeconds: 120,
   });
   timer.setDuration(60);
   assert.equal(timer.snapshot().remainingSeconds, 60);

@@ -1,4 +1,4 @@
-export const DEFAULT_REST_DURATION_SECONDS = 90;
+export const DEFAULT_REST_DURATION_SECONDS = 120;
 // A countdown found finished later than this, for example when the phone is unlocked
 // minutes after the rest ended, finishes without signalling: the cue would be misleading.
 export const LATE_FINISH_SIGNAL_MS = 30_000;
