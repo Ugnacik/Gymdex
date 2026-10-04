@@ -389,11 +389,12 @@ mark the set completed.
 ## Effort
 
 Each set can record how hard it was: **Failure**, or **0, 1, 2, 3 or 4+**
-reps left in reserve. Tap the set's number ("Set 2") to choose; the choice saves
-at once, also on a completed set, and shows beside the number, for example
-"Set 2 · 2 left". Tap the selected value again to clear it. Failure means you
-tried another rep and missed it; 0 means you stopped with nothing left but did
-not try. Duration sets offer only Failure.
+reps left in reserve (RIR). Tap **RIR** beside a set's Reps label to choose; the
+choice saves at once, also on a completed set, and the button then shows it in
+orange, for example **RIR 2** or **Failure**. Tap the selected value again to
+clear it. Failure means you tried another rep and missed it; 0 means you stopped
+with nothing left but did not try. Duration sets have only Failure: tap
+**Failure** beside Seconds to turn it on or off.
 
 Effort is optional and never needed to mark a set Done. It appears in the
 "Last workout" line, completed workouts (where **Edit set** can correct it),

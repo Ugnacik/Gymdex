@@ -100,7 +100,7 @@ test('drafts from before Effort existed still restore, and an unknown Effort is 
 
 test('Effort reads as Failure or the repetitions left', () => {
   assert.deepEqual(['failure', '0', '1', '4+'].map((effort) => effortText(effort)), ['Failure', '0 reps left', '1 rep left', '4+ reps left']);
-  assert.deepEqual(['failure', '2'].map((effort) => effortText(effort, { short: true })), ['Failure', '2 left']);
+  assert.deepEqual(['failure', '2', '4+'].map((effort) => effortText(effort, { short: true })), ['Failure', 'RIR 2', 'RIR 4+']);
 });
 
 test('worker upgrade installs the current shell and removes the previous offline version', async () => {

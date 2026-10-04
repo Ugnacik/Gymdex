@@ -133,8 +133,8 @@ export function effortsFor(trackingType) {
   return trackingType === "duration" ? ["failure"] : EFFORTS;
 }
 
-// "Failure", "0 reps left", "1 rep left", ... "4+ reps left"; short gives "2 left" for the Set button.
+// "Failure", "0 reps left", "1 rep left", ... "4+ reps left"; short gives "RIR 2" for the Set's Effort button.
 export function effortText(effort, { short = false } = {}) {
   if (effort === "failure") return "Failure";
-  return short ? `${effort} left` : `${effort} rep${effort === "1" ? "" : "s"} left`;
+  return short ? `RIR ${effort}` : `${effort} rep${effort === "1" ? "" : "s"} left`;
 }

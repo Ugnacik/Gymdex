@@ -723,10 +723,6 @@ textarea {
 .set-form fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
 .set-form legend { float: left; padding: 0; margin: 0 10px 2px 0; color: var(--ink); font-size: 0.92rem; font-weight: 650; letter-spacing: -0.01em; line-height: 44px; }
 .set-form legend + * { clear: none; }
-/* The Set number opens its Effort; a recorded Effort follows it in orange. */
-.set-number { display: block; min-width: 44px; min-height: 44px; margin: 0 0 0 -8px; padding: 0 8px; border: 0; border-radius: 999px; background: transparent; color: inherit; font-weight: inherit; letter-spacing: inherit; line-height: inherit; text-align: left; transition: background-color 200ms var(--ease-out); }
-.set-number:active { background: var(--surface-3); }
-.set-effort { color: var(--accent); white-space: pre; }
 .remove-set {
   position: absolute;
   top: 2px;
@@ -773,10 +769,37 @@ textarea {
   background: var(--accent-soft);
   box-shadow: inset 0 0 0 1px rgba(255, 122, 61, 0.22);
 }
-.fill-previous { z-index: 0; }
+/* Above the Effort button's tap area, which reaches up beside it, so the chip keeps its own taps. */
+.fill-previous { z-index: 1; }
 .fill-previous:active { transform: scale(0.97); }
 .set-inputs { display: grid; clear: both; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
 .set-form .set-inputs { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 56px; }
+/* The Effort button is a small pill at the right of the result column's label row, positioned
+   so it never changes the row's height. Its tap area grows 44px up and left from the input's top edge. */
+.set-form .set-inputs { position: relative; }
+.effort-button {
+  position: absolute;
+  grid-column: 2 / 3;
+  grid-row: 1 / 2;
+  top: 0;
+  right: 0;
+  height: 18px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--surface-3);
+  box-shadow: inset 0 0 0 1px var(--hairline-strong);
+  color: var(--ink-2);
+  font-size: 0.68rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  line-height: 18px;
+  white-space: nowrap;
+  transition: background-color 200ms var(--ease-out), color 200ms var(--ease-out), box-shadow 200ms var(--ease-out);
+}
+.effort-button::before { content: ""; position: absolute; right: 0; bottom: -4px; width: max(100%, 44px); height: 44px; }
+.effort-button[data-recorded="true"] { background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent-line); color: var(--accent); }
+.effort-button:active { background: var(--surface-2); }
 .set-inputs label { display: grid; gap: 5px; color: var(--muted); font-size: 0.76rem; font-weight: 560; }
 .set-inputs input {
   min-width: 0;
@@ -1365,6 +1388,8 @@ textarea {
   .workout-exercise-card { padding: 6px 10px 12px; }
   .set-form { padding: 8px 10px 4px; }
   .set-form .set-inputs { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 52px; gap: 6px; }
+  /* "Seconds" leaves too little room for a Duration Set's "Failure": that pill may use the gap before Done. */
+  .effort-button[aria-pressed] { right: -6px; padding: 0 5px; font-size: 0.66rem; }
   .rest-readout strong { font-size: 2.35rem; }
   .rest-actions button { min-width: 74px; padding: 0 14px; }
 }

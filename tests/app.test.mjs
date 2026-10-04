@@ -36,7 +36,7 @@ function node() {
 
 function setForm(setId, position) {
   const formNodes = { fieldset: node(), '.set-status': node(), '.remove-set': node(), '.set-retry': Object.assign(node(), { hidden: true }),
-    legend: node(), '.fill-previous': node(), '.set-effort': node() };
+    legend: node(), '.fill-previous': node(), '[data-set-effort]': Object.assign(node(), { dataset: {} }) };
   formNodes.legend.textContent = `Set ${position}`;
   const form = Object.assign(node(), {
     isConnected: true, dataset: { setId: String(setId), entryId: '3' },
@@ -74,7 +74,7 @@ async function harness(disk = storage(), initialData = {}, { now = Date.parse('2
   forms.push(form);
   const list = { insertAdjacentHTML(_, html) {
     this.html = html;
-    const [, id, position] = html.match(/data-set-id="(\d+)"[\s\S]*?<legend><button[^>]*>Set (\d+)/);
+    const [, id, position] = html.match(/data-set-id="(\d+)"[\s\S]*?<legend>Set (\d+)/);
     const added = setForm(Number(id), Number(position));
     added.elements.weight.value = html.match(/name="weight"[^>]*value="([^"]*)"/)[1];
     added.elements.result.value = html.match(/name="result"[^>]*value="([^"]*)"/)[1];
@@ -1250,14 +1250,14 @@ test('removing a set renumbers the remaining sets and pairs them with Last worko
   await app.form.querySelector('.remove-set').events.click();
   assert.deepEqual(questions, ['Remove set 1?', { confirmLabel: 'Remove', danger: true }]);
   assert.deepEqual(requests, ['DELETE /api/sets/2']);
-  const legends = [...list.innerHTML.matchAll(/data-set-id="(\d+)"[\s\S]*?<legend><button[^>]*>Set (\d+)<span/g)].map(([, id, position]) => [id, position]);
+  const legends = [...list.innerHTML.matchAll(/data-set-id="(\d+)"[\s\S]*?<legend>Set (\d+)<\/legend>/g)].map(([, id, position]) => [id, position]);
   assert.deepEqual(legends, [['5', '1'], ['6', '2']]);
   assert.match(list.innerHTML, /aria-label="Remove Bench Press, set 2"/);
   assert.match(list.innerHTML, /data-set-id="5"[\s\S]*?Last workout: 80 kg × 8 reps[\s\S]*?data-set-id="6"[\s\S]*?Last workout: 85 kg × 6 reps/);
   assert.equal(addButton.focused, true);
 });
 
-test('tapping the Set number saves an Effort without changing completion, and picking it again clears it', async () => {
+test('the RIR button saves an Effort without changing completion, and picking it again clears it', async () => {
   const app = await harness(storage(), { workout_exercises: [{ ...pressEntry,
     sets: [{ id: 2, position: 1, weight: 60, result: 8, completed: true, effort: null }] }] });
   Object.assign(app.form.elements, { effort: { value: '' } });
@@ -1272,22 +1272,42 @@ test('tapping the Set number saves an Effort without changing completion, and pi
     bodies.push(body);
     return response({ id: 2, position: 1, weight: body.weight, result: body.result, completed: body.completed, effort: body.effort });
   };
-  const tapSetNumber = async () => {
-    const button = { closest: () => app.form };
-    await app.nodes['#app'].events.click({ target: { closest: (selector) => selector === '[data-set-effort]' ? button : null } });
-    await settle();
-  };
-  await tapSetNumber();
+  assert.match(app.nodes['#app'].innerHTML, /<button type="button" class="effort-button" data-set-effort data-recorded="false" aria-label="Effort for Bench Press, set 1: none"\s+aria-haspopup="dialog">RIR<\/button>/);
+  await tapEffort(app);
   assert.equal(offered[0].question, 'Effort for Bench Press, set 1');
   assert.deepEqual(offered[0].choices.map((choice) => choice.name ?? choice.label), ['Failure', '0 reps left', '1 rep left', '2 reps left', '3 reps left', '4+ reps left']);
   assert.equal(offered[0].selected, null);
   assert.deepEqual(bodies, [{ weight: 60, result: 8, completed: true, effort: '2' }]);
-  assert.equal(app.form.querySelector('.set-effort').textContent, ' · 2 left');
-  await tapSetNumber();
+  assert.equal(app.form.querySelector('[data-set-effort]').textContent, 'RIR 2');
+  await tapEffort(app);
   assert.equal(offered[1].selected, '2');
   assert.deepEqual(bodies[1], { weight: 60, result: 8, completed: true, effort: null });
-  assert.equal(app.form.querySelector('.set-effort').textContent, '');
+  assert.equal(app.form.querySelector('[data-set-effort]').textContent, 'RIR');
 });
+
+test('a Duration Set toggles Failure from its button without a sheet', async () => {
+  const app = await harness(storage(), { workout_exercises: [{ ...pressEntry, tracking_type: 'duration',
+    sets: [{ id: 2, position: 1, weight: null, result: null, completed: false, effort: null }] }] });
+  Object.assign(app.form.elements, { effort: { value: '' } });
+  app.env.choose = async () => { throw new Error('Duration Sets have no Effort sheet'); };
+  const bodies = [];
+  app.env.fetch = async (path, options) => {
+    const body = JSON.parse(options.body);
+    bodies.push(body);
+    return response({ id: 2, position: 1, weight: null, result: null, completed: false, effort: body.effort });
+  };
+  assert.match(app.nodes['#app'].innerHTML, /aria-label="Effort for Bench Press, set 1: none"\s+aria-pressed="false">Failure<\/button>/);
+  await tapEffort(app);
+  await tapEffort(app);
+  assert.deepEqual(bodies.map((body) => body.effort), ['failure', null]);
+});
+
+// Taps the harness form's Effort button through the app's delegated click handler.
+async function tapEffort(app) {
+  const button = { closest: () => app.form };
+  await app.nodes['#app'].events.click({ target: { closest: (selector) => selector === '[data-set-effort]' ? button : null } });
+  await settle();
+}
 
 const pressEntry = { id: 3, variation_id: 11, exercise_name: 'Bench Press', variation_name: 'Standard', equipment: 'Barbell',
   tracking_type: 'repetitions', previous_sets: [], sets: [{ id: 2, position: 1, weight: null, result: null, completed: false }] };
