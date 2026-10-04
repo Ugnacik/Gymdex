@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { askTextInPage, confirmInPage } from '../static/confirm-sheet.mjs';
+import { askTextInPage, chooseInPage, confirmInPage } from '../static/confirm-sheet.mjs';
 
 // A minimal DOM: elements keep their children, listeners and focus, and a dialog
 // fires close like a browser's when it is closed with or without a return value.
@@ -155,4 +155,25 @@ test('leaving the text sheet while the name is being saved still answers with wh
   second.dispatch('click'); // backdrop tap
   finish(new Error('offline'));
   assert.equal(await failed, null);
+});
+
+test('the choice sheet shows the selected value pressed and answers with the tapped one, or nothing when left', async () => {
+  const { document, sheet, button, opener } = page();
+  const choices = [{ value: 'failure', label: 'Failure', wide: true }, { value: '2', label: '2', name: '2 reps left' }];
+  let answer = chooseInPage(document, 'Effort for Bench Press, set 1', { choices, selected: '2' });
+  assert.equal(button('2').attributes['aria-pressed'], 'true');
+  assert.equal(button('2').attributes['aria-label'], '2 reps left');
+  assert.equal(button('Failure').attributes['aria-pressed'], 'false');
+  assert.equal(document.activeElement, button('2'), 'focus starts on the selected value');
+  button('2').click();
+  assert.equal(await answer, '2', 'the selected value answers too, so the caller can clear it');
+  assert.equal(document.activeElement, opener);
+
+  answer = chooseInPage(document, 'Effort', { choices });
+  button('Cancel').click();
+  assert.equal(await answer, undefined);
+  answer = chooseInPage(document, 'Effort', { choices });
+  sheet().dispatch('click');
+  assert.equal(await answer, undefined);
+  assert.equal(sheet(), undefined);
 });

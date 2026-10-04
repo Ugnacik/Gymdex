@@ -106,3 +106,48 @@ export function askTextInPage(document, question, { label, value = "", confirmLa
     input.select?.();
   });
 }
+
+// Offers a few choices, such as a Set's Effort, in the same kind of sheet. Each choice is
+// { value, label, name, wide }: name is its accessible name when the label alone is unclear,
+// and wide gives it a row of its own. The selected value shows as pressed. Resolves with the
+// tapped value, or undefined when the user leaves with Cancel, Escape or a backdrop tap.
+export function chooseInPage(document, question, { choices, selected = null, hint = "", cancelLabel = "Cancel" }) {
+  const returnFocus = document.activeElement;
+  const element = (tagName, className, text) =>
+    Object.assign(document.createElement(tagName), { className, textContent: text });
+  const dialog = element("dialog", "history-dialog confirm-sheet choice-sheet", "");
+  const body = element("div", "confirm-body", "");
+  const text = element("p", "confirm-question", question);
+  text.id = "choice-question";
+  dialog.setAttribute("aria-labelledby", text.id);
+  body.append(text);
+  if (hint) body.append(element("p", "choice-hint", hint));
+  const options = element("div", "choice-options", "");
+  let chosen;
+  let focused = null;
+  for (const choice of choices) {
+    const button = element("button", choice.wide ? "choice-option wide" : "choice-option", choice.label);
+    button.type = "button";
+    button.setAttribute("aria-pressed", String(choice.value === selected));
+    if (choice.value === selected || !focused) focused = button;
+    if (choice.name) button.setAttribute("aria-label", choice.name);
+    button.addEventListener("click", () => { chosen = choice.value; dialog.close("choose"); });
+    options.append(button);
+  }
+  const cancel = element("button", "secondary choice-cancel", cancelLabel);
+  cancel.type = "button";
+  cancel.addEventListener("click", () => dialog.close());
+  body.append(options, cancel);
+  dialog.append(body);
+  dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
+  document.body.append(dialog);
+  return new Promise((resolve) => {
+    dialog.addEventListener("close", () => {
+      dialog.remove();
+      if (returnFocus?.isConnected) returnFocus.focus();
+      resolve(dialog.returnValue === "choose" ? chosen : undefined);
+    });
+    dialog.showModal();
+    (focused ?? cancel).focus();
+  });
+}

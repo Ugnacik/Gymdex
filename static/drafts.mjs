@@ -41,8 +41,10 @@ export class DraftStore {
 
   get(workoutId, setId) {
     const draft = this.read(this.key(workoutId, setId));
+    // Drafts written before Effort existed have no effort key and are still valid.
     if (!draft || typeof draft.weight !== "string" || typeof draft.result !== "string"
-      || typeof draft.assistance !== "boolean" || typeof draft.completed !== "boolean") return null;
+      || typeof draft.assistance !== "boolean" || typeof draft.completed !== "boolean"
+      || ("effort" in draft && draft.effort !== null && !EFFORTS.includes(draft.effort))) return null;
     return draft;
   }
 
@@ -113,11 +115,26 @@ export function parseWeight(text) {
   return new RegExp(`^(?:${WEIGHT_PATTERN})$`).test(value) ? Number(value.replace(",", ".")) : NaN;
 }
 
+// Values without an effort key (drafts from before Effort existed) leave the stored effort unchanged.
 export function setPayload(values) {
   const weight = parseWeight(values.weight);
   return {
     weight: weight === null ? null : Math.abs(weight) * (values.assistance ? -1 : 1),
     result: values.result === "" ? null : Number(values.result),
     completed: values.completed,
+    ...("effort" in values ? { effort: values.effort } : {}),
   };
+}
+
+// A Set's optional Effort: Failure, or the repetitions left in reserve. Duration Sets record only Failure.
+export const EFFORTS = ["failure", "0", "1", "2", "3", "4+"];
+
+export function effortsFor(trackingType) {
+  return trackingType === "duration" ? ["failure"] : EFFORTS;
+}
+
+// "Failure", "0 reps left", "1 rep left", ... "4+ reps left"; short gives "2 left" for the Set button.
+export function effortText(effort, { short = false } = {}) {
+  if (effort === "failure") return "Failure";
+  return short ? `${effort} left` : `${effort} rep${effort === "1" ? "" : "s"} left`;
 }

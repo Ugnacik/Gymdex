@@ -1,4 +1,4 @@
-const CACHE = "gymdex-shell-v24";
+const CACHE = "gymdex-shell-v25";
 const SHELL = ["/", "/index.html", "/styles.css", "/app.js", "/app.mjs", "/workout-editor.mjs", "/drafts.mjs", "/rest-timer.mjs", "/keyboard.mjs", "/confirm-sheet.mjs", "/choice-field.mjs", "/routines.mjs", "/exercise-reorder.mjs", "/manifest.webmanifest", "/icon-192.png", "/icon-512.png", "/icon-maskable-512.png", "/apple-touch-icon.png", "/fonts/Geist-Variable.woff2"];
 
 self.addEventListener("install", (event) => {
