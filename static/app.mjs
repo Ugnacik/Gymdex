@@ -4,6 +4,7 @@ import { DEFAULT_REST_DURATION_SECONDS, RestTimer } from "./rest-timer.mjs";
 import { askTextInPage, confirmInPage } from "./confirm-sheet.mjs";
 import { ChoiceField } from "./choice-field.mjs";
 import { openRoutines, renderRoutineStarts } from "./routines.mjs";
+import { bindReorderNameHold, openExerciseReorder } from "./exercise-reorder.mjs";
 
 // The server stores times as SQLite CURRENT_TIMESTAMP values in UTC ("YYYY-MM-DD HH:MM:SS").
 // Gymdex shows them in the device's time zone.
@@ -62,6 +63,7 @@ const state = {
   elapsedTimer: null,
   staleDismissed: null,
 };
+bindReorderNameHold(app, document, (name) => openWorkoutReorder(Number(name.dataset.reorderName)), { schedule: setTimeout, clear: clearTimeout });
 const STALE_WORKOUT_MINUTES = 3 * 60;
 const STALE_DISMISSED_KEY = "gymdex:stale-dismissed:v1";
 
@@ -362,7 +364,7 @@ function renderWorkout() {
           <article class="exercise-entry workout-exercise-card">
             ${renderNote(`exercise:${entry.id}`, "Note", `Note for ${exerciseDisplayName(entry)}`)}
             <details class="workout-exercise" data-entry-id="${entry.id}" ${state.collapsedExercises.has(entry.id) ? "" : "open"}>
-              <summary class="exercise-summary"><h3>${escapeHtml(exerciseDisplayName(entry))}</h3><span data-exercise-count="${entry.id}">${entry.sets.filter(set => set.completed).length}/${entry.sets.length} done</span></summary>
+              <summary class="exercise-summary"><h3 data-reorder-name="${entry.id}">${escapeHtml(exerciseDisplayName(entry))}</h3><span data-exercise-count="${entry.id}">${entry.sets.filter(set => set.completed).length}/${entry.sets.length} done</span></summary>
               <div class="exercise-body">
                 <div class="machine-line"><p class="meta">${escapeHtml(configurationLabel(entry))}</p>
                   <button type="button" class="text-button" data-change-machine="${entry.id}" aria-label="Edit manufacturer / machine for ${escapeHtml(exerciseDisplayName(entry))}">Edit manufacturer / machine</button></div>
@@ -490,6 +492,7 @@ function renderExerciseTools(entry, index, count) {
   const name = escapeHtml(exerciseDisplayName(entry));
   // data-move-to is the 1-based target position; the ends keep their disabled button for a stable layout.
   return `<div class="exercise-tools">
+    <button type="button" class="text-button" data-reorder-exercises="${entry.id}" ${count < 2 ? "disabled" : ""}>Reorder exercises</button>
     <button type="button" class="text-button" data-move-exercise="${entry.id}" data-move-to="${index}" aria-label="Move ${name} up" ${index === 0 ? "disabled" : ""}>Move up</button>
     <button type="button" class="text-button" data-move-exercise="${entry.id}" data-move-to="${index + 2}" aria-label="Move ${name} down" ${index === count - 1 ? "disabled" : ""}>Move down</button>
   </div>`;
@@ -2096,12 +2099,29 @@ async function addSet(button) {
   finally { button.disabled = false; }
 }
 
+function openWorkoutReorder(entryId) {
+  if (!state.editor || state.editor.busy || state.data.workout_exercises.length < 2) return;
+  openExerciseReorder(document, {
+    items: state.data.workout_exercises.map((entry) => ({ id: entry.id, name: exerciseDisplayName(entry), detail: configurationLabel(entry) })),
+    escapeHtml,
+    onMove: async (id, index) => {
+      if (!await saveExerciseMove(id, index + 1)) throw new Error("Close and save or correct your pending Sets and Notes, then try again.");
+    },
+    onClose: () => document.querySelector(`[data-reorder-name="${entryId}"]`)?.closest('summary')?.focus(),
+  });
+}
+
+async function saveExerciseMove(entryId, position) {
+  if (!state.editor || state.editor.busy || !await state.editor.moveExercise(entryId, position)) return false;
+  render();
+  return true;
+}
+
 async function moveExercise(entryId, position) {
   if (!state.editor || state.editor.busy) return;
   const from = state.data.workout_exercises.findIndex((item) => item.id === entryId) + 1;
   try {
-    if (!await state.editor.moveExercise(entryId, position)) { showInvalidSet("Not moved yet"); return; }
-    render();
+    if (!await saveExerciseMove(entryId, position)) { showInvalidSet("Not moved yet"); return; }
     // Keep focus on the moved exercise, preferring the button for the same direction.
     const [preferred, other] = position < from ? [position - 1, position + 1] : [position + 1, position - 1];
     const button = (to) => document.querySelector(`[data-move-exercise="${entryId}"][data-move-to="${to}"]:not(:disabled)`);
@@ -2154,6 +2174,8 @@ app.addEventListener("click", (event) => {
   const routine = event.target.closest?.("[data-start-routine]");
   if (routine) return startRoutine(routine);
   if (event.target.closest?.("#open-routines")) return openRoutinesScreen();
+  const reorder = event.target.closest?.("[data-reorder-exercises]");
+  if (reorder) return openWorkoutReorder(Number(reorder.dataset.reorderExercises));
   const move = event.target.closest?.("[data-move-exercise]");
   if (move) return moveExercise(Number(move.dataset.moveExercise), Number(move.dataset.moveTo));
   const remove = event.target.closest?.("[data-remove-exercise]");

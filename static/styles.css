@@ -1334,3 +1334,18 @@ textarea {
 .muscle-group-options legend { color: var(--ink-2); font-weight: 580; }
 .muscle-group-options > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; }
 .muscle-group-options .assistance-option { margin-bottom: 0; }
+
+/* Names keep tap-to-collapse and page scrolling; only the list's handle owns a drag. */
+[data-reorder-name] { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.reorder-dialog { height: fit-content; max-height: min(85dvh, calc(var(--viewport-height, 100dvh) - 24px)); }
+.reorder-list { list-style: none; padding: 0; margin: 12px 0; max-height: 55dvh; overflow-y: auto; }
+.reorder-row { display: grid; grid-template-columns: minmax(0, 1fr) repeat(3, 44px); align-items: center; gap: 2px; padding: 8px 0; border-bottom: 1px solid var(--hairline); }
+.reorder-name { display: grid; gap: 3px; min-width: 0; padding-right: 6px; overflow-wrap: anywhere; }
+.reorder-name strong { font-size: 0.93rem; line-height: 1.3; }
+.reorder-name span { color: var(--muted); font-size: 0.78rem; line-height: 1.3; }
+.reorder-row .text-button { width: 44px; min-width: 44px; min-height: 44px; padding: 0; font-size: 1.25rem; }
+.reorder-row .text-button:disabled { opacity: 0.35; }
+.reorder-row .reorder-handle { touch-action: none; align-self: stretch; background: var(--surface-3); cursor: grab; }
+.reorder-row.is-dragging { background: var(--accent-soft); }
+.reorder-row.is-dragging .reorder-handle { color: var(--accent); cursor: grabbing; }
+#reorder-status { margin-bottom: 0; font-size: 0.88rem; }

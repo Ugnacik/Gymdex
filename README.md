@@ -104,8 +104,10 @@ gym brings them back.
   Choosing a catalog exercise asks for equipment and machine details; **Add to
   routine** saves the configuration and adds it to the plan together, so you can
   build a routine before your first workout. Added exercises start with 3 sets.
-- **Sets** chooses 1 to 20 sets for an exercise. **Move up** and **Move down**
-  change its place, and the × removes it after a confirmation.
+- **Sets** chooses 1 to 20 sets for an exercise. Hold an exercise name or use
+  **Reorder exercises** to open a compact list, then drag its handle or use the
+  arrows. Each move saves immediately. **Move up** and **Move down** also remain
+  available; the × removes the exercise after a confirmation.
 - **Rename** changes the name. Routine names are unique within a gym,
   regardless of capitalization.
 - **Delete** removes the routine after a confirmation. Workouts started from it
@@ -299,8 +301,10 @@ not completed; Gymdex saves any edit to the set above first. The × in a set's
 corner deletes it after confirmation, and the remaining sets are renumbered, as
 in history. Sets can be edited while the workout is active.
 
-Below each exercise's sets, **Move up** and **Move down** change its place in
-the workout. The × in the exercise's top-right corner deletes the exercise with
+Hold an exercise name or choose **Reorder exercises** in Exercise options to
+open a compact list. Drag the handles or use the arrows; each move saves
+immediately. **Move up** and **Move down** also change its place in the workout.
+The × in the exercise's top-right corner deletes the exercise with
 all its sets after confirmation. Both actions first save outstanding set edits to the server;
 removing an exercise also discards any unsaved drafts for its sets and note on
 this phone.
