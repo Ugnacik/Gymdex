@@ -379,7 +379,7 @@ def _distinct(values: Any) -> list[str]:
 
 
 def exercise_suggestions(connection: sqlite3.Connection) -> dict[str, Any]:
-    """Values offered by the custom exercise and Exercise Configuration forms, per Exercise.
+    """Values offered globally and per Exercise by the creation and configuration forms.
 
     They are derived from the Exercise's unarchived Variations: their names, their Equipment
     plus the starter Equipment, and the manufacturers and machine labels of their unarchived
@@ -411,6 +411,8 @@ def exercise_suggestions(connection: sqlite3.Connection) -> dict[str, Any]:
         exercises[row["exercise_id"]]["labels"].append(row["label"])
     return {
         "equipment": list(STARTER_EQUIPMENT),
+        **{field: _distinct(value for exercise in exercises.values() for value in exercise[field])
+           for field in ("variations", "manufacturers", "labels")},
         "exercises": [
             {**exercise, **{field: _distinct(exercise[field])
                             for field in ("variations", "equipment", "manufacturers", "labels")}}

@@ -570,9 +570,9 @@ test('custom exercise creation offers the new variation for the active workout',
   assert.doesNotMatch(sheet.innerHTML, /commas/);
   assert.match(sheet.innerHTML, /<legend>Track by<\/legend>\s*<label class="radio-option"><input type="radio" name="tracking_type" value="repetitions" checked \/> Repetitions<\/label>\s*<label class="radio-option"><input type="radio" name="tracking_type" value="duration" \/> Duration in seconds<\/label>/);
   assert.doesNotMatch(sheet.innerHTML, /<select/);
-  // Without suggestions (an older server), both fields are plain text inputs.
+  // Without suggestions (an older server), equipment remains a plain text input.
   assert.match(equipmentField.innerHTML, /<input id="equipment-entry" maxlength="80"[^>]*aria-describedby="equipment-help"/);
-  assert.equal(sheetNodes['#variation-field'].querySelector('#variation-name-choice'), null);
+  choose(sheetNodes['#variation-field'], 'variation-name-choice', OTHER);
   type(sheetNodes['#variation-field'], 'variation-name', 'Single Leg');
   const originalFormData = globalThis.FormData;
   globalThis.FormData = class { constructor() { return new Map([['name', 'Leg Press'], ['tracking_type', 'repetitions']]); } };
@@ -615,6 +615,9 @@ const suggestionCatalog = {
   ],
   suggestions: {
     equipment: ['Barbell', 'Machine'],
+    variations: ['Boy', 'Front Plank', 'Single Leg', 'Standard'],
+    manufacturers: ['Eleiko', 'Hammer Strength', 'Technogym'],
+    labels: ['Rack 2', 'Upstairs'],
     exercises: [
       { name: 'Bench Press', variations: ['Standard'], equipment: ['Barbell', 'Machine'], manufacturers: ['Eleiko'], labels: ['Rack 2'] },
       { name: 'Leg Press', variations: ['Single Leg', 'Standard'], equipment: ['Barbell', 'Machine', 'Sled'],
@@ -624,40 +627,26 @@ const suggestionCatalog = {
   },
 };
 
-test('the custom exercise form offers the typed Exercise its variations and equipment, and only the starter equipment to a new one', async () => {
+test('custom creation offers global Variation names and keeps Equipment relevant to the Exercise', async () => {
   const app = await harness();
   const { sheetNodes, customForm, requests } = await openPickerSheet(app, suggestionCatalog, () => response({ id: 18,
     exercise_name: 'Leg Press', variation_name: 'Wide', tracking_type: 'duration', equipment: ['Sled', 'Hack'] }, 201));
   const variationField = sheetNodes['#variation-field'];
   const equipmentField = sheetNodes['#equipment-choice'];
   app.nodes['#create-exercise'].events.click();
-  // A new Exercise has no variations yet and is offered the starter equipment.
-  assert.equal(variationField.querySelector('#variation-name-choice'), null);
+  assert.deepEqual(optionValues(variationField, 'variation-name-choice'), ['Standard', 'Boy', 'Front Plank', 'Single Leg', 'Other…']);
+  assert.equal(variationField.querySelector('#variation-name-choice').value, 'Standard');
   assert.deepEqual(optionValues(equipmentField, 'equipment-entry-choice'), ['Choose equipment', 'Barbell', 'Machine', 'Other…']);
-
-  const help = sheetNodes['#variation-help'];
-  assert.equal(help.hidden, true, 'a new Exercise has no variations to list');
-  assert.match(sheetNodes['#variation-field'].innerHTML, /aria-describedby="variation-help"/);
   const name = sheetNodes['[name="name"]'];
   name.value = ' leg  press';
   name.events.input();
-  // Every existing name is taken, so the field is just the text box and the taken names are listed below it.
-  assert.equal(variationField.querySelector('#variation-name-choice'), null);
-  assert.doesNotMatch(variationField.innerHTML, /already added|Other…/);
-  assert.equal(variationField.querySelector('#variation-name').hidden, false);
-  assert.equal(help.hidden, false);
-  assert.equal(help.textContent, 'Leg Press already has: Single Leg, Standard. Enter a new variation name.');
-  // A blank name would mean Standard, which is taken, so the placeholder no longer suggests it.
-  assert.match(variationField.innerHTML, /<input id="variation-name"[^>]*placeholder="e\.g\. Wide grip"/);
+  assert.match(sheetNodes['#variation-help'].textContent, /Choose an existing variation to keep its tracking, equipment and Assisted settings/);
+  choose(variationField, 'variation-name-choice', OTHER);
   type(variationField, 'variation-name', 'Wide');
   assert.deepEqual(optionValues(equipmentField, 'equipment-entry-choice'), ['Choose equipment', 'Barbell', 'Machine', 'Sled', 'Other…']);
-  assert.doesNotMatch(equipmentField.innerHTML, /Eleiko|Technogym/);
-
   choose(equipmentField, 'equipment-entry-choice', 'Sled');
   sheetNodes['#add-equipment'].events.click();
-  assert.match(sheetNodes['#equipment-chips'].innerHTML, /<span>Sled<\/span>/);
-  assert.deepEqual(optionValues(equipmentField, 'equipment-entry-choice'), ['Choose equipment', 'Barbell', 'Machine', 'Other…'], 'an added value is no longer offered');
-  assert.equal(equipmentField.querySelector('#equipment-entry').hidden, true);
+  assert.deepEqual(optionValues(equipmentField, 'equipment-entry-choice'), ['Choose equipment', 'Barbell', 'Machine', 'Other…']);
   choose(equipmentField, 'equipment-entry-choice', OTHER);
   type(equipmentField, 'equipment-entry', 'Hack');
   const originalFormData = globalThis.FormData;
@@ -665,34 +654,61 @@ test('the custom exercise form offers the typed Exercise its variations and equi
   try { await customForm.events.submit({ preventDefault() {}, currentTarget: customForm }); }
   finally { globalThis.FormData = originalFormData; }
   assert.deepEqual(JSON.parse(requests.at(-1)[1].body), { name: 'leg press', variation_name: 'Wide', tracking_type: 'duration', equipment: ['Sled', 'Hack'], assisted: false });
-
-  // An existing Exercise without a Standard variation offers Standard as the default.
-  name.value = 'Plank';
-  name.events.input();
-  assert.deepEqual(optionValues(variationField, 'variation-name-choice'), ['Standard', 'Other…']);
-  assert.equal(help.textContent, 'Plank already has: Front Plank. Choose Standard or Other… for a new variation name.');
-  choose(variationField, 'variation-name-choice', 'Standard');
-  assert.equal(variationField.querySelector('#variation-name').hidden, true);
-  // Back to an Exercise whose names are all taken: the text box shows, with no select left behind.
-  name.value = 'Leg Press';
-  name.events.input();
-  assert.equal(variationField.querySelector('#variation-name-choice'), null);
-  assert.equal(variationField.querySelector('#variation-name').hidden, false);
-  name.value = 'Leg Pressing';
-  name.events.input();
-  assert.equal(help.hidden, true);
-  assert.match(variationField.innerHTML, /<input id="variation-name"[^>]*placeholder="Standard"/);
-  assert.equal(variationField.querySelector('#variation-name-choice'), null);
 });
 
-test('the Exercise Configuration form offers manufacturers and machine labels saved for the same Exercise at any gym', async () => {
+test('a reused Variation name creates a new Exercise, while an existing Variation is selected with its metadata', async () => {
+  const app = await harness();
+  const catalog = structuredClone(suggestionCatalog);
+  catalog.catalog[2].assisted = true;
+  const { sheet, sheetNodes, customForm, requests } = await openPickerSheet(app, catalog, () => response({ id: 40,
+    exercise_name: 'New Exercise', variation_name: 'Boy', tracking_type: 'repetitions', equipment: ['Machine'] }, 201));
+  app.nodes['#create-exercise'].events.click();
+  const variationField = sheetNodes['#variation-field'];
+  choose(variationField, 'variation-name-choice', 'Boy');
+  choose(sheetNodes['#equipment-choice'], 'equipment-entry-choice', 'Machine');
+  const originalFormData = globalThis.FormData;
+  globalThis.FormData = class { constructor() { return new Map([['name', 'New Exercise'], ['tracking_type', 'repetitions']]); } };
+  try { await customForm.events.submit({ preventDefault() {}, currentTarget: customForm }); }
+  finally { globalThis.FormData = originalFormData; }
+  assert.equal(JSON.parse(requests.at(-1)[1].body).variation_name, 'Boy');
+  app.nodes['#create-exercise'].events.click();
+  choose(variationField, 'variation-name-choice', 'Front Plank');
+  globalThis.FormData = class { constructor() { return new Map([['name', ' plank '], ['tracking_type', 'repetitions']]); } };
+  try { await customForm.events.submit({ preventDefault() {}, currentTarget: customForm }); }
+  finally { globalThis.FormData = originalFormData; }
+  assert.equal(requests.filter(([path]) => path === '/api/exercises').length, 1, 'no duplicate or metadata update');
+  assert.match(sheet.innerHTML, /<h2 id="picker-title">Front Plank<\/h2>/);
+  assert.match(sheet.innerHTML, /data-equipment="Bodyweight"/);
+  assert.equal(catalog.catalog[2].tracking_type, 'duration');
+  assert.equal(catalog.catalog[2].assisted, true);
+  await app.nodes['#configuration-form'].events.submit({ preventDefault() {}, currentTarget: app.nodes['#configuration-form'] });
+  const added = requests.find(([path]) => path === '/api/workouts/1/exercises');
+  assert.equal(JSON.parse(added[1].body).variation_id, 30);
+});
+
+test('typing an existing Variation name ignores case and uses it without requiring new Equipment', async () => {
+  const app = await harness();
+  const { sheetNodes, customForm, requests } = await openPickerSheet(app, suggestionCatalog);
+  app.nodes['#create-exercise'].events.click();
+  choose(sheetNodes['#variation-field'], 'variation-name-choice', OTHER);
+  type(sheetNodes['#variation-field'], 'variation-name', ' single  LEG ');
+  const originalFormData = globalThis.FormData;
+  globalThis.FormData = class { constructor() { return new Map([['name', ' LEG  PRESS '], ['tracking_type', 'duration'], ['assisted', 'on']]); } };
+  try { await customForm.events.submit({ preventDefault() {}, currentTarget: customForm }); }
+  finally { globalThis.FormData = originalFormData; }
+  assert.equal(requests.length, 1, 'only the catalogue was fetched');
+  assert.match(app.nodes['#picker .sheet'].innerHTML, /data-equipment="Sled"/);
+  assert.match(app.nodes['#picker .sheet'].innerHTML, /data-equipment="Machine"/);
+});
+
+test('the Exercise Configuration form offers manufacturers and machine labels from all Exercises and Gyms', async () => {
   const app = await harness();
   const { requests } = await openPickerSheet(app, suggestionCatalog, () => response({ id: 9 }, 201));
   pickVariation(app, 17);
   const manufacturer = app.nodes['#manufacturer-field'];
   const label = app.nodes['#machine-label-field'];
-  assert.deepEqual(optionValues(manufacturer, 'manufacturer-choice'), ['None', 'Hammer Strength', 'Technogym', 'Other…']);
-  assert.deepEqual(optionValues(label, 'machine-label-choice'), ['None', 'Upstairs', 'Other…']);
+  assert.deepEqual(optionValues(manufacturer, 'manufacturer-choice'), ['None', 'Eleiko', 'Hammer Strength', 'Technogym', 'Other…']);
+  assert.deepEqual(optionValues(label, 'machine-label-choice'), ['None', 'Rack 2', 'Upstairs', 'Other…']);
   assert.match(manufacturer.innerHTML, /Manufacturer <small>\(optional\)<\/small>/);
   choose(manufacturer, 'manufacturer-choice', 'Technogym');
   choose(label, 'machine-label-choice', OTHER);
@@ -702,14 +718,14 @@ test('the Exercise Configuration form offers manufacturers and machine labels sa
   assert.deepEqual(JSON.parse(added[1].body), { variation_id: 17, equipment: 'Sled', manufacturer: 'Technogym', label: 'Downstairs' });
 });
 
-test('an Exercise never configured starts with empty machine details and no suggestions', async () => {
+test('an Exercise never configured offers global machine details but starts empty', async () => {
   const app = await harness();
   const { requests } = await openPickerSheet(app, suggestionCatalog, () => response({ id: 9 }, 201));
   pickVariation(app, 30);
   const manufacturer = app.nodes['#manufacturer-field'];
-  assert.equal(manufacturer.querySelector('#manufacturer-choice'), null);
-  assert.equal(app.nodes['#machine-label-field'].querySelector('#machine-label-choice'), null);
-  assert.match(manufacturer.innerHTML, /<label for="manufacturer">/);
+  assert.equal(manufacturer.querySelector('#manufacturer-choice').value, '');
+  assert.deepEqual(optionValues(manufacturer, 'manufacturer-choice'), ['None', 'Eleiko', 'Hammer Strength', 'Technogym', 'Other…']);
+  assert.equal(app.nodes['#machine-label-field'].querySelector('#machine-label-choice').value, '');
   await app.nodes['#configuration-form'].events.submit({ preventDefault() {}, currentTarget: app.nodes['#configuration-form'] });
   const added = requests.find(([path]) => path === '/api/workouts/1/exercises');
   assert.deepEqual(JSON.parse(added[1].body), { variation_id: 30, equipment: 'Bodyweight', manufacturer: '', label: '' });

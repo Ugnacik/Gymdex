@@ -1562,32 +1562,26 @@ function equipmentProblem(names, name) {
   return "";
 }
 
-// Values offered for an Exercise by name, from the picker catalog: its Variations' names and
-// Equipment plus the starter Equipment, and the machine details of its Exercise Configurations
-// at every gym. A new Exercise gets only the starter Equipment.
+// Equipment stays relevant to the typed Exercise; names and machine details can be reused globally.
 function exerciseSuggestions(name) {
   const suggestions = state.picker.suggestions ?? { equipment: [], exercises: [] };
   const key = cleanEquipmentName(name).toLowerCase();
-  return suggestions.exercises.find((item) => item.name.toLowerCase() === key)
+  const known = suggestions.exercises.find((item) => item.name.toLowerCase() === key)
     ?? { variations: [], equipment: suggestions.equipment, manufacturers: [], labels: [] };
+  return { ...known, choices: suggestions.variations ?? known.variations,
+    manufacturers: suggestions.manufacturers ?? known.manufacturers,
+    labels: suggestions.labels ?? known.labels };
 }
 
-// Variation names must be unique within an Exercise, so only Standard is offered, while the
-// existing Exercise lacks it; any other new name is typed. A new Exercise gets Standard when left blank.
-function variationChoices(variations) {
-  return variations.length && !variations.some((value) => value.toLowerCase() === "standard") ? ["Standard"] : [];
+// Standard remains the default for a new Variation, with every previously entered name reusable.
+function variationChoices(known) {
+  return ["Standard", ...known.choices.filter((value) => value.toLowerCase() !== "standard")];
 }
 
-// A blank Variation name becomes Standard, so Standard is suggested only while it is free.
-function variationPlaceholder(known) {
-  return known.variations.some((value) => value.toLowerCase() === "standard") ? "e.g. Wide grip" : "Standard";
-}
-
-// Names the typed Exercise's existing Variations under the Variation field, so a taken name is not retyped.
-function variationHelp(known, choices) {
-  if (!known.variations.length) return "";
-  const next = choices.length ? "Choose Standard or Other… for a new variation name." : "Enter a new variation name.";
-  return `${known.name} already has: ${known.variations.join(", ")}. ${next}`;
+function variationHelp(known) {
+  return known.variations.length
+    ? `${known.name} already has: ${known.variations.join(", ")}. Choose an existing variation to keep its tracking, equipment and Assisted settings, or Other… for a new name.`
+    : "";
 }
 
 function renderCustomExerciseForm(query = "") {
@@ -1596,7 +1590,7 @@ function renderCustomExerciseForm(query = "") {
     <div class="sheet-handle" aria-hidden="true"></div>
     <div class="sheet-header"><button class="text-button" id="back-to-picker">Back</button><button class="text-button" id="close-picker">Close</button></div>
     <h2 id="picker-title">Create custom exercise</h2>
-    <p>Use an existing exercise name to add a new variation, or enter a new name.</p>
+    <p>Use an existing exercise name to choose or add a variation, or enter a new name.</p>
     <form id="custom-exercise-form">
       <label class="field">Exercise name<input name="name" maxlength="80" value="${escapeHtml(query)}" placeholder="e.g. Leg Press" required /></label>
       <div class="field choice-field" id="variation-field"></div>
@@ -1611,7 +1605,7 @@ function renderCustomExerciseForm(query = "") {
       </div>
       <p class="field-help" id="equipment-help">Choose or type one option, then tap Add. You can choose one for each gym machine when logging.</p>
       <label class="assistance-option"><input name="assisted" type="checkbox" /> Assisted (weight is counterweight)</label>
-      <button class="primary accent" type="submit">Create exercise</button>
+      <button class="primary accent" type="submit">Continue</button>
     </form>`;
   sheet.querySelector("#back-to-picker").addEventListener("click", () => renderPicker(query));
   sheet.querySelector("#close-picker").addEventListener("click", () => closePicker());
@@ -1620,10 +1614,10 @@ function renderCustomExerciseForm(query = "") {
   // The typed Exercise name decides which suggestions are offered; see exerciseSuggestions().
   let known = exerciseSuggestions(nameInput.value ?? query);
   const variation = new ChoiceField(sheet.querySelector("#variation-field"), { id: "variation-name", name: "variation_name",
-    title: "Variation", placeholder: variationPlaceholder(known), describedBy: "variation-help", options: variationChoices(known.variations) });
+    title: "Variation", placeholder: "e.g. Wide grip", describedBy: "variation-help", options: variationChoices(known) });
   const help = sheet.querySelector("#variation-help");
   const showVariationHelp = () => {
-    help.textContent = variationHelp(known, variation.options);
+    help.textContent = variationHelp(known);
     help.hidden = !help.textContent;
   };
   showVariationHelp();
@@ -1633,8 +1627,7 @@ function renderCustomExerciseForm(query = "") {
     options: unadded(), onEnter: () => addEquipment() });
   nameInput.addEventListener("input", () => {
     known = exerciseSuggestions(nameInput.value);
-    variation.placeholder = variationPlaceholder(known);
-    variation.setOptions(variationChoices(known.variations));
+    variation.setOptions(variationChoices(known));
     showVariationHelp();
     entry.setOptions(unadded());
   });
@@ -1666,6 +1659,13 @@ function renderCustomExerciseForm(query = "") {
     event.preventDefault();
     const form = event.currentTarget;
     const values = new FormData(form);
+    const existing = state.picker.catalog.find((item) =>
+      item.exercise_name.toLowerCase() === cleanEquipmentName(values.get("name")).toLowerCase()
+      && item.variation_name.toLowerCase() === (variation.value || "Standard").toLowerCase());
+    if (existing) {
+      chooseExercise(existing.id);
+      return;
+    }
     if (!addEquipment()) return;
     if (!equipment.length) {
       showToast("Add at least one equipment option.");
@@ -1740,7 +1740,7 @@ function renderConfiguration(change = null) {
     state.selectedEquipment = button.dataset.equipment;
     document.querySelectorAll("[data-equipment]").forEach((option) => option.setAttribute("aria-pressed", String(option === button)));
   }));
-  // Machine details entered before for this Exercise, at any gym, are offered first.
+  // Machine details entered for any Exercise at any Gym can be reused.
   const known = exerciseSuggestions(item.exercise_name);
   const details = {
     manufacturer: new ChoiceField(document.querySelector("#manufacturer-field"), { id: "manufacturer", name: "manufacturer",
