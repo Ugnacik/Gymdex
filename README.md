@@ -155,8 +155,8 @@ The same picker is used when adding to a Routine.
 During a workout, open Add exercise and choose **Create custom exercise**.
 Enter an exercise name, a variation name, and choose Repetitions or Duration
 in seconds under Track by. Add equipment choices one at a time: pick one from
-the list, or choose **Other…** and type a new one, then tap Add (or press
-Enter while typing). Each choice appears as a chip you can remove with its ×,
+the list under the field's arrow, or type a new one and tap Add (or press
+Enter). Each choice appears as a chip you can remove with its ×,
 and an added choice leaves the list. An empty variation name becomes Standard.
 Check Assisted when the variation's weight is a machine counterweight.
 Optionally choose Muscle Groups this Variation is intentionally selected to
@@ -173,10 +173,11 @@ Exercise Variations.
 ### Suggested values
 
 Variation names, Manufacturers and Machine labels can be reused across Exercises
-and Gyms, including when creating a new Exercise. Choose **Other…** to enter a
-new value. Variation defaults to Standard; choosing an existing Variation for
-the same Exercise uses it instead of creating another one. Manufacturer and
-Machine label remain optional and start as None.
+and Gyms, including when creating a new Exercise. Type a value, or tap the
+field's arrow to pick one entered before; typing also narrows that list. Values
+you type are offered next time. Variation defaults to Standard; choosing an
+existing Variation for the same Exercise uses it instead of creating another
+one. Manufacturer and Machine label are optional and start empty.
 
 Equipment options offers the starter catalog's equipment plus equipment of the
 named Exercise's Variations, including values you entered.

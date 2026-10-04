@@ -1704,7 +1704,7 @@ function variationChoices(known) {
 
 function variationHelp(known) {
   return known.variations.length
-    ? `${known.name} already has: ${known.variations.join(", ")}. Choose an existing variation to keep its tracking, equipment, Muscle Groups and Assisted settings, or Other… for a new name.`
+    ? `${known.name} already has: ${known.variations.join(", ")}. Choose an existing variation to keep its tracking, equipment, Muscle Groups and Assisted settings, or type a new name.`
     : "";
 }
 
@@ -1728,7 +1728,7 @@ function renderCustomExerciseForm(query = "") {
         <div class="equipment-entry"><div class="choice-field" id="equipment-choice"></div><button type="button" class="secondary" id="add-equipment">Add</button></div>
         <ul class="equipment-chips" id="equipment-chips" aria-label="Added equipment options"></ul>
       </div>
-      <p class="field-help" id="equipment-help">Choose or type one option, then tap Add. You can choose one for each gym machine when logging.</p>
+      <p class="field-help" id="equipment-help">Type one option and tap Add, or pick one from the list. You can choose one for each gym machine when logging.</p>
       <label class="assistance-option"><input name="assisted" type="checkbox" /> Assisted (weight is counterweight)</label>
       <details class="custom-muscle-groups"><summary>Muscle Groups (optional)</summary>${renderMuscleGroupChoices(state.picker.muscle_groups ?? [])}</details>
       <button class="primary accent" type="submit">Continue</button>
@@ -1740,7 +1740,7 @@ function renderCustomExerciseForm(query = "") {
   // The typed Exercise name decides which suggestions are offered; see exerciseSuggestions().
   let known = exerciseSuggestions(nameInput.value ?? query);
   const variation = new ChoiceField(sheet.querySelector("#variation-field"), { id: "variation-name", name: "variation_name",
-    title: "Variation", placeholder: "e.g. Wide grip", describedBy: "variation-help", options: variationChoices(known) });
+    title: "Variation", placeholder: "Standard", describedBy: "variation-help", options: variationChoices(known) });
   const help = sheet.querySelector("#variation-help");
   const showVariationHelp = () => {
     help.textContent = variationHelp(known);
@@ -1749,8 +1749,8 @@ function renderCustomExerciseForm(query = "") {
   showVariationHelp();
   const unadded = () => known.equipment.filter((value) => !equipment.some((added) => added.toLowerCase() === value.toLowerCase()));
   const entry = new ChoiceField(sheet.querySelector("#equipment-choice"), { id: "equipment-entry", title: "Equipment options",
-    empty: "Choose equipment", placeholder: "e.g. Machine", newLabel: "New equipment option", describedBy: "equipment-help",
-    options: unadded(), onEnter: () => addEquipment() });
+    placeholder: "e.g. Machine", describedBy: "equipment-help",
+    options: unadded(), onEnter: (picked) => addEquipment({ focus: !picked }) });
   nameInput.addEventListener("input", () => {
     known = exerciseSuggestions(nameInput.value);
     variation.setOptions(variationChoices(known));
@@ -1762,7 +1762,8 @@ function renderCustomExerciseForm(query = "") {
     chips.innerHTML = renderEquipmentChips(equipment);
     entry.setOptions(unadded());
   };
-  const addEquipment = () => {
+  // Keeps the keyboard up after a typed option, so the next one can be typed straight away.
+  const addEquipment = ({ focus = true } = {}) => {
     const name = entry.value;
     if (!name) return true;
     const problem = equipmentProblem(equipment, name);
@@ -1770,16 +1771,15 @@ function renderCustomExerciseForm(query = "") {
     equipment.push(name);
     renderChips();
     entry.clear();
-    if (entry.typing) entry.focus();
+    if (focus) entry.focus();
     return true;
   };
-  sheet.querySelector("#add-equipment").addEventListener("click", addEquipment);
+  sheet.querySelector("#add-equipment").addEventListener("click", () => addEquipment());
   chips.addEventListener("click", (event) => {
     const button = event.target.closest?.("[data-remove-equipment]");
     if (!button) return;
     equipment.splice(Number(button.dataset.removeEquipment), 1);
     renderChips();
-    if (entry.typing) entry.focus();
   });
   sheet.querySelector("#custom-exercise-form").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -1872,11 +1872,11 @@ function renderConfiguration(change = null) {
   const known = exerciseSuggestions(item.exercise_name);
   const details = {
     manufacturer: new ChoiceField(document.querySelector("#manufacturer-field"), { id: "manufacturer", name: "manufacturer",
-      title: "Manufacturer", optional: true, empty: "None", placeholder: "e.g. Technogym", options: known.manufacturers,
-      value: change?.entry.manufacturer ?? null }),
+      title: "Manufacturer", optional: true, placeholder: "e.g. Technogym", options: known.manufacturers,
+      value: change?.entry.manufacturer }),
     label: new ChoiceField(document.querySelector("#machine-label-field"), { id: "machine-label", name: "label",
-      title: "Machine label", optional: true, empty: "None", placeholder: "e.g. Upstairs plate-loaded", options: known.labels,
-      value: change?.entry.label ?? null }),
+      title: "Machine label", optional: true, placeholder: "e.g. Upstairs plate-loaded", options: known.labels,
+      value: change?.entry.label }),
   };
   document.querySelector("#configuration-form").addEventListener("submit", (event) =>
     change ? saveMachine(event, change, details) : addConfiguredExercise(event, details));

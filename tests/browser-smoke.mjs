@@ -194,8 +194,14 @@ try {
   await page.locator('#exercise-search').fill('Long Custom Duration Exercise For Browser Testing');
   await page.locator('#create-exercise').click();
   await page.getByRole('radio', { name: 'Duration in seconds' }).check();
-  await page.locator('#equipment-choice select').selectOption({ label: 'Machine' });
-  await page.locator('#add-equipment').click();
+  await page.locator('#equipment-entry-toggle').click();
+  await page.locator('#picker-title').click();
+  check('Tapping elsewhere closes a choice list', await page.locator('#equipment-entry-list').isHidden());
+  await page.locator('#equipment-entry-toggle').click();
+  await screenshot('choice-list-open');
+  await page.locator('#equipment-entry-list').getByRole('option', { name: 'Machine', exact: true }).click();
+  check('Picking a listed equipment option adds it', await page.locator('#equipment-chips', { hasText: 'Machine' }).isVisible()
+    && await page.locator('#equipment-entry-list').isHidden() && await page.locator('#equipment-entry').inputValue() === '');
   await page.locator('.custom-muscle-groups summary').click();
   await page.locator('#custom-exercise-form').getByLabel('Back', { exact: true }).check();
   await page.locator('#custom-exercise-form').getByLabel('Abs', { exact: true }).check();
