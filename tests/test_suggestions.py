@@ -53,7 +53,7 @@ class SuggestionTests(unittest.TestCase):
         self.configure(self.home, self.leg_press, 'Machine', 'Technogym', 'Upstairs')
         self.configure(self.other, single, 'Sled', ' technogym ', '')
         self.configure(self.other, self.leg_press, 'Machine', 'Hammer Strength', 'upstairs')
-        # Another Exercise's details are not offered for Leg Press.
+        # Per-Exercise details remain available alongside the global choices.
         self.configure(self.home, self.press, 'Barbell', 'Eleiko', 'Rack 2')
 
         leg_press = self.suggestions('Leg Press')
@@ -64,6 +64,9 @@ class SuggestionTests(unittest.TestCase):
         self.assertEqual(leg_press['labels'], ['Upstairs'])
         self.assertEqual(self.suggestions('Bench Press')['manufacturers'], ['Eleiko'])
         self.assertEqual(self.suggestions('Bench Press')['variations'], ['Incline', 'Standard'])
+        global_choices = db.exercise_suggestions(self.connection)
+        self.assertEqual(global_choices['manufacturers'], ['Eleiko', 'Hammer Strength', 'Technogym'])
+        self.assertEqual(global_choices['labels'], ['Rack 2', 'Upstairs'])
 
     def test_suggestions_disappear_with_their_archived_or_deleted_source_rows(self):
         heavy = db.create_exercise(self.connection, 'Sled Push', 'Heavy', 'duration', ['Sled'])
@@ -83,6 +86,20 @@ class SuggestionTests(unittest.TestCase):
 
         db.remove_item(self.connection, 'variation', light['id'])
         self.assertIsNone(self.suggestions('Sled Push'))
+        choices = db.exercise_suggestions(self.connection)
+        self.assertNotIn('Heavy', choices['variations'])
+        self.assertNotIn('Light', choices['variations'])
+        self.assertEqual((choices['manufacturers'], choices['labels']), ([], []))
+        db.restore_item(self.connection, 'variation', heavy['id'])
+        self.assertIn('Heavy', db.exercise_suggestions(self.connection)['variations'])
+
+    def test_variation_names_are_reusable_across_exercises(self):
+        db.create_exercise(self.connection, 'First Exercise', 'Boy', 'duration', ['Bodyweight'])
+        choices = db.catalog_for_gym(self.connection, self.other['id'])['suggestions']
+        self.assertIn('Boy', choices['variations'])
+        created = db.create_exercise(self.connection, 'Second Exercise', 'Boy', 'repetitions', ['Machine'])
+        self.assertEqual(created['variation_name'], 'Boy')
+        self.assertEqual(db.exercise_suggestions(self.connection)['variations'].count('Boy'), 1)
 
     def test_an_archived_gyms_configurations_are_still_offered_at_other_gyms(self):
         self.configure(self.other, self.leg_press, 'Machine', 'Cybex', 'Left')
@@ -107,5 +124,7 @@ class SuggestionTests(unittest.TestCase):
         status, body = response[0]
         self.assertEqual(status, 200)
         self.assertEqual(body['suggestions']['equipment'], STARTER_EQUIPMENT)
+        self.assertEqual(body['suggestions']['manufacturers'], ['Eleiko'])
+        self.assertEqual(body['suggestions']['labels'], ['Rack 2'])
         press = next(item for item in body['suggestions']['exercises'] if item['name'] == 'Bench Press')
         self.assertEqual((press['manufacturers'], press['labels']), (['Eleiko'], ['Rack 2']))
