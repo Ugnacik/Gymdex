@@ -44,6 +44,18 @@ try {
   const screenshot = name => page.screenshot({ path: join(artifacts, name + '.png') });
   const check = (name, value) => { assert.ok(value, name); checks.push(name); };
   await page.goto(base);
+  await page.locator('#open-settings').click();
+  assert.equal(await page.locator('#settings-rest-duration').inputValue(), '120');
+  const settingsBounds = await page.locator('#settings').boundingBox();
+  check('Settings fills the phone viewport', settingsBounds.x === 0 && settingsBounds.y === 0
+    && settingsBounds.width === 390 && settingsBounds.height === 844);
+  await screenshot('settings-mobile');
+  await page.locator('#settings-rest-duration').selectOption('90');
+  await page.locator('#close-settings').click();
+  await page.reload();
+  await page.locator('#open-settings').click();
+  check('Saved 90 second preference survives reload', await page.locator('#settings-rest-duration').inputValue() === '90');
+  await page.locator('#close-settings').click();
   await page.locator('#gym-name').fill('Browser Test Gym');
   await page.locator('#add-gym-form button').click();
   await page.locator('#open-routines').click();
@@ -87,8 +99,28 @@ try {
   await page.evaluate(() => scrollTo(0, 0));
   await screenshot('compact-workout-mobile');
   check('First set visible with timer enabled', (await page.locator('.set-form').first().boundingBox()).y < 750);
+  const draftSet = page.locator('.set-form').first();
+  await draftSet.locator('[name=weight]').fill('43.5');
+  await draftSet.locator('[name=result]').fill('7');
+  await page.locator('[data-note-summary="workout"]').click();
+  await page.locator('[data-note-target="workout"]').fill('Workout draft through Settings');
   await page.locator('#rest-start').click();
   await page.locator('#rest-pause').click();
+  const pausedClock = await page.locator('#rest-clock').innerText();
+  await page.locator('#open-settings').click();
+  await page.locator('#settings-rest-duration').selectOption('120');
+  await page.locator('#close-settings').click();
+  check('Settings retains draft Sets and Notes', await draftSet.locator('[name=weight]').inputValue() === '43.5'
+    && await draftSet.locator('[name=result]').inputValue() === '7'
+    && await page.locator('[data-note-target="workout"]').inputValue() === 'Workout draft through Settings');
+  check('Settings retains paused countdown while updating next rest', await page.locator('#rest-clock').innerText() === pausedClock
+    && await page.locator('#rest-status').innerText() === 'Paused'
+    && await page.locator('#rest-duration').inputValue() === '120');
+  await draftSet.locator('[name=weight]').fill('');
+  await draftSet.locator('[name=result]').fill('');
+  await page.locator('[data-note-target="workout"]').fill('');
+  await page.locator('[data-note-summary="workout"]').click();
+
   assert.equal(await page.locator('#rest-status').innerText(), 'Paused');
   await page.locator('.rest-settings summary').click();
   await page.locator('#rest-duration').selectOption('60');

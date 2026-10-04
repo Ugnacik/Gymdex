@@ -114,7 +114,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .status-active { color: var(--accent); }
 .status-active::before { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 
-/* Progress and History as one segmented pill. */
+/* App views share one segmented pill. */
 .app-header nav {
   display: flex;
   flex-shrink: 0;
@@ -1291,4 +1291,34 @@ textarea {
 
 @media (prefers-contrast: more) {
   :root { --hairline: rgba(255, 255, 255, 0.22); --hairline-strong: rgba(255, 255, 255, 0.34); --muted: #b8bdc5; }
+}
+
+/* Settings fills the viewport while the previous screen keeps its inputs. */
+.settings-screen {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100dvh;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: var(--canvas);
+  color: var(--ink);
+  overflow: auto;
+}
+.settings-screen::backdrop { background: var(--canvas); }
+.settings-header { display: grid; gap: 24px; margin-bottom: 24px; }
+.settings-header button { justify-self: start; min-height: 44px; }
+.settings-header h1 { margin: 0; }
+.settings-card { padding: 6px 18px 16px; border-radius: 20px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--hairline); }
+.settings-card .rest-heading { padding: 8px 0 18px; }
+.settings-card .field { margin: 0; }
+.settings-card p.muted { font-size: 0.9rem; line-height: 1.5; }
+@media (max-width: 440px) {
+  .app-header { flex-wrap: wrap; gap: 8px; }
+  .app-header nav { margin-left: auto; }
+  .app-header nav .text-button { padding: 0 8px; font-size: 0.85rem; }
 }

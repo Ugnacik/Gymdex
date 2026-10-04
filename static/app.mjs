@@ -1,6 +1,6 @@
 import { DraftStore, setPayload, WEIGHT_PATTERN } from "./drafts.mjs";
 import { NOTE_MAX_LENGTH, WorkoutEditor } from "./workout-editor.mjs";
-import { RestTimer } from "./rest-timer.mjs";
+import { DEFAULT_REST_DURATION_SECONDS, RestTimer } from "./rest-timer.mjs";
 import { askTextInPage, confirmInPage } from "./confirm-sheet.mjs";
 import { ChoiceField } from "./choice-field.mjs";
 import { openRoutines, renderRoutineStarts } from "./routines.mjs";
@@ -70,9 +70,9 @@ function readRestSettings() {
     const saved = JSON.parse(window.localStorage.getItem("gymdex:rest:v1"));
     return {
       enabled: saved?.enabled === true,
-      duration: Number.isInteger(saved?.duration) && saved.duration >= 1 && saved.duration <= 3600 ? saved.duration : 90,
+      duration: Number.isInteger(saved?.duration) && saved.duration >= 1 && saved.duration <= 3600 ? saved.duration : DEFAULT_REST_DURATION_SECONDS,
     };
-  } catch { return { enabled: false, duration: 90 }; }
+  } catch { return { enabled: false, duration: DEFAULT_REST_DURATION_SECONDS }; }
 }
 
 function saveRestSettings() {
@@ -240,7 +240,7 @@ function gymOptions(selectedId = null) {
 }
 
 function renderHeader(status = "Ready") {
-  return `<header class="app-header"><div class="brand-block"><div class="brand">Gymdex</div><div class="status${state.data.active_workout ? " status-active" : ""}">${escapeHtml(status)}</div></div><nav aria-label="App views"><button class="text-button" id="open-progress" ${recordedGyms().length ? "" : "disabled"}>Progress</button><button class="text-button" id="open-history">History</button></nav></header><p id="sync-status" class="sync-status" role="status"></p>`;
+  return `<header class="app-header"><div class="brand-block"><div class="brand">Gymdex</div><div class="status${state.data.active_workout ? " status-active" : ""}">${escapeHtml(status)}</div></div><nav aria-label="App views"><button class="text-button" id="open-progress" ${recordedGyms().length ? "" : "disabled"}>Progress</button><button class="text-button" id="open-history">History</button><button class="text-button" id="open-settings">Settings</button></nav></header><p id="sync-status" class="sync-status" role="status"></p>`;
 }
 
 function renderStart() {
@@ -283,6 +283,7 @@ function renderStart() {
   document.querySelector("#add-gym-form").addEventListener("submit", createGym);
   document.querySelector("#start-workout").addEventListener("click", startWorkout);
   document.querySelector("#open-history").addEventListener("click", () => openHistory());
+  document.querySelector("#open-settings").addEventListener("click", openSettings);
   document.querySelector("#open-progress").addEventListener("click", () => openProgress());
   document.querySelector("#open-manage").addEventListener("click", openManage);
 }
@@ -385,6 +386,7 @@ function renderWorkout() {
     </main>`;
   document.querySelector("#open-picker").addEventListener("click", openPicker);
   document.querySelector("#open-history").addEventListener("click", () => openHistory());
+  document.querySelector("#open-settings").addEventListener("click", openSettings);
   document.querySelector("#open-progress").addEventListener("click", () => openProgress());
   document.querySelectorAll("[data-finish-workout]").forEach((button) => button.addEventListener("click", finishWorkout));
   document.querySelector("#cancel-workout").addEventListener("click", cancelWorkout);
@@ -491,6 +493,57 @@ function renderExerciseTools(entry, index, count) {
   </div>`;
 }
 
+function restDurationOptions(duration) {
+  const choices = [30, 60, 90, 120, 180];
+  if (!choices.includes(duration)) choices.push(duration);
+  return choices.map((seconds) => `<option value="${seconds}" ${duration === seconds ? "selected" : ""}>${seconds < 60 || seconds % 60 ? `${seconds} seconds` : `${seconds / 60} ${seconds === 60 ? "minute" : "minutes"}`}</option>`).join("");
+}
+
+function setRestEnabled(enabled) {
+  state.restEnabled = enabled;
+  const workoutSwitch = document.querySelector("#rest-enabled");
+  if (workoutSwitch) workoutSwitch.checked = enabled;
+  const controls = document.querySelector("#rest-controls");
+  if (controls) controls.hidden = !enabled;
+  if (!enabled) state.restTimer.stop();
+  saveRestSettings();
+  renderRestTimerState();
+}
+
+function setRestDuration(duration) {
+  state.restTimer.setDuration(duration);
+  const workoutDuration = document.querySelector("#rest-duration");
+  if (workoutDuration) {
+    workoutDuration.innerHTML = restDurationOptions(duration);
+    workoutDuration.value = String(duration);
+  }
+  saveRestSettings();
+}
+
+// A full-screen dialog keeps the previous screen and its unsaved inputs intact.
+function openSettings() {
+  const dialog = document.createElement("dialog");
+  dialog.id = "settings";
+  dialog.className = "settings-screen";
+  dialog.setAttribute("aria-labelledby", "settings-title");
+  dialog.innerHTML = `<main class="shell">
+    <header class="settings-header"><button type="button" class="secondary" id="close-settings" autofocus>Back to ${state.data.active_workout ? "workout" : "start"}</button><h1 id="settings-title">Settings</h1></header>
+    <section class="settings-card" aria-labelledby="settings-rest-title">
+      <div class="rest-heading"><div class="rest-title"><h2 id="settings-rest-title">Rest timer</h2><p class="rest-caption">Start after each completed set</p></div>
+        <label class="rest-switch"><input id="settings-rest-enabled" type="checkbox" role="switch" aria-label="Enable rest timer" ${state.restEnabled ? "checked" : ""} /></label></div>
+      <label class="field">Rest after a set<select id="settings-rest-duration">${restDurationOptions(state.restTimer.snapshot().durationSeconds)}</select></label>
+      <p class="muted">Interval changes apply to your next rest. You can also change the interval in Timer settings during a workout.</p>
+    </section>
+    <p class="muted">Preferences are saved on this phone.</p>
+  </main>`;
+  document.body.append(dialog);
+  dialog.addEventListener("close", () => dialog.remove());
+  dialog.querySelector("#close-settings").addEventListener("click", () => dialog.close());
+  dialog.querySelector("#settings-rest-enabled").addEventListener("change", (event) => setRestEnabled(event.target.checked));
+  dialog.querySelector("#settings-rest-duration").addEventListener("change", (event) => setRestDuration(Number(event.target.value)));
+  dialog.showModal();
+}
+
 function renderRestTimer() {
   const duration = state.restTimer.snapshot().durationSeconds;
   // One column: title and switch, then clock and controls, then settings. The switch is the
@@ -507,8 +560,7 @@ function renderRestTimer() {
     </div>
     <details class="rest-settings"><summary>Timer settings</summary>
       <label class="field rest-duration">Rest after a set<select id="rest-duration">
-        ${[30, 60, 90, 120, 180].map((seconds) => `<option value="${seconds}" ${duration === seconds ? "selected" : ""}>${seconds < 60 ? `${seconds} seconds` : `${seconds / 60} ${seconds === 60 ? "minute" : "minutes"}`}</option>`).join("")}
-        ${[30, 60, 90, 120, 180].includes(duration) ? "" : `<option value="${duration}" selected>${duration} seconds</option>`}
+        ${restDurationOptions(duration)}
       </select></label>
       <button type="button" class="text-button" id="rest-stop">Reset timer</button>
     </details>
@@ -540,17 +592,8 @@ function renderRestTimerState() {
 function bindRestTimer() {
   const enabled = document.querySelector("#rest-enabled");
   if (!enabled) return;
-  enabled.addEventListener("change", () => {
-    state.restEnabled = enabled.checked;
-    document.querySelector("#rest-controls").hidden = !state.restEnabled;
-    if (!state.restEnabled) state.restTimer.stop();
-    saveRestSettings();
-    renderRestTimerState();
-  });
-  document.querySelector("#rest-duration").addEventListener("change", (event) => {
-    state.restTimer.setDuration(Number(event.target.value));
-    saveRestSettings();
-  });
+  enabled.addEventListener("change", () => setRestEnabled(enabled.checked));
+  document.querySelector("#rest-duration").addEventListener("change", (event) => setRestDuration(Number(event.target.value)));
   document.querySelector("#rest-start").addEventListener("click", () => {
     unlockRestAudio();
     state.restTimer.start();
