@@ -100,6 +100,15 @@ try {
   await page.locator('.set-form').first().waitFor();
   check('Routine starts with correct empty slots', await page.locator('.set-form').count() === 5
     && await page.locator('.set-form input[name=weight], .set-form input[name=result]').evaluateAll(inputs => inputs.every(input => input.value === '')));
+  const machineEdit = page.getByRole('button', { name: 'Edit manufacturer / machine for Bench Press', exact: true });
+  check('Manufacturer editing is visible without Exercise options', await machineEdit.isVisible()
+    && !await page.locator('.exercise-options').first().getAttribute('open'));
+  const editBounds = await machineEdit.boundingBox();
+  check('Manufacturer edit has a touch target at least 44px high', editBounds.height >= 44);
+  await machineEdit.click();
+  check('Manufacturer editing opens the clearly named sheet', await page.locator('#picker-title').innerText() === 'Edit manufacturer / machine'
+    && await page.getByText('Manufacturer', { exact: false }).count() > 0);
+  await page.locator('#close-picker').click();
   await page.locator('#rest-enabled').check();
   await page.evaluate(() => scrollTo(0, 0));
   await screenshot('compact-workout-mobile');
@@ -168,7 +177,7 @@ try {
   check('Reordering retains focus in visible exercise options', await page.evaluate(() => document.activeElement.matches('[data-move-exercise]') && document.activeElement.getClientRects().length > 0));
   await page.getByRole('button', { name: 'Move Long Custom Duration Exercise For Browser Testing down', exact: true }).click();
   await page.waitForFunction(() => document.querySelector('.exercise-summary h3')?.textContent === 'Bench Press');
-  await page.getByRole('button', { name: 'Change machine for Bench Press', exact: true }).click();
+  await page.getByRole('button', { name: 'Edit manufacturer / machine for Bench Press', exact: true }).click();
   await page.getByRole('button', { name: 'Machine', exact: true }).click();
   await page.locator('#configuration-form button[type=submit]').click();
   await page.waitForFunction(() => document.querySelector('.exercise-body .meta')?.textContent.startsWith('Machine'));

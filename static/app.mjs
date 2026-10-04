@@ -362,14 +362,14 @@ function renderWorkout() {
             <details class="workout-exercise" data-entry-id="${entry.id}" ${state.collapsedExercises.has(entry.id) ? "" : "open"}>
               <summary class="exercise-summary"><h3>${escapeHtml(exerciseDisplayName(entry))}</h3><span data-exercise-count="${entry.id}">${entry.sets.filter(set => set.completed).length}/${entry.sets.length} done</span></summary>
               <div class="exercise-body">
-                <p class="meta">${escapeHtml(configurationLabel(entry))}</p>
+                <div class="machine-line"><p class="meta">${escapeHtml(configurationLabel(entry))}</p>
+                  <button type="button" class="text-button" data-change-machine="${entry.id}" aria-label="Edit manufacturer / machine for ${escapeHtml(exerciseDisplayName(entry))}">Edit manufacturer / machine</button></div>
                 <div class="sets-list">${entry.sets.map((set, index) => renderSet(entry, set, index)).join("")}</div>
                 <button class="secondary add-set" data-add-set="${entry.id}">Add set</button>
                 <details class="exercise-options" data-options-id="${entry.id}" ${state.exerciseOptions.has(entry.id) ? "open" : ""}><summary>Exercise options</summary>
                   <p class="set-hint">${entry.tracking_type === "duration" ? "Duration in seconds" : "Repetitions"}. ${entry.assisted ? "Assist kg is the counterweight and is optional." : "Weight is optional."}</p>
                   <div class="exercise-tools">
                     <button type="button" class="text-button" data-active-progress="${entry.variation_id}" data-progress-equipment="${escapeHtml(entry.equipment)}" data-progress-manufacturer="${escapeHtml(entry.manufacturer || "")}" data-progress-label="${escapeHtml(entry.label || "")}">View progress</button>
-                    <button type="button" class="text-button" data-change-machine="${entry.id}" aria-label="Change machine for ${escapeHtml(exerciseDisplayName(entry))}">Change machine</button>
                     <button type="button" class="text-button manage-remove" data-remove-exercise="${entry.id}" aria-label="Remove ${escapeHtml(exerciseDisplayName(entry))}">Remove exercise</button>
                   </div>
                   ${renderExerciseTools(entry, index, entries.length)}
@@ -1814,14 +1814,14 @@ function chooseExercise(variationId) {
 }
 
 // The Exercise Configuration form: equipment of state.selectedExercise plus manufacturer and
-// machine label. Adding a Variation starts empty; Change machine (change) starts from a
+// machine label. Adding a Variation starts empty; Editing manufacturer / machine (change) starts from a
 // Workout Exercise's current values and saves them to it instead.
 function renderConfiguration(change = null) {
   const sheet = document.querySelector("#picker .sheet");
   const item = state.selectedExercise;
   sheet.innerHTML = `
     <div class="sheet-handle" aria-hidden="true"></div>
-    ${change ? `<div class="sheet-header"><h2 id="picker-title">Change machine</h2><button class="text-button" id="close-picker">Cancel</button></div>
+    ${change ? `<div class="sheet-header"><h2 id="picker-title">Edit manufacturer / machine</h2><button class="text-button" id="close-picker">Cancel</button></div>
     <p>${escapeHtml(exerciseDisplayName(item))} keeps its sets and note.</p>` : `<div class="sheet-header"><button class="text-button" id="back-to-picker">Back</button><button class="text-button" id="close-picker">Close</button></div>
     <h2 id="picker-title">${escapeHtml(exerciseDisplayName(item))}</h2>
     <p>Choose the equipment used at this gym.</p>`}
@@ -1851,18 +1851,18 @@ function renderConfiguration(change = null) {
     change ? saveMachine(event, change, details) : addConfiguredExercise(event, details));
 }
 
-// Change machine on a Workout Exercise card: saves set and note drafts first, like the other
+// Edit manufacturer / machine on a Workout Exercise card: saves set and note drafts first, like the other
 // card actions, then opens the Exercise Configuration form with the card's current values.
 async function changeMachine(entryId) {
   const entry = state.data.workout_exercises.find((item) => item.id === entryId);
   if (!entry || !state.editor || state.editor.busy) return;
-  if (!await saveAllSets("Cannot change the machine yet")) return;
+  if (!await saveAllSets("Cannot edit manufacturer or machine yet")) return;
   try {
     state.picker = await api(`/api/catalog?gym_id=${state.data.active_workout.gym_id}`);
   } catch (error) { showToast(error.message); return; }
   const variation = state.picker.catalog.find((item) => item.id === entry.variation_id);
   if (!variation) {
-    showToast(`${exerciseDisplayName(entry)} is archived. Restore it in Manage to change its machine.`);
+    showToast(`${exerciseDisplayName(entry)} is archived. Restore it in Manage to edit its manufacturer or machine.`);
     return;
   }
   state.selectedExercise = variation;

@@ -297,7 +297,7 @@ all its sets after confirmation. Both actions first save outstanding set edits t
 removing an exercise also discards any unsaved drafts for its sets and note on
 this phone.
 
-**Change machine**, beside an exercise's equipment and machine details, fixes
+**Edit manufacturer / machine**, beside an exercise's equipment and machine details, fixes
 them without adding the exercise again, for example when you picked the wrong
 manufacturer. It opens the same equipment, Manufacturer and Machine label
 choices as adding an exercise, starting from the current ones; **Save** switches
@@ -306,7 +306,7 @@ was. The exercise keeps its sets and note, and its "Last workout" values then
 come from the last workout with the new configuration. Choosing an archived
 configuration's details restores it. The previous configuration is deleted when
 no workout and no routine uses it any more, so a mistaken machine does not stay
-under Recent. Change machine is only on the active workout, not in history.
+under Recent. Edit manufacturer / machine is only on the active workout, not in history.
 
 Notes are optional free text, up to 1,000 characters, for anything the numbers
 don't capture. They stay collapsed so they never get in the way of logging sets:
@@ -375,7 +375,8 @@ mark the set completed.
 
 Tap an exercise heading to collapse or expand its sets. Completion counts stay
 visible, and collapsing keeps input values and drafts. **Exercise options**
-holds notes, View progress, Change machine, reordering, and removal. Options
+holds notes, View progress, reordering, and removal. Manufacturer and machine
+edits are available beside the visible configuration details. Options
 stay open when changing a machine or reordering. A pending note opens its
 options after an offline reload, and a draft blocking Finish expands so it
 can be corrected.
@@ -675,6 +676,6 @@ it on the Pi with `tailscale file get ~/`, and follow the restore steps above.
 Exercise configurations belong to a gym. A configuration can record equipment,
 a manufacturer, and a machine label. When it is added to a workout, Gymdex
 copies those details into the workout record so old workouts do not change when
-the gym configuration is edited later. Change machine on the active workout
+the gym configuration is edited later. Edit manufacturer / machine on the active workout
 updates that copy and the configuration it refers to. A routine refers to a gym's configurations
 and stores only their order and set counts.
