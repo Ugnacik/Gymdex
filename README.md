@@ -140,6 +140,14 @@ database. It does not change existing catalog entries, custom variations with
 the same name, or recorded workouts. So a later catalog change that adds
 equipment to an existing starter variation reaches only new databases.
 
+## Find exercises by Muscle Group
+
+In Add exercise, choose a Muscle Group to narrow both the Exercise Catalog and
+saved Exercise Configurations. Search also matches each Variation's Muscle
+Groups, alongside exercise names and saved machine details. Search and the
+Muscle Group choice work together; **Clear filter** keeps your search text.
+The same picker is used when adding to a Routine.
+
 ## Custom exercises
 
 During a workout, open Add exercise and choose **Create custom exercise**.

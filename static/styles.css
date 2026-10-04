@@ -957,6 +957,10 @@ textarea {
 .sheet-header .text-button { min-width: 56px; min-height: 44px; padding: 0 14px; background: var(--surface-3); color: var(--ink); font-size: 0.9rem; box-shadow: inset 0 0 0 1px var(--hairline); }
 .sheet > h2 { margin: 6px 0 6px; font-size: 1.5rem; letter-spacing: -0.035em; }
 .search { margin: 6px 0 4px; }
+.picker-filters { display: flex; align-items: flex-end; gap: 8px; margin: 8px 0; }
+.picker-filters .field { flex: 1; min-width: 0; margin-bottom: 0; }
+.picker-filters .text-button { min-height: 48px; flex-shrink: 0; }
+
 .sheet .section-title { margin: 22px 4px 8px; min-height: 32px; }
 .sheet .primary { width: 100%; margin-top: 8px; min-height: 56px; }
 

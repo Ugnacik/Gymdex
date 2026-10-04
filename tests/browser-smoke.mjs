@@ -43,6 +43,29 @@ try {
   const read = async path => (await context.request.get(base + path)).json();
   const screenshot = name => page.screenshot({ path: join(artifacts, name + '.png') });
   const check = (name, value) => { assert.ok(value, name); checks.push(name); };
+  async function verifyMuscleGroupPicker(surface) {
+    const search = page.locator('#exercise-search');
+    await page.locator('#muscle-group-filter').selectOption('Back');
+    await search.fill('bAcK');
+    const searchControl = await search.elementHandle();
+    await search.evaluate(input => { input.setSelectionRange(2, 2); input.dispatchEvent(new Event('input', { bubbles: true })); });
+    check(`${surface}: typing keeps search input, focus and caret`, await searchControl.evaluate(input =>
+      input === document.querySelector('#exercise-search') && input === document.activeElement && input.selectionStart === 2));
+    check(`${surface}: Back search includes muscle targets`, await page.locator('[data-variation-id]', { hasText: 'Row' }).count() > 0
+      && await page.locator('[data-variation-id]', { hasText: 'Pull-up' }).count() > 0);
+    check(`${surface}: Back dropdown excludes Back Squat`, await page.locator('[data-variation-id]', { hasText: 'Back Squat' }).count() === 0);
+    await search.fill('Bench');
+    check(`${surface}: search and Muscle Group intersect`, await page.getByRole('heading', { name: 'No matches', exact: true }).isVisible());
+    check(`${surface}: custom creation remains available with no matches`, await page.locator('#create-exercise').isVisible());
+    await page.locator('#clear-muscle-group-filter').click();
+    check(`${surface}: Clear retains text and restores matches`, await search.inputValue() === 'Bench'
+      && await page.locator('[data-variation-id]', { hasText: 'Bench Press' }).count() > 0);
+    await search.fill('');
+    await page.locator('#muscle-group-filter').selectOption('Back');
+    check(`${surface}: picker has no phone overflow`, await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    await screenshot('muscle-filter-' + surface.toLowerCase());
+    await page.locator('#clear-muscle-group-filter').click();
+  }
   await page.goto(base);
   await page.locator('#open-settings').click();
   assert.equal(await page.locator('#settings-rest-duration').inputValue(), '120');
@@ -63,6 +86,7 @@ try {
   await page.getByRole('textbox', { name: 'Routine name' }).fill('First plan');
   await page.getByRole('button', { name: 'Create routine', exact: true }).click();
   await page.locator('[data-add-routine-exercise]').click();
+  await verifyMuscleGroupPicker('Routine');
   await page.locator('#exercise-search').fill('Bench');
   await page.getByRole('button', { name: 'Bench Press Barbell · Dumbbell · Machine', exact: true }).click();
   await page.getByRole('button', { name: 'Dumbbell', exact: true }).click();
@@ -80,6 +104,15 @@ try {
     await page.locator('#picker-results h3', { hasText: 'Saved at Browser Test Gym' }).isVisible()
     && await page.locator('#picker-results [data-profile-id]', { hasText: 'Acme · Rack 1' }).isVisible()
     && await page.locator('#picker-results [data-variation-id]', { hasText: 'Bench Press' }).first().isVisible());
+  await page.locator('#muscle-group-filter').selectOption('Chest');
+  await page.locator('#exercise-search').fill('Acme');
+  check('Routine: muscle filter matches saved configuration machine details', await page.locator('[data-profile-id]', { hasText: 'Acme · Rack 1' }).isVisible()
+    && await page.locator('[data-variation-id]').count() === 0);
+  await page.locator('#muscle-group-filter').selectOption('Back');
+  check('Routine: saved configurations obey Muscle Group intersection', await page.locator('[data-profile-id]').count() === 0);
+  await page.locator('#clear-muscle-group-filter').click();
+  check('Routine: Clear retains machine search', await page.locator('#exercise-search').inputValue() === 'Acme'
+    && await page.locator('[data-profile-id]', { hasText: 'Acme · Rack 1' }).isVisible());
   await page.locator('#exercise-search').fill('Long Custom Duration Exercise For Browser Testing');
   await page.locator('#create-exercise').click();
   await page.getByRole('radio', { name: 'Duration in seconds' }).check();
@@ -100,6 +133,15 @@ try {
   await page.locator('.set-form').first().waitFor();
   check('Routine starts with correct empty slots', await page.locator('.set-form').count() === 5
     && await page.locator('.set-form input[name=weight], .set-form input[name=result]').evaluateAll(inputs => inputs.every(input => input.value === '')));
+  await page.locator('#open-picker').click();
+  await verifyMuscleGroupPicker('Active');
+  await page.locator('#muscle-group-filter').selectOption('Abs');
+  check('Active: a Variation matches either of its Muscle Groups', await page.locator('[data-variation-id]', { hasText: 'Long Custom Duration' }).count() === 1);
+  await page.locator('#close-picker').click();
+  await page.locator('#open-picker').click();
+  check('Active: new picker resets Muscle Group and query', await page.locator('#muscle-group-filter').inputValue() === ''
+    && await page.locator('#exercise-search').inputValue() === '');
+  await page.locator('#close-picker').click();
   const machineEdit = page.getByRole('button', { name: 'Edit manufacturer / machine for Bench Press', exact: true });
   check('Manufacturer editing is visible without Exercise options', await machineEdit.isVisible()
     && !await page.locator('.exercise-options').first().getAttribute('open'));

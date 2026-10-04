@@ -47,6 +47,8 @@ const state = {
   selectedGymId: null,
   picker: null,
   pickerContext: null,
+  pickerQuery: "",
+  pickerMuscleGroup: "",
   summary: null,
   collapsedExercises: new Set(),
   exerciseOptions: new Set(),
@@ -1554,6 +1556,8 @@ async function openPicker() {
     state.picker = await api(`/api/catalog?gym_id=${state.data.active_workout.gym_id}`);
     state.selectedExercise = null;
     state.selectedEquipment = null;
+    state.pickerQuery = "";
+    state.pickerMuscleGroup = "";
     renderPicker();
   } catch (error) { showToast(error.message); }
 }
@@ -1597,41 +1601,62 @@ async function openRoutineCatalog(gym, routine, onSave) {
   state.pickerContext = { gym, routine, onSave };
   state.selectedExercise = null;
   state.selectedEquipment = null;
+  state.pickerQuery = "";
+  state.pickerMuscleGroup = "";
   renderPicker();
 }
 
-function renderPicker(query = "") {
+function renderPicker(query = state.pickerQuery) {
+  state.pickerQuery = query;
   openSheet(`
       <div class="sheet-handle" aria-hidden="true"></div>
       <div class="sheet-header"><h2 id="picker-title">Add exercise</h2><button class="text-button" id="close-picker">Close</button></div>
       <input class="search" id="exercise-search" type="search" inputmode="search" autocomplete="off" placeholder="Search exercises" aria-label="Search exercises" value="${escapeHtml(query)}" />
+      <div class="picker-filters">
+        <label class="field">Muscle Group<select id="muscle-group-filter"><option value="">All Muscle Groups</option>${(state.picker.muscle_groups ?? []).map((group) => `<option value="${escapeHtml(group)}"${state.pickerMuscleGroup === group ? " selected" : ""}>${escapeHtml(group)}</option>`).join("")}</select></label>
+        <button type="button" class="text-button" id="clear-muscle-group-filter"${state.pickerMuscleGroup ? "" : " hidden"}>Clear filter</button>
+      </div>
       <div id="picker-results"></div>`);
   const search = document.querySelector("#exercise-search");
   search.focus();
   search.setSelectionRange(search.value.length, search.value.length);
   search.addEventListener("input", (event) => renderPickerResults(event.target.value));
+  const muscleGroup = document.querySelector("#muscle-group-filter");
+  muscleGroup.addEventListener("change", () => {
+    state.pickerMuscleGroup = muscleGroup.value;
+    renderPickerResults(search.value);
+  });
+  document.querySelector("#clear-muscle-group-filter").addEventListener("click", () => {
+    state.pickerMuscleGroup = "";
+    muscleGroup.value = "";
+    renderPickerResults(search.value);
+    muscleGroup.focus();
+  });
   renderPickerResults(query);
   document.querySelector("#close-picker").addEventListener("click", () => closePicker());
 }
 
-// Without a query: Recent, then the whole catalog. A query searches the Gym's saved
-// configurations and the catalog together, so nothing needs a second search elsewhere.
+// Search and Muscle Group intersect across the Catalog and the Gym's saved Configurations.
+// With neither filter, Recent stays the quick path for adding a familiar exercise.
 function renderPickerResults(query) {
+  state.pickerQuery = query;
   const wanted = query.trim().toLowerCase();
-  const filtered = state.picker.catalog.filter((item) =>
-    `${exerciseDisplayName(item)} ${item.exercise_name} ${item.variation_name}`.toLowerCase().includes(wanted)
-  );
+  const group = state.pickerMuscleGroup;
+  const filtering = Boolean(wanted || group);
+  const groupsByVariation = new Map(state.picker.catalog.map((item) => [item.id, item.muscle_groups ?? []]));
+  const matches = (item, groups, details = "") => (!group || groups.includes(group))
+    && `${exerciseDisplayName(item)} ${item.exercise_name} ${item.variation_name} ${details} ${groups.join(" ")}`.toLowerCase().includes(wanted);
+  const filtered = state.picker.catalog.filter((item) => matches(item, item.muscle_groups ?? []));
   const gymName = escapeHtml(state.pickerContext?.gym.name ?? state.data.active_workout.gym_name);
-  const configurations = wanted
-    ? (state.picker.saved ?? state.picker.recent).filter((item) =>
-      `${exerciseDisplayName(item)} ${item.exercise_name} ${item.variation_name} ${configurationLabel(item)}`.toLowerCase().includes(wanted))
-    : state.picker.recent;
+  const configurations = (filtering ? state.picker.saved ?? state.picker.recent : state.picker.recent)
+    .filter((item) => matches(item, groupsByVariation.get(item.variation_id) ?? [], configurationLabel(item)));
+  document.querySelector("#clear-muscle-group-filter").hidden = !group;
   document.querySelector("#picker-results").innerHTML = `
-      ${configurations.length ? `<div class="section-title"><h3>${wanted ? "Saved" : "Recent"} at ${gymName}</h3>${wanted ? `<span>${configurations.length}</span>` : ""}</div><div class="recent-list">${configurations.map((item) => `<button class="recent-card" data-profile-id="${item.profile_id}"><strong>${escapeHtml(exerciseDisplayName(item))}</strong><span>${escapeHtml(configurationLabel(item))}</span></button>`).join("")}</div>` : ""}
+      ${configurations.length ? `<div class="section-title"><h3>${filtering ? "Saved" : "Recent"} at ${gymName}</h3>${filtering ? `<span>${configurations.length}</span>` : ""}</div><div class="recent-list">${configurations.map((item) => `<button class="recent-card" data-profile-id="${item.profile_id}"><strong>${escapeHtml(exerciseDisplayName(item))}</strong><span>${escapeHtml(configurationLabel(item))}</span></button>`).join("")}</div>` : ""}
       <div class="section-title"><h3>Exercise catalog</h3><span>${filtered.length}</span></div>
-      <div class="exercise-list">${filtered.map((item) => `<button class="exercise-card" data-variation-id="${item.id}"><strong>${escapeHtml(exerciseDisplayName(item))}</strong><span>${escapeHtml(item.equipment.join(" · "))}</span></button>`).join("") || (wanted && configurations.length
+      <div class="exercise-list">${filtered.map((item) => `<button class="exercise-card" data-variation-id="${item.id}"><strong>${escapeHtml(exerciseDisplayName(item))}</strong><span>${escapeHtml(item.equipment.join(" · "))}</span></button>`).join("") || (configurations.length
         ? `<p class="picker-note">No catalog exercises match. Create a custom exercise if none of the saved ones fit.</p>`
-        : `<div class="empty"><h3>No matches</h3><p>Create the exercise to add it here.</p></div>`)}</div>
+        : `<div class="empty"><h3>No matches</h3><p>Try another search or Muscle Group, or create a custom exercise.</p></div>`)}</div>
       <button class="secondary create-exercise-button" type="button" id="create-exercise">Create custom exercise</button>`;
   document.querySelectorAll("[data-profile-id]").forEach((button) => button.addEventListener("click", () => addRecent(Number(button.dataset.profileId))));
   document.querySelectorAll("[data-variation-id]").forEach((button) => button.addEventListener("click", () => chooseExercise(Number(button.dataset.variationId))));
