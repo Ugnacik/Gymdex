@@ -41,10 +41,11 @@ export class DraftStore {
 
   get(workoutId, setId) {
     const draft = this.read(this.key(workoutId, setId));
-    // Drafts written before Effort existed have no effort key and are still valid.
+    // Drafts written before Effort or Side existed have no such key and are still valid.
     if (!draft || typeof draft.weight !== "string" || typeof draft.result !== "string"
       || typeof draft.assistance !== "boolean" || typeof draft.completed !== "boolean"
-      || ("effort" in draft && draft.effort !== null && !EFFORTS.includes(draft.effort))) return null;
+      || ("effort" in draft && draft.effort !== null && !EFFORTS.includes(draft.effort))
+      || ("side" in draft && draft.side !== null && !SIDES.includes(draft.side))) return null;
     return draft;
   }
 
@@ -115,7 +116,7 @@ export function parseWeight(text) {
   return new RegExp(`^(?:${WEIGHT_PATTERN})$`).test(value) ? Number(value.replace(",", ".")) : NaN;
 }
 
-// Values without an effort key (drafts from before Effort existed) leave the stored effort unchanged.
+// Values without an effort or side key (drafts from before they existed) leave the stored value unchanged.
 export function setPayload(values) {
   const weight = parseWeight(values.weight);
   return {
@@ -123,6 +124,7 @@ export function setPayload(values) {
     result: values.result === "" ? null : Number(values.result),
     completed: values.completed,
     ...("effort" in values ? { effort: values.effort } : {}),
+    ...("side" in values ? { side: values.side } : {}),
   };
 }
 
@@ -137,4 +139,13 @@ export function effortsFor(trackingType) {
 export function effortText(effort, { short = false } = {}) {
   if (effort === "failure") return "Failure";
   return short ? `RIR ${effort}` : `${effort} rep${effort === "1" ? "" : "s"} left`;
+}
+
+// A Set's optional Side for single-limb exercises; a Set without one worked both sides.
+export const SIDES = ["right", "left"];
+
+// "R" or "L" for the Set's side tag; long gives "Right" or "Left".
+export function sideText(side, { short = false } = {}) {
+  const text = side === "left" ? "Left" : side === "right" ? "Right" : "Both";
+  return short && side ? text[0] : text;
 }

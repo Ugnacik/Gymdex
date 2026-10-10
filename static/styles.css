@@ -1459,3 +1459,30 @@ textarea {
 .reorder-row.is-dragging { background: var(--accent-soft); }
 .reorder-row.is-dragging .reorder-handle { color: var(--accent); cursor: grabbing; }
 #reorder-status { margin-bottom: 0; font-size: 0.88rem; }
+
+/* Side tag beside the set number while Record sides is on; its tap area is 44px square. */
+.side-tag {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  min-width: 30px;
+  height: 26px;
+  margin-left: 8px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--surface-3);
+  box-shadow: inset 0 0 0 1px var(--hairline-strong);
+  color: var(--ink-2);
+  font-size: 0.8rem;
+  font-weight: 700;
+  line-height: 26px;
+  vertical-align: middle;
+}
+.side-tag::before { content: ""; position: absolute; inset: -9px -7px; }
+.side-tag[data-recorded="true"] { background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent-line); color: var(--accent); }
+.side-tag:active { transform: scale(0.94); }
+.set-form:has(.side-tag) .fill-previous { max-width: calc(100% - 150px); }
+.sides-option { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 4px 4px; color: var(--ink); font-size: 0.92rem; font-weight: 580; cursor: pointer; }
+.sides-option small { display: block; color: var(--muted); font-size: 0.78rem; font-weight: 500; }
+.sides-option:has(input:disabled) { opacity: 0.45; cursor: default; }

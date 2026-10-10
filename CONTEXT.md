@@ -56,5 +56,9 @@ A recorded effort of one Exercise Variation within a Workout. A Set records the 
 **Effort**:
 The optional record of how hard a Set was: Failure, meaning another repetition was attempted and missed, or the repetitions left in reserve: 0, 1, 2, 3 or 4+. Duration Sets record only Failure.
 
+**Side**:
+The optional record that a Set of a single-limb exercise worked only the right or only the left side. A Set without a Side worked both sides.
+_Avoid_: Hand, limb, arm
+
 **Weight**:
 The optional load recorded for a Set in kilograms, in addition to its repetitions or duration. Positive values represent added resistance. Negative values represent assistance: they are recorded for Assisted Variations, and Sets recorded before assistance became a Variation property may also be negative. Negative values are displayed as "N kg assistance".
