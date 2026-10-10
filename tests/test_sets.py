@@ -122,6 +122,46 @@ class SetTests(unittest.TestCase):
         previous = db.bootstrap(self.connection)['workout_exercises'][0]['previous_sets']
         self.assertEqual([(s['result'], s['effort']) for s in previous], [(8, '1')])
 
+    def test_side_is_kept_when_absent_cleared_by_null_and_rejected_when_invalid(self):
+        item = self.first_set()
+        self.assertIsNone(item['side'])
+        self.assertEqual(self.save_effort(item, side='right')['side'], 'right')
+        # Cached clients and queued offline drafts omit side; their saves keep it.
+        self.assertEqual(self.save_effort(item)['side'], 'right')
+        for side in ['R', 'Right', '', 0, True, ['left']]:
+            with self.subTest(side=side), self.assertRaises(ValueError):
+                self.save_effort(item, side=side, result=12)
+        self.assertEqual((self.first_set()['side'], self.first_set()['result']), ('right', 8))
+        self.assertIsNone(self.save_effort(item, side=None)['side'])
+
+    def test_added_set_takes_the_other_side_of_the_set_above(self):
+        self.save_effort(self.first_set(), side='right')
+        added = db.add_set(self.connection, self.entry['id'])
+        self.assertEqual(added['side'], 'left')
+        self.assertEqual(db.add_set(self.connection, self.entry['id'])['side'], 'right')
+        self.save_effort(self.first_set(self.add_exercise(self.plank, 'Bodyweight')), side=None)
+        self.assertIsNone(db.add_set(self.connection, db.bootstrap(self.connection)['workout_exercises'][1]['id'])['side'])
+
+    def test_new_slots_take_sides_from_last_workout_then_alternate(self):
+        self.save_effort(self.first_set(), side='left')
+        self.save_effort(db.add_set(self.connection, self.entry['id']), side='left')
+        db.complete_workout(self.connection, self.workout['id'])
+        self.workout = db.start_workout(self.connection, self.gym['id'])
+        slots = db.sets_for_exercise(self.connection, self.add_exercise(self.press, 'Barbell')['id'])
+        self.assertEqual([s['side'] for s in slots], ['left', 'left'])
+        self.assertEqual(db.slot_sides([dict(side='right'), dict(side='left')], 5),
+                         ['right', 'left', 'right', 'left', 'right'])
+        self.assertEqual(db.slot_sides([dict(side=None), dict(side=None)], 3), [None, None, None])
+        self.assertEqual(db.slot_sides([], 1), [None])
+
+    def test_repeated_workout_slots_take_sides_from_last_workout(self):
+        self.save_effort(self.first_set(), side='right')
+        self.save_effort(db.add_set(self.connection, self.entry['id']))
+        db.complete_workout(self.connection, self.workout['id'])
+        db.repeat_workout(self.connection, self.workout['id'])
+        entry = db.bootstrap(self.connection)['workout_exercises'][0]
+        self.assertEqual([s['side'] for s in entry['sets']], ['right', 'left'])
+
     def test_removing_a_set_renumbers_the_remaining_sets_and_missing_ids_are_not_found(self):
         first = self.first_set()
         second = db.add_set(self.connection, self.entry['id'])

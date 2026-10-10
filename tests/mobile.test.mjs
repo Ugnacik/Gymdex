@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import vm from 'node:vm';
-import { DraftStore, effortText, setPayload } from '../static/drafts.mjs';
+import { DraftStore, effortText, setPayload, sideText } from '../static/drafts.mjs';
 
 function storage() {
   const data = new Map();
@@ -101,6 +101,19 @@ test('drafts from before Effort existed still restore, and an unknown Effort is 
 test('Effort reads as Failure or the repetitions left', () => {
   assert.deepEqual(['failure', '0', '1', '4+'].map((effort) => effortText(effort)), ['Failure', '0 reps left', '1 rep left', '4+ reps left']);
   assert.deepEqual(['failure', '2', '4+'].map((effort) => effortText(effort, { short: true })), ['Failure', 'RIR 2', 'RIR 4+']);
+});
+
+test('Side travels like Effort: sent only when carried, restored from drafts, unknown values rejected', () => {
+  assert.equal('side' in setPayload(values), false);
+  assert.equal(setPayload({ ...values, side: 'left' }).side, 'left');
+  const disk = storage();
+  const store = new DraftStore(() => disk);
+  store.put(1, 2, { ...values, side: 'right' });
+  store.put(1, 3, { ...values, side: 'R' });
+  const reloaded = new DraftStore(() => disk);
+  assert.equal(reloaded.get(1, 2).side, 'right');
+  assert.equal(reloaded.get(1, 3), null);
+  assert.deepEqual(['right', 'left', null].map((side) => sideText(side, { short: true })), ['R', 'L', 'Both']);
 });
 
 test('worker upgrade installs the current shell and removes the previous offline version', async () => {

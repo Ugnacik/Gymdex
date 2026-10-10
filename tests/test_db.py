@@ -101,7 +101,7 @@ class CatalogUpgradeTests(unittest.TestCase):
         db.initialize(connection)
         db.initialize(connection)
 
-        self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 7)
+        self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 8)
         for table in ("gyms", "gym_exercise_profiles", "exercise_variations"):
             with self.subTest(table=table):
                 # Nothing is archived after the upgrade.
@@ -127,7 +127,7 @@ class CatalogUpgradeTests(unittest.TestCase):
             "SELECT id FROM exercise_variations WHERE custom = 1"
         )]
         self.assertEqual(custom_ids, [created["id"]])
-        self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 7)
+        self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 8)
         connection.close()
 
     def test_version_six_database_gains_unrecorded_effort_and_keeps_its_sets(self):
@@ -147,10 +147,10 @@ class CatalogUpgradeTests(unittest.TestCase):
         db.initialize(connection)
         db.initialize(connection)
 
-        self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 7)
+        self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 8)
         detail = db.completed_workout(connection, workout["id"])
         self.assertEqual(detail["workout_exercises"][0]["sets"], [
-            dict(id=item["id"], position=1, weight=80, result=5, completed=1, effort=None)])
+            dict(id=item["id"], position=1, weight=80, result=5, completed=1, effort=None, side=None)])
         corrected = db.correct_completed_set(
             connection, workout["id"], item["id"], dict(weight=80, result=5, completed=True, effort="3"))
         self.assertEqual(corrected["effort"], "3")
@@ -158,6 +158,29 @@ class CatalogUpgradeTests(unittest.TestCase):
             connection.execute("UPDATE workout_sets SET effort = 'easy'")
         connection.close()
 
+
+    def test_version_seven_database_gains_sets_without_a_side(self):
+        connection = db.connect(self.path)
+        db.initialize(connection)
+        gym = db.create_gym(connection, "Home")
+        bench = self.catalog(connection, gym["id"])[("Bench Press", "Standard")]
+        workout = db.start_workout(connection, gym["id"])
+        entry = db.add_workout_exercise(connection, workout["id"], bench["id"], "Barbell")
+        item = db.sets_for_exercise(connection, entry["id"])[0]
+        db.update_set(connection, item["id"], dict(weight=80, result=5, completed=True, effort="2"))
+        connection.execute("ALTER TABLE workout_sets DROP COLUMN side")
+        connection.execute("PRAGMA user_version = 7")
+        connection.commit()
+
+        db.initialize(connection)
+        db.initialize(connection)
+
+        self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 8)
+        self.assertEqual(db.sets_for_exercise(connection, entry["id"]), [
+            dict(id=item["id"], position=1, weight=80, result=5, completed=1, effort="2", side=None)])
+        with self.assertRaises(sqlite3.IntegrityError):
+            connection.execute("UPDATE workout_sets SET side = 'both'")
+        connection.close()
 
 class DatabaseTests(unittest.TestCase):
     def setUp(self):

@@ -320,6 +320,16 @@ def migrate(connection: sqlite3.Connection) -> None:
                        CHECK (effort IN ('failure', '0', '1', '2', '3', '4+'))"""
                 )
             connection.execute("PRAGMA user_version = 7")
+    if version < 8:
+        with connection:
+            connection.execute("BEGIN IMMEDIATE")
+            # A Set's Side (see CONTEXT.md) stays NULL for sets that worked both sides.
+            columns = {row["name"] for row in connection.execute("PRAGMA table_info(workout_sets)")}
+            if "side" not in columns:
+                connection.execute(
+                    "ALTER TABLE workout_sets ADD COLUMN side TEXT CHECK (side IN ('left', 'right'))"
+                )
+            connection.execute("PRAGMA user_version = 8")
 
 
 def rows(cursor: sqlite3.Cursor) -> list[dict[str, Any]]:
@@ -394,6 +404,30 @@ def previous_sets(
     return [
         item for item in sets_for_exercise(connection, previous["id"]) if item["completed"]
     ] if previous else []
+
+
+OTHER_SIDE = {"left": "right", "right": "left", None: None}
+
+
+def slot_sides(previous: list[dict[str, Any]], count: int) -> list[str | None]:
+    """Sides for count new set slots: Last workout's by index, then alternating."""
+    sides = [item["side"] for item in previous[:count]]
+    if not any(sides):
+        return [None] * count
+    while len(sides) < count:
+        sides.append(OTHER_SIDE[sides[-1]])
+    return sides
+
+
+def insert_slots(
+    connection: sqlite3.Connection, exercise_id: int, previous: list[dict[str, Any]], count: int,
+) -> None:
+    """Add blank sets 1..count (at least one) that take their Sides from Last workout."""
+    count = max(count, 1)
+    connection.executemany(
+        "INSERT INTO workout_sets(workout_exercise_id, position, side) VALUES (?, ?, ?)",
+        [(exercise_id, slot, side) for slot, side in enumerate(slot_sides(previous, count), start=1)],
+    )
 
 
 def catalog_for_gym(
@@ -741,6 +775,7 @@ def _add_planned_exercises(
     and Variation (a Rename applies to new workouts). Returns the number skipped.
     """
     kept = [(entry, count) for entry, count in zip(planned, slots) if not entry["archived"]]
+    gym_id = connection.execute("SELECT gym_id FROM workouts WHERE id = ?", (workout_id,)).fetchone()[0]
     for position, (entry, count) in enumerate(kept, start=1):
         entry_cursor = connection.execute(
             """INSERT INTO workout_exercises
@@ -755,10 +790,11 @@ def _add_planned_exercises(
                 "tracking_type",
              ))),
         )
-        connection.executemany(
-            "INSERT INTO workout_sets(workout_exercise_id, position) VALUES (?, ?)",
-            [(entry_cursor.lastrowid, slot) for slot in range(1, max(count, 1) + 1)],
+        previous = previous_sets(
+            connection, gym_id, entry["variation_id"], entry["equipment"], entry["manufacturer"],
+            entry["label"], entry["tracking_type"],
         )
+        insert_slots(connection, entry_cursor.lastrowid, previous, count)
     return len(planned) - len(kept)
 
 
@@ -1225,14 +1261,11 @@ def add_workout_exercise(
             variation["tracking_type"],
         ),
     )
-    slots = len(previous_sets(
+    previous = previous_sets(
         connection, workout["gym_id"], variation_id, equipment, manufacturer, label,
         variation["tracking_type"],
-    ))
-    connection.executemany(
-        "INSERT INTO workout_sets(workout_exercise_id, position) VALUES (?, ?)",
-        [(cursor.lastrowid, slot) for slot in range(1, max(slots, 1) + 1)],
     )
+    insert_slots(connection, cursor.lastrowid, previous, len(previous))
     connection.commit()
     return {
         "id": cursor.lastrowid,
@@ -1375,7 +1408,7 @@ def set_workout_exercise_note(
 
 
 # The columns of every Set the API returns.
-SET_COLUMNS = "id, position, weight, result, completed, effort"
+SET_COLUMNS = "id, position, weight, result, completed, effort, side"
 
 
 def sets_for_exercise(connection: sqlite3.Connection, exercise_id: int) -> list[dict[str, Any]]:
@@ -1471,18 +1504,19 @@ def move_workout_exercise(
 
 def append_set(connection: sqlite3.Connection, exercise_id: int) -> dict[str, Any]:
     """Append a set that copies the weight and result of the set above, not completed
-    and without its effort.
+    and without its effort, on the other Side when the set above has one.
 
     Works for active and completed workouts; the caller owns the transaction.
     """
     above = connection.execute(
-        """SELECT position, weight, result FROM workout_sets
+        """SELECT position, weight, result, side FROM workout_sets
            WHERE workout_exercise_id = ? ORDER BY position DESC LIMIT 1""",
         (exercise_id,),
     ).fetchone()
     cursor = connection.execute(
-        "INSERT INTO workout_sets(workout_exercise_id, position, weight, result) VALUES (?, ?, ?, ?)",
-        (exercise_id, above["position"] + 1, above["weight"], above["result"]) if above else (exercise_id, 1, None, None),
+        "INSERT INTO workout_sets(workout_exercise_id, position, weight, result, side) VALUES (?, ?, ?, ?, ?)",
+        (exercise_id, above["position"] + 1, above["weight"], above["result"], OTHER_SIDE[above["side"]])
+        if above else (exercise_id, 1, None, None, None),
     )
     return _set_row(connection, cursor.lastrowid)
 
@@ -1518,6 +1552,12 @@ def validate_effort(payload: dict) -> None:
         raise ValueError("Effort must be Failure or 0, 1, 2, 3 or 4+ reps in reserve.")
 
 
+def validate_side(payload: dict) -> None:
+    """A side key is optional like effort: absent keeps the stored Side and null clears it."""
+    if payload.get("side") not in (None, "left", "right"):
+        raise ValueError("Side must be left, right or null.")
+
+
 def _save_set(
     connection: sqlite3.Connection, set_id: int, payload: dict,
     values: tuple[int | float | None, int | None, bool],
@@ -1534,6 +1574,8 @@ def _save_set(
     connection.execute("UPDATE workout_sets SET weight = ?, result = ?, completed = ? WHERE id = ?", (weight, result, completed, set_id))
     if "effort" in payload:
         connection.execute("UPDATE workout_sets SET effort = ? WHERE id = ?", (effort, set_id))
+    if "side" in payload:
+        connection.execute("UPDATE workout_sets SET side = ? WHERE id = ?", (payload["side"], set_id))
     return _set_row(connection, set_id)
 
 
@@ -1555,6 +1597,7 @@ def assisted_weight(weight: int | float | None, assisted: bool) -> int | float |
 def update_set(connection: sqlite3.Connection, set_id: int, payload: dict) -> dict[str, Any]:
     values = validate_set_values(payload)
     validate_effort(payload)
+    validate_side(payload)
     with connection:
         connection.execute("BEGIN IMMEDIATE")
         item = connection.execute("SELECT workout_exercise_id FROM workout_sets WHERE id = ?", (set_id,)).fetchone()
@@ -1572,6 +1615,7 @@ def correct_completed_set(
         raise LookupError("Completed workout set not found.")
     values = validate_set_values(payload)
     validate_effort(payload)
+    validate_side(payload)
     with connection:
         connection.execute("BEGIN IMMEDIATE")
         if not connection.execute(

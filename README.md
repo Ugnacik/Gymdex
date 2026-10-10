@@ -402,6 +402,16 @@ the sets shown for a tapped progress point, and the CSV export. Tapping "Last
 workout" copies only the weight and result, and charts and best values ignore
 Effort.
 
+## Sides for single-limb exercises
+
+For one-arm or one-leg work, open **Exercise options** on the exercise and turn
+on **Record sides**. Each set gets an **R** or **L** tag beside its number,
+alternating from R. Tap a tag to switch it, and **Add set** takes the other side
+of the set above. The next workout with that Exercise Configuration starts its
+sets with last time's sides, so "Last workout" compares right with right and
+left with left. Turning the switch off returns the sets to both sides. In
+completed workouts, **Edit set** can change a set's side.
+
 ## Compact workout view and finish summary
 
 Tap an exercise heading to collapse or expand its sets. Completion counts stay
@@ -533,7 +543,8 @@ To keep daily backups on the Pi and on a second machine, see
 
 Use **Export CSV** in Workout history to download workout, exercise, and set rows.
 The CSV includes empty workouts and unfinished sets. The `effort` column holds
-each set's Effort (`failure`, `0` to `3`, or `4+`; empty when not recorded). The `workout_note` and
+each set's Effort (`failure`, `0` to `3`, or `4+`; empty when not recorded), and `side`
+holds `right` or `left` (empty for both sides). The `workout_note` and
 `exercise_note` columns hold the notes; a note repeats on every row of its
 workout or exercise. It is for spreadsheets and
 analysis; it does not contain the full catalog or gym configurations. Unlike the

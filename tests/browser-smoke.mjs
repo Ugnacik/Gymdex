@@ -414,6 +414,28 @@ try {
     check(`Duration Failure clears the Seconds label, input and Done at ${width}px`, clear && area.bottom <= area.resultTop && area.right <= area.doneLeft);
   }
   await page.setViewportSize({ width: 390, height: 844 });
+  const benchCard = page.locator('.workout-exercise-card').first();
+  const sideOf = async index => (await read('/api/bootstrap')).workout_exercises[0].sets[index].side;
+  await benchCard.locator('.exercise-options > summary').click();
+  await benchCard.locator('[data-record-sides]').click();
+  const sideTag = set.locator('[data-set-side]');
+  check('Record sides tags the first set R and saves it', await sideTag.innerText() === 'R' && await eventually(async () => await sideOf(0) === 'right'));
+  await sideTag.click();
+  check('Tapping the side tag flips it to L', await sideTag.innerText() === 'L' && await eventually(async () => await sideOf(0) === 'left'));
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    const area = await sideTag.evaluate(tag => { const box = tag.getBoundingClientRect(); const style = getComputedStyle(tag, '::before');
+      return { width: box.width - 2 * parseFloat(style.left), height: box.height - 2 * parseFloat(style.top) }; });
+    check(`Side tag is touch-sized and the set fits ${width}px`, area.width >= 44 && area.height >= 44
+      && await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth));
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await set.scrollIntoViewIfNeeded();
+  await screenshot('set-side-tag');
+  await benchCard.locator('[data-record-sides]').click();
+  check('Turning Record sides off removes the tags and the saved sides', await set.locator('[data-set-side]').count() === 0
+    && await eventually(async () => await sideOf(0) === null));
+  await benchCard.locator('.exercise-options > summary').click();
   await page.locator('.exercise-summary').first().click();
   check('Exercise can collapse', !await page.locator('.workout-exercise').first().evaluate(card => card.open));
   await page.locator('.exercise-summary').first().click();
