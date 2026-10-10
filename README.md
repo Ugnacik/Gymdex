@@ -173,13 +173,13 @@ Exercise Variations.
 
 ### Suggested values
 
-Variation names and Manufacturers can be reused across Exercises and Gyms,
-including when creating a new Exercise. Machine labels are offered only for the
-Exercise they were entered on, at any Gym. Type a value, or tap the field's
-arrow to pick one entered before; typing also narrows that list. Values you
-type are offered next time. Variation defaults to Standard; choosing an
-existing Variation for the same Exercise uses it instead of creating another
-one. Manufacturer and Machine label are optional and start empty.
+Manufacturers can be reused across Exercises and Gyms. Variation names and
+Machine labels are offered only for the Exercise they belong to, at any Gym.
+Type a value, or tap the field's arrow to pick one entered before; typing also
+narrows that list. Values you type are offered next time. Variation defaults to
+Standard; choosing an existing Variation for the same Exercise uses it instead
+of creating another one. Manufacturer and Machine label are optional and start
+empty.
 
 Equipment options offers the starter catalog's equipment plus equipment of the
 named Exercise's Variations, including values you entered.

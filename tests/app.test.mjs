@@ -708,7 +708,6 @@ const suggestionCatalog = {
   ],
   suggestions: {
     equipment: ['Barbell', 'Machine'],
-    variations: ['Boy', 'Front Plank', 'Single Leg', 'Standard'],
     manufacturers: ['Eleiko', 'Hammer Strength', 'Technogym'],
     exercises: [
       { name: 'Bench Press', variations: ['Standard'], equipment: ['Barbell', 'Machine'], manufacturers: ['Eleiko'], labels: ['Rack 2'] },
@@ -719,14 +718,14 @@ const suggestionCatalog = {
   },
 };
 
-test('custom creation offers global Variation names and keeps Equipment relevant to the Exercise', async () => {
+test('custom creation offers the typed Exercise\'s Variations and Equipment', async () => {
   const app = await harness();
   const { sheetNodes, customForm, requests } = await openPickerSheet(app, suggestionCatalog, () => response({ id: 18,
     exercise_name: 'Leg Press', variation_name: 'Wide', tracking_type: 'duration', equipment: ['Sled', 'Hack'] }, 201));
   const variationField = sheetNodes['#variation-field'];
   const equipmentField = sheetNodes['#equipment-choice'];
   app.nodes['#create-exercise'].events.click();
-  assert.deepEqual(optionValues(variationField, 'variation-name'), ['Standard', 'Boy', 'Front Plank', 'Single Leg']);
+  assert.deepEqual(optionValues(variationField, 'variation-name'), ['Standard']);
   assert.equal(variationField.querySelector('#variation-name').value, '');
   assert.match(variationField.innerHTML, /placeholder="Standard"/);
   assert.deepEqual(optionValues(equipmentField, 'equipment-entry'), ['Barbell', 'Machine']);
@@ -734,6 +733,7 @@ test('custom creation offers global Variation names and keeps Equipment relevant
   name.value = ' leg  press';
   name.events.input();
   assert.match(sheetNodes['#variation-help'].textContent, /Choose an existing variation to keep its tracking, equipment, Muscle Groups and Assisted settings/);
+  assert.deepEqual(optionValues(variationField, 'variation-name'), ['Standard', 'Single Leg']);
   type(variationField, 'variation-name', 'Wide');
   assert.deepEqual(optionValues(equipmentField, 'equipment-entry'), ['Barbell', 'Machine', 'Sled']);
   // Picking a listed option adds it straight away, without raising the keyboard.
@@ -758,7 +758,7 @@ test('a reused Variation name creates a new Exercise, while an existing Variatio
     exercise_name: 'New Exercise', variation_name: 'Boy', tracking_type: 'repetitions', equipment: ['Machine'] }, 201));
   app.nodes['#create-exercise'].events.click();
   const variationField = sheetNodes['#variation-field'];
-  choose(variationField, 'variation-name', 'Boy');
+  type(variationField, 'variation-name', 'Boy');
   choose(sheetNodes['#equipment-choice'], 'equipment-entry', 'Machine');
   const originalFormData = globalThis.FormData;
   globalThis.FormData = class { constructor() { return new Map([['name', 'New Exercise'], ['tracking_type', 'repetitions']]); } };
@@ -766,6 +766,8 @@ test('a reused Variation name creates a new Exercise, while an existing Variatio
   finally { globalThis.FormData = originalFormData; }
   assert.equal(JSON.parse(requests.at(-1)[1].body).variation_name, 'Boy');
   app.nodes['#create-exercise'].events.click();
+  sheetNodes['[name="name"]'].value = ' plank ';
+  sheetNodes['[name="name"]'].events.input();
   choose(variationField, 'variation-name', 'Front Plank');
   globalThis.FormData = class { constructor() { return new Map([['name', ' plank '], ['tracking_type', 'repetitions']]); } };
   try { await customForm.events.submit({ preventDefault() {}, currentTarget: customForm }); }

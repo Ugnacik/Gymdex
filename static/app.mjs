@@ -1698,20 +1698,19 @@ function equipmentProblem(names, name) {
   return "";
 }
 
-// Equipment and machine labels stay relevant to the typed Exercise; Variation names and
-// manufacturers can be reused globally.
+// Variations, Equipment and machine labels stay relevant to the typed Exercise; manufacturers
+// can be reused globally.
 function exerciseSuggestions(name) {
   const suggestions = state.picker.suggestions ?? { equipment: [], exercises: [] };
   const key = cleanEquipmentName(name).toLowerCase();
   const known = suggestions.exercises.find((item) => item.name.toLowerCase() === key)
     ?? { variations: [], equipment: suggestions.equipment, manufacturers: [], labels: [] };
-  return { ...known, choices: suggestions.variations ?? known.variations,
-    manufacturers: suggestions.manufacturers ?? known.manufacturers };
+  return { ...known, manufacturers: suggestions.manufacturers ?? known.manufacturers };
 }
 
-// Standard remains the default for a new Variation, with every previously entered name reusable.
+// Standard, the default for a new Variation, then the typed Exercise's own Variations.
 function variationChoices(known) {
-  return ["Standard", ...known.choices.filter((value) => value.toLowerCase() !== "standard")];
+  return ["Standard", ...known.variations.filter((value) => value.toLowerCase() !== "standard")];
 }
 
 function variationHelp(known) {

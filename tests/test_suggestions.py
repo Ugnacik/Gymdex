@@ -87,19 +87,18 @@ class SuggestionTests(unittest.TestCase):
         db.remove_item(self.connection, 'variation', light['id'])
         self.assertIsNone(self.suggestions('Sled Push'))
         choices = db.exercise_suggestions(self.connection)
-        self.assertNotIn('Heavy', choices['variations'])
-        self.assertNotIn('Light', choices['variations'])
         self.assertEqual(choices['manufacturers'], [])
         db.restore_item(self.connection, 'variation', heavy['id'])
-        self.assertIn('Heavy', db.exercise_suggestions(self.connection)['variations'])
+        self.assertEqual(self.suggestions('Sled Push')['variations'], ['Heavy'])
 
-    def test_variation_names_are_reusable_across_exercises(self):
+    def test_variation_names_are_offered_only_for_their_exercise(self):
         db.create_exercise(self.connection, 'First Exercise', 'Boy', 'duration', ['Bodyweight'])
         choices = db.catalog_for_gym(self.connection, self.other['id'])['suggestions']
-        self.assertIn('Boy', choices['variations'])
+        self.assertNotIn('variations', choices)
+        self.assertEqual(self.suggestions('First Exercise')['variations'], ['Boy'])
+        self.assertNotIn('Boy', self.suggestions('Bench Press')['variations'])
         created = db.create_exercise(self.connection, 'Second Exercise', 'Boy', 'repetitions', ['Machine'])
         self.assertEqual(created['variation_name'], 'Boy')
-        self.assertEqual(db.exercise_suggestions(self.connection)['variations'].count('Boy'), 1)
 
     def test_an_archived_gyms_configurations_are_still_offered_at_other_gyms(self):
         self.configure(self.other, self.leg_press, 'Machine', 'Cybex', 'Left')
