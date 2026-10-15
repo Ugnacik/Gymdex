@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createApp } from '../static/app.mjs';
+import { createApp, workoutTitle } from '../static/app.mjs';
 import { DraftStore } from '../static/drafts.mjs';
 import { choiceContainer, choose, listed, toggleList, type } from './fake-choice-field.mjs';
 
@@ -2506,4 +2506,11 @@ test('Completed Workout detail offers no reorder entry point or name hold', asyn
   const app = await harness();
   const opened = await openHistoryDetail(app, completedDetail(), {});
   assert.doesNotMatch(opened.nodes['#history-detail'].innerHTML, /data-reorder|Reorder exercises|data-move-exercise/);
+});
+
+test('a workout in history is named by its trained muscle groups, or by its gym', () => {
+  assert.equal(workoutTitle({ gym_name: 'VIP gym', muscle_groups: [] }), 'VIP gym');
+  assert.equal(workoutTitle({ gym_name: 'VIP gym', muscle_groups: ['Chest'] }), 'Chest');
+  assert.equal(workoutTitle({ gym_name: 'VIP gym', muscle_groups: ['Chest', 'Triceps'] }), 'Chest & Triceps');
+  assert.equal(workoutTitle({ gym_name: 'VIP gym', muscle_groups: ['Back', 'Biceps', 'Forearms'] }), 'Back, Biceps & Forearms');
 });

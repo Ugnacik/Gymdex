@@ -584,7 +584,20 @@ def workout_history(connection: sqlite3.Connection, gym_id: str = "", start: str
             ORDER BY w.started_at DESC, w.id DESC LIMIT 21 OFFSET ?""",
         (*parameters, page_offset),
     ))
+    for item in items[:20]:
+        item["muscle_groups"] = trained_muscle_groups(connection, item["id"])
     return {"workouts": items[:20], "next_offset": page_offset + 20 if len(items) > 20 else None}
+
+
+def trained_muscle_groups(connection: sqlite3.Connection, workout_id: int) -> list[str]:
+    """Muscle Groups of a Workout's completed Sets, most Sets first, to name it in history."""
+    counts = {row["muscle_group"]: row["sets"] for row in connection.execute(
+        """SELECT m.muscle_group, COUNT(*) AS sets FROM workout_sets s
+           JOIN workout_exercises e ON e.id = s.workout_exercise_id
+           JOIN variation_muscle_groups m ON m.variation_id = e.variation_id
+           WHERE e.workout_id = ? AND s.completed = 1 GROUP BY m.muscle_group""", (workout_id,),
+    )}
+    return sorted(counts, key=lambda group: (-counts[group], MUSCLE_GROUPS.index(group)))
 
 
 def completed_workout(connection: sqlite3.Connection, workout_id: int) -> dict[str, Any]:
@@ -598,7 +611,8 @@ def completed_workout(connection: sqlite3.Connection, workout_id: int) -> dict[s
     ).fetchone()
     if not workout:
         raise LookupError("Completed workout not found.")
-    workout = {**dict(workout), "gym_archived": bool(workout["gym_archived"])}
+    workout = {**dict(workout), "gym_archived": bool(workout["gym_archived"]),
+               "muscle_groups": trained_muscle_groups(connection, workout_id)}
     entries = rows(connection.execute(
         """SELECT id, variation_id, position, exercise_name_snapshot AS exercise_name,
                   variation_name_snapshot AS variation_name, equipment_snapshot AS equipment,

@@ -52,6 +52,26 @@ class HistoryTests(unittest.TestCase):
             self.assertEqual(self.request(f'/api/history/{workout_id}')[0], 404)
         self.assertEqual(db.completed_workout(self.connection, completed['id'])['workout_exercises'], [])
 
+    def test_workouts_are_named_by_muscle_groups_of_completed_sets_most_sets_first(self):
+        workout = self.workout(completed=False)
+        catalog = {(v['exercise_name'], v['variation_name']): v for v in db.catalog_for_gym(self.connection, self.gym['id'])['catalog']}
+
+        def train(key, completed_sets):
+            entry = db.add_workout_exercise(self.connection, workout['id'], catalog[key]['id'], catalog[key]['equipment'][0])
+            sets = db.sets_for_exercise(self.connection, entry['id'])
+            for _ in range(completed_sets - len(sets)):
+                sets.append(db.add_set(self.connection, entry['id']))
+            for item in sets[:completed_sets]:
+                db.update_set(self.connection, item['id'], dict(weight=20, result=8, completed=True))
+
+        train(('Triceps Pushdown', 'Standard'), 3)
+        train(('Bench Press', 'Standard'), 2)
+        train(('Dip', 'Standard'), 1)
+        train(('Deadlift', 'Conventional'), 0)  # Skipped: its Muscle Groups were not trained.
+        db.complete_workout(self.connection, workout['id'])
+        self.assertEqual(self.request('/api/history')[1]['workouts'][0]['muscle_groups'], ['Triceps', 'Chest'])
+        self.assertEqual(self.request(f'/api/history/{workout["id"]}')[1]['workout']['muscle_groups'], ['Triceps', 'Chest'])
+
     def test_pagination_is_stable_for_matching_timestamps(self):
         ids = [self.workout()['id'] for _ in range(23)]
         first = db.workout_history(self.connection)
