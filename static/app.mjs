@@ -22,6 +22,13 @@ export function formatLocalDateTime(value) {
 
 // Returns the UTC instant of local midnight at the start of a YYYY-MM-DD date,
 // shifted by whole days, or the value unchanged when it is not such a date.
+// Names a Workout in history by what it trained, such as "Chest & Triceps", or by its Gym.
+export function workoutTitle(workout) {
+  const groups = workout.muscle_groups || [];
+  if (!groups.length) return workout.gym_name;
+  return groups.length === 1 ? groups[0] : `${groups.slice(0, -1).join(", ")} & ${groups.at(-1)}`;
+}
+
 export function localMidnightUtc(value, addDays = 0) {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
   if (!match) return value;
@@ -653,8 +660,8 @@ function playRestEndCue() {
 
 function renderHistoryDetail(data, canRepeat) {
   const { workout, workout_exercises: entries } = data;
-  return `<h3>${escapeHtml(workout.gym_name)}</h3>
-    <p>Started ${escapeHtml(formatLocalDateTime(workout.started_at))}<br>Finished ${escapeHtml(formatLocalDateTime(workout.completed_at))}</p>
+  return `<h3>${escapeHtml(workoutTitle(workout))}</h3>
+    <p>${workout.muscle_groups?.length ? `${escapeHtml(workout.gym_name)}<br>` : ""}Started ${escapeHtml(formatLocalDateTime(workout.started_at))}<br>Finished ${escapeHtml(formatLocalDateTime(workout.completed_at))}</p>
     ${renderHistoryNote("workout", workout.note, "workout note")}
     ${workout.gym_archived ? `<p class="history-notice">Restore ${escapeHtml(workout.gym_name)} in Manage to repeat this workout.</p>`
       : `${canRepeat ? `<button class="secondary history-repeat" type="button" data-repeat-workout="${workout.id}">Repeat this workout</button>` : `<p class="history-notice">Finish the active workout before repeating this one.</p>`}
@@ -984,7 +991,7 @@ function openHistory(initialWorkoutId = null) {
       nextOffset = data.next_offset;
       message.textContent = data.workouts.length ? "Completed workouts, newest first." : "No completed workouts match these filters.";
       results.innerHTML = data.workouts.map((workout) => `<button class="recent-card" data-history-id="${workout.id}">
-        <strong>${escapeHtml(workout.gym_name)}</strong><span>${escapeHtml(formatLocalDateTime(workout.started_at))}</span>
+        <strong>${escapeHtml(workoutTitle(workout))}</strong><span>${workout.muscle_groups?.length ? `${escapeHtml(workout.gym_name)} · ` : ""}${escapeHtml(formatLocalDateTime(workout.started_at))}</span>
         <span>${workout.exercise_count} exercise${workout.exercise_count === 1 ? "" : "s"} · ${workout.completed_set_count} completed set${workout.completed_set_count === 1 ? "" : "s"}</span></button>`).join("");
       results.querySelectorAll("[data-history-id]").forEach((button) => button.addEventListener("click", () => showDetail(button)));
       previous.disabled = offset === 0;

@@ -76,7 +76,10 @@ class MuscleGroupTests(unittest.TestCase):
         before = db.completed_workout(self.connection, workout['id'])
         self.assertEqual(db.set_variation_muscle_groups(self.connection, custom['id'], ['Back'])['muscle_groups'], ['Back'])
         self.assertEqual(db.set_variation_muscle_groups(self.connection, custom['id'], [])['muscle_groups'], [])
-        self.assertEqual(db.completed_workout(self.connection, workout['id']), before)
+        after = db.completed_workout(self.connection, workout['id'])
+        self.assertEqual(after['workout_exercises'], before['workout_exercises'])
+        # The history title follows the corrected Muscle Groups.
+        self.assertEqual((before['workout']['muscle_groups'], after['workout']['muscle_groups']), (['Abs'], []))
 
     def test_starter_assignments_are_not_editable_and_missing_rows_are_reported(self):
         with self.assertRaisesRegex(RuntimeError, "Starter catalog exercises can't be changed"):
