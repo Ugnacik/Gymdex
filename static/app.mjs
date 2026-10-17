@@ -1647,14 +1647,13 @@ function renderPicker(query = state.pickerQuery) {
       <div class="sheet-handle" aria-hidden="true"></div>
       <div class="sheet-header"><h2 id="picker-title">Add exercise</h2><button class="text-button" id="close-picker">Close</button></div>
       <input class="search" id="exercise-search" type="search" inputmode="search" autocomplete="off" placeholder="Search exercises" aria-label="Search exercises" value="${escapeHtml(query)}" />
+      <button type="button" class="filter-chip" id="muscle-group-chip"${state.pickerMuscleGroup ? "" : " hidden"}></button>
       <div class="picker-filters">
         <label class="field">Muscle Group<select id="muscle-group-filter"><option value="">All Muscle Groups</option>${(state.picker.muscle_groups ?? []).map((group) => `<option value="${escapeHtml(group)}"${state.pickerMuscleGroup === group ? " selected" : ""}>${escapeHtml(group)}</option>`).join("")}</select></label>
         <button type="button" class="text-button" id="clear-muscle-group-filter"${state.pickerMuscleGroup ? "" : " hidden"}>Clear filter</button>
       </div>
-      <div id="picker-results"></div>
-      <div class="picker-create"><button class="secondary create-exercise-button" type="button" id="create-exercise">Create custom exercise</button></div>`);
+      <div id="picker-results"></div>`);
   document.querySelector("#picker .sheet").className = "sheet picker-catalog";
-  document.querySelector("#create-exercise").addEventListener("click", () => renderCustomExerciseForm(state.pickerQuery));
   const search = document.querySelector("#exercise-search");
   search.focus();
   search.setSelectionRange(search.value.length, search.value.length);
@@ -1669,6 +1668,15 @@ function renderPicker(query = state.pickerQuery) {
     muscleGroup.value = "";
     renderPickerResults(search.value);
     muscleGroup.focus();
+  });
+  // While typing the filter is hidden; its chip clears it without closing the keyboard.
+  const chip = document.querySelector("#muscle-group-chip");
+  chip.addEventListener("pointerdown", (event) => event.preventDefault());
+  chip.addEventListener("click", () => {
+    state.pickerMuscleGroup = "";
+    muscleGroup.value = "";
+    renderPickerResults(search.value);
+    search.focus();
   });
   renderPickerResults(query);
   document.querySelector("#close-picker").addEventListener("click", () => closePicker());
@@ -1689,12 +1697,18 @@ function renderPickerResults(query) {
   const configurations = (filtering ? state.picker.saved ?? state.picker.recent : state.picker.recent)
     .filter((item) => matches(item, groupsByVariation.get(item.variation_id) ?? [], configurationLabel(item)));
   document.querySelector("#clear-muscle-group-filter").hidden = !group;
+  const chip = document.querySelector("#muscle-group-chip");
+  chip.hidden = !group;
+  chip.innerHTML = group ? `${escapeHtml(group)} <span aria-hidden="true">×</span>` : "";
+  chip.setAttribute("aria-label", group ? `Clear Muscle Group ${group}` : "");
   document.querySelector("#picker-results").innerHTML = `
       ${configurations.length ? `<div class="section-title"><h3>${filtering ? "Saved" : "Recent"} at ${gymName}</h3>${filtering ? `<span>${configurations.length}</span>` : ""}</div><div class="recent-list">${configurations.map((item) => `<button class="recent-card" data-profile-id="${item.profile_id}"><strong>${escapeHtml(exerciseDisplayName(item))}</strong><span>${escapeHtml(configurationLabel(item))}</span></button>`).join("")}</div>` : ""}
       <div class="section-title"><h3>Exercise catalog</h3><span>${filtered.length}</span></div>
       <div class="exercise-list">${filtered.map((item) => `<button class="exercise-card" data-variation-id="${item.id}"><strong>${escapeHtml(exerciseDisplayName(item))}</strong><span>${escapeHtml(item.equipment.join(" · "))}</span></button>`).join("") || (configurations.length
         ? `<p class="picker-note">No catalog exercises match. Create a custom exercise if none of the saved ones fit.</p>`
-        : `<div class="empty"><h3>No matches</h3><p>Try another search or Muscle Group, or create a custom exercise.</p></div>`)}</div>`;
+        : `<div class="empty"><h3>No matches</h3><p>Try another search or Muscle Group, or create a custom exercise.</p></div>`)}</div>
+      <div class="picker-create"><button class="secondary create-exercise-button" type="button" id="create-exercise">Create custom exercise</button></div>`;
+  document.querySelector("#create-exercise").addEventListener("click", () => renderCustomExerciseForm(state.pickerQuery));
   document.querySelectorAll("[data-profile-id]").forEach((button) => button.addEventListener("click", () => addRecent(Number(button.dataset.profileId))));
   document.querySelectorAll("[data-variation-id]").forEach((button) => button.addEventListener("click", () => chooseExercise(Number(button.dataset.variationId))));
 }

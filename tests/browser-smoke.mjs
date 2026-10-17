@@ -50,44 +50,51 @@ try {
     await search.fill('');
     await page.locator('#muscle-group-filter').selectOption('');
     const create = page.locator('#create-exercise');
-    const createControl = await create.elementHandle();
-    for (const [width, height, overlayKeyboard] of [[390, 844, false], [320, 844, false], [390, 500, false], [390, 844, true]]) {
+    const results = page.locator('#picker-results');
+    for (const [width, height] of [[390, 844], [320, 844], [390, 500]]) {
       await page.setViewportSize({ width, height });
-      if (overlayKeyboard) {
-        await page.locator('#muscle-group-filter').selectOption('Back');
-        // Simulate an overlay keyboard through the same VisualViewport resize event as keyboard.mjs.
-        await page.evaluate(() => {
-          Object.defineProperties(window.visualViewport, { height: { configurable: true, value: 500 }, offsetTop: { configurable: true, value: 0 } });
-          window.visualViewport.dispatchEvent(new Event('resize'));
-        });
-      }
-      const visibleHeight = overlayKeyboard ? 500 : height;
-      await page.waitForFunction(visible => {
-        const box = document.querySelector('#create-exercise').getBoundingClientRect();
-        return box.top >= 0 && box.bottom <= visible;
-      }, visibleHeight);
-      const resultBox = await page.locator('#picker-results').boundingBox();
-      const createBox = await create.boundingBox();
-      check(`${surface}: Create remains reachable at ${width}x${height}${overlayKeyboard ? ' with simulated overlay keyboard' : ''}`,
-        createBox.height >= 44 && createBox.x >= 0 && createBox.x + createBox.width <= width
-        && createBox.y + createBox.height <= visibleHeight && resultBox.y + resultBox.height <= createBox.y);
-      await page.locator('#picker-results').evaluate(results => { results.scrollTop = results.scrollHeight; });
-      const last = await page.locator('#picker-results [data-variation-id]').last().boundingBox();
-      check(`${surface}: last Exercise scrolls fully above Create at ${width}x${height}${overlayKeyboard ? ' overlay' : ''}`,
-        last.y >= resultBox.y - 1 && last.y + last.height <= resultBox.y + resultBox.height + 1);
-      if (overlayKeyboard) {
-        await screenshot('create-footer-' + surface.toLowerCase() + '-simulated-keyboard');
-        await page.evaluate(() => {
-          delete window.visualViewport.height; delete window.visualViewport.offsetTop;
-          window.visualViewport.dispatchEvent(new Event('resize'));
-        });
-      }
+      // Scroll on each poll, since the sheet relayouts after the resize.
+      const reachable = await page.waitForFunction(([width, height]) => {
+        const list = document.querySelector('#picker-results');
+        list.scrollTop = list.scrollHeight;
+        const resultBox = list.getBoundingClientRect(), createBox = document.querySelector('#create-exercise').getBoundingClientRect();
+        return createBox.height >= 44 && createBox.left >= 0 && createBox.right <= width
+          && createBox.top >= resultBox.top - 1 && createBox.bottom <= resultBox.bottom + 1 && resultBox.bottom <= height;
+      }, [width, height], { timeout: 3000 }).then(() => true, () => false);
+      check(`${surface}: Create ends the scrolled results at ${width}x${height}`, reachable);
+      await results.evaluate(list => { list.scrollTop = 0; });
     }
     await page.setViewportSize({ width: 390, height: 844 });
     await page.locator('#muscle-group-filter').selectOption('Back');
+    const roomBefore = (await results.boundingBox()).height;
+    // Simulate an overlay keyboard through the same VisualViewport resize event as keyboard.mjs.
+    const keyboard = open => page.evaluate(open => {
+      if (open) Object.defineProperties(window.visualViewport, { height: { configurable: true, value: 500 }, offsetTop: { configurable: true, value: 0 } });
+      else { delete window.visualViewport.height; delete window.visualViewport.offsetTop; }
+      window.visualViewport.dispatchEvent(new Event('resize'));
+    }, open);
+    await keyboard(true);
+    await search.focus();
+    const chip = page.locator('#muscle-group-chip');
+    await page.waitForFunction(() => document.documentElement.hasAttribute('data-keyboard'));
+    const typingBox = await results.boundingBox();
+    check(`${surface}: typing hides the Muscle Group filter and keeps the set filter as a chip`,
+      !await page.locator('.picker-filters').isVisible() && await chip.isVisible() && (await chip.innerText()).includes('Back'));
+    check(`${surface}: typing leaves the results most of the room above the keyboard`,
+      typingBox.y + typingBox.height <= 501 && typingBox.height >= 200);
+    await screenshot('picker-typing-' + surface.toLowerCase() + '-simulated-keyboard');
+    await chip.click();
+    check(`${surface}: the chip clears the filter without leaving the search`, await page.locator('#muscle-group-filter').inputValue() === ''
+      && !await chip.isVisible() && await search.evaluate(input => input === document.activeElement));
+    await search.blur();
+    check(`${surface}: leaving the search brings the filter back`, await page.locator('.picker-filters').isVisible());
+    await keyboard(false);
+    check(`${surface}: without a keyboard the filter stays while typing`, await search.focus().then(() => page.locator('.picker-filters').isVisible())
+      && (await results.boundingBox()).height >= roomBefore - 1);
+    await page.locator('#muscle-group-filter').selectOption('Back');
     await search.fill('New filtered exercise');
-    check(`${surface}: Create stays the same control when filters give no matches`, await createControl.evaluate(button =>
-      button === document.querySelector('#create-exercise') && !button.closest('#picker-results')));
+    check(`${surface}: Create follows No matches in the results`, await create.isVisible()
+      && await create.evaluate(button => Boolean(button.closest('#picker-results'))));
     await create.click();
     check(`${surface}: Create prefills the current search and restores ordinary form scrolling`,
       await page.locator('#custom-exercise-form input[name=name]').inputValue() === 'New filtered exercise'
@@ -96,7 +103,7 @@ try {
     check(`${surface}: creation Back preserves query and filter`, await search.inputValue() === 'New filtered exercise'
       && await page.locator('#muscle-group-filter').inputValue() === 'Back');
     await page.locator('#clear-muscle-group-filter').click();
-    check(`${surface}: stable Create footer keeps Clear query semantics`, await search.inputValue() === 'New filtered exercise');
+    check(`${surface}: Clear filter keeps the query`, await search.inputValue() === 'New filtered exercise');
     await search.fill('Bench');
     await page.locator('#picker-results [data-variation-id]').first().click();
     check(`${surface}: ordinary Exercise still opens Configuration in one tap with form scrolling`, await page.locator('#configuration-form').isVisible()

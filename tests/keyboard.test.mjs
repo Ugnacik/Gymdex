@@ -12,7 +12,8 @@ function page() {
   const window = { visualViewport: viewport, requestAnimationFrame: (callback) => frames.push(callback) };
   const document = {
     activeElement: null,
-    documentElement: { clientHeight: 780, style: { setProperty: (name, value) => { style[name] = value; } } },
+    documentElement: { clientHeight: 780, attributes: new Set(), style: { setProperty: (name, value) => { style[name] = value; } },
+      toggleAttribute(name, on) { if (on) this.attributes.add(name); else this.attributes.delete(name); } },
     addEventListener: on('document'),
   };
   const field = (inSheet, tagName = 'INPUT') => ({ tagName, scrolled: [],
@@ -29,9 +30,14 @@ test('sheets and dialogs follow the visible area when the keyboard opens and clo
   Object.assign(viewport, { offsetTop: 40, height: 400 });
   fire('viewport', 'resize');
   assert.deepEqual(style, { '--viewport-top': '40px', '--viewport-bottom': '340px', '--viewport-height': '400px' });
+  assert.ok(document.documentElement.attributes.has('data-keyboard'), 'a keyboard-sized shrink marks the keyboard open');
   Object.assign(viewport, { offsetTop: 0, height: 780 });
   fire('viewport', 'scroll');
   assert.deepEqual(style, { '--viewport-top': '0px', '--viewport-bottom': '0px', '--viewport-height': '780px' });
+  assert.ok(!document.documentElement.attributes.has('data-keyboard'));
+  viewport.height = 700;
+  fire('viewport', 'resize');
+  assert.ok(!document.documentElement.attributes.has('data-keyboard'), 'a hidden toolbar is not a keyboard');
 });
 
 test('the focused field in a sheet or dialog is scrolled to the middle once the keyboard has resized the view', () => {
