@@ -13,7 +13,7 @@ export function renderRoutineStarts(routines, gym, escapeHtml) {
   const mine = (routines ?? []).filter((routine) => routine.gym_id === gym.id);
   return `<section class="routine-starts" aria-labelledby="routines-title">
     <div class="section-title"><h2 id="routines-title">Routines</h2><button type="button" class="text-button manage-open" id="open-routines" aria-label="Edit routines at ${escapeHtml(gym.name)}">Edit</button></div>
-    ${mine.length ? `<div class="recent-list">${mine.map((routine) => `<button type="button" class="recent-card" data-start-routine="${routine.id}" data-routine-name="${escapeHtml(routine.name)}"><strong>Start ${escapeHtml(routine.name)}</strong><span>${plural(routine.exercise_count, "exercise")}</span></button>`).join("")}</div>`
+    ${mine.length ? `<div class="recent-list">${mine.map((routine) => `<button type="button" class="recent-card" data-start-routine="${routine.id}" data-routine-name="${escapeHtml(routine.name)}" aria-label="Start ${escapeHtml(routine.name)}, ${plural(routine.exercise_count, "exercise")}"><strong>${escapeHtml(routine.name)}</strong><span>${plural(routine.exercise_count, "exercise")}</span></button>`).join("")}</div>`
       : `<p class="routine-empty">No routines at ${escapeHtml(gym.name)} yet. Save a finished workout as a routine in History, or create one with Edit.</p>`}
   </section>`;
 }

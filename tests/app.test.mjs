@@ -2066,7 +2066,7 @@ test('the start screen offers the selected gym\'s routines beside plain Start, a
   const app = await harness(storage(), { ...startData([home]), routines });
   let html = app.nodes['#app'].innerHTML;
   assert.match(html, /<button class="primary accent" id="start-workout" >Start workout<\/button>/);
-  assert.match(html, /data-start-routine="4" data-routine-name="Push &lt;day&gt;"><strong>Start Push &lt;day&gt;<\/strong><span>3 exercises<\/span>/);
+  assert.match(html, /data-start-routine="4" data-routine-name="Push &lt;day&gt;" aria-label="Start Push &lt;day&gt;, 3 exercises"><strong>Push &lt;day&gt;<\/strong><span>3 exercises<\/span>/);
   assert.doesNotMatch(html, /data-start-routine="5"|<day>/);
   assert.match(html, /id="open-routines" aria-label="Edit routines at Home">Edit<\/button>/);
   const requests = [];
