@@ -86,7 +86,7 @@ says how many.
 A routine is a saved plan for one gym: an ordered list of exercise
 configurations, each with a number of sets. It does not store weights, reps or
 notes. When a gym is selected on the start screen, its routines appear under
-**Routines** as **Start …** buttons. One tap starts a workout at that gym with
+**Routines** by name. One tap on a routine starts a workout at that gym with
 the routine's exercises, each with that many empty, not completed sets. Last
 workout values appear and can be copied in a tap, exactly as for added
 exercises. **Start workout** still starts an empty workout in one tap. Starting
