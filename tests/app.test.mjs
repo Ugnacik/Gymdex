@@ -61,7 +61,7 @@ function readPreviousButton(form, html) {
 // The harness workout started 2026-09-22 10:00 UTC; by default the clock reads 25 minutes later.
 async function harness(disk = storage(), initialData = {}, { now = Date.parse('2026-09-22T10:25:00Z') } = {}) {
   const nodes = Object.fromEntries(['#app', '#toast', '#sync-status', '#picker-results', 'main',
-    '#muscle-group-filter', '#clear-muscle-group-filter', '#open-picker', '#open-settings', '#open-history', '#open-progress', '#open-manage', '#cancel-workout', '#finish', '#add-gym-form', '#start-workout', '#create-exercise',
+    '#muscle-group-filter', '#clear-muscle-group-filter', '#muscle-group-chip', '#open-picker', '#open-settings', '#open-history', '#open-progress', '#open-manage', '#cancel-workout', '#finish', '#add-gym-form', '#start-workout', '#create-exercise',
     '#rest-enabled', '#rest-controls', '#rest-duration', '#rest-clock', '#rest-status', '#rest-start', '#rest-pause', '#rest-stop',
     '#workout-elapsed', '#stale-banner', '#stale-finish', '#stale-keep']
     .map((key) => [key, node()]));
@@ -525,7 +525,7 @@ function pickerSheet(app) {
   };
   sheet.querySelector = (selector) => sheetNodes[selector];
   Object.assign(app.nodes, { '#picker .sheet': sheet, '#exercise-search': Object.assign(node(), { value: '', setSelectionRange() {} }),
-    '#muscle-group-filter': Object.assign(node(), { value: '' }), '#clear-muscle-group-filter': node(),
+    '#muscle-group-filter': Object.assign(node(), { value: '' }), '#clear-muscle-group-filter': node(), '#muscle-group-chip': node(),
     '#close-picker': node(), '#back-to-picker': node(), '#configuration-form': Object.assign(node(), { querySelector: () => node() }),
     '#manufacturer-field': choiceContainer(), '#machine-label-field': choiceContainer() });
   app.env.document.createElement = () => wrapper;
@@ -590,8 +590,7 @@ test('Muscle Group and search intersect across Catalog and all saved choices, an
   assert.match(results(), /data-profile-id="20"/);
   select('Shoulders');
   assert.match(results(), /<h3>No matches/);
-  assert.match(wrapper.innerHTML, /id="create-exercise"/);
-  assert.doesNotMatch(results(), /id="create-exercise"/);
+  assert.match(results(), /No matches[\s\S]*id="create-exercise"/, 'Create ends the results, so it is there when nothing matches');
   query('');
   assert.match(results(), /data-variation-id="3"/);
   assert.doesNotMatch(results(), /data-variation-id="1"|data-variation-id="2"|data-variation-id="4"/);

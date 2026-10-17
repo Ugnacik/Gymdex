@@ -1011,10 +1011,31 @@ textarea {
   overflow: hidden;
 }
 .picker-catalog > .sheet-handle, .picker-catalog > .sheet-header,
-.picker-catalog > .search, .picker-catalog > .picker-filters, .picker-create { flex-shrink: 0; }
+.picker-catalog > .search, .picker-catalog > .picker-filters, .picker-catalog > .filter-chip { flex-shrink: 0; }
 .sheet.picker-catalog > .sheet-header { position: static; margin: 0; padding: 0; }
 .picker-catalog > #picker-results { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
-.picker-create { padding-top: 8px; }
+.picker-create { padding-top: 16px; }
+/* Typing a name leaves the results the room above the keyboard; a set filter shrinks to a chip. */
+.filter-chip { display: none; }
+:root[data-keyboard] .picker-catalog:has(#exercise-search:focus) > .picker-filters { display: none; }
+:root[data-keyboard] .sheet.picker-catalog { padding-bottom: 8px; }
+:root[data-keyboard] .picker-catalog:has(#exercise-search:focus) > .filter-chip:not([hidden]) {
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  margin: 4px 0;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 99px;
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent-line);
+  color: var(--accent);
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
 .create-exercise-button { width: 100%; margin: 0; min-height: 44px; }
 
 .equipment-field label { font-size: inherit; font-weight: inherit; }
