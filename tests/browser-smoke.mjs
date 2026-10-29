@@ -359,7 +359,8 @@ try {
   await set.locator('[name=completed]').check();
   await page.waitForFunction(() => document.querySelector('[data-exercise-count]')?.textContent === '1/2 done');
   check('Done completes a Set in one tap', (await read('/api/bootstrap')).workout_exercises[0].sets[0].completed === 1);
-  check('The Set number is plain text', await set.locator('legend').innerText() === 'Set 1' && await set.locator('legend button').count() === 0);
+  check('The Set number opens Set Type, not Effort', await set.locator('legend').innerText() === 'Set 1'
+    && await set.locator('legend button').count() === 1 && await set.locator('legend [data-set-type]').count() === 1);
   check('An unrecorded Repetitions Set shows RIR beside Reps', await effortButton(set).innerText() === 'RIR'
     && await effortButton(set).getAttribute('aria-label') === 'Effort for Bench Press, set 1: none');
   for (const width of [390, 320]) {
@@ -443,6 +444,21 @@ try {
   check('Turning Record sides off removes the tags and the saved sides', await set.locator('[data-set-side]').count() === 0
     && await eventually(async () => await sideOf(0) === null));
   await benchCard.locator('.exercise-options > summary').click();
+  const setTypeOf = async index => (await read('/api/bootstrap')).workout_exercises[0].sets[index].set_type;
+  const setTypeButton = set.locator('[data-set-type]');
+  check('A working set shows its number as the Set Type button', await setTypeButton.innerText() === 'Set 1');
+  await setTypeButton.click();
+  await page.locator('.choice-sheet').evaluate(sheet => Promise.all(sheet.getAnimations().map(animation => animation.finished)));
+  check('The Set Type sheet marks Working set as chosen', await page.locator('.choice-sheet').getByRole('button', { name: 'Working set', exact: true }).getAttribute('aria-pressed') === 'true');
+  await screenshot('set-type-sheet');
+  await pickEffort('Warm-up');
+  check('Picking Warm-up shows W and saves it', await set.locator('[data-set-type]').innerText() === 'W' && await eventually(async () => await setTypeOf(0) === 'warmup'));
+  const typeBox = await set.locator('[data-set-type]').boundingBox();
+  check('The Set Type button is touch-sized', typeBox.width >= 44 && typeBox.height >= 44);
+  await screenshot('set-type-warmup');
+  await set.locator('[data-set-type]').click();
+  await pickEffort('Working set');
+  check('Picking Working set brings the number back and clears it', await set.locator('[data-set-type]').innerText() === 'Set 1' && await eventually(async () => await setTypeOf(0) === null));
   await page.locator('.exercise-summary').first().click();
   check('Exercise can collapse', !await page.locator('.workout-exercise').first().evaluate(card => card.open));
   await page.locator('.exercise-summary').first().click();

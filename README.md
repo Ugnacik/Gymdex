@@ -412,6 +412,16 @@ sets with last time's sides, so "Last workout" compares right with right and
 left with left. Turning the switch off returns the sets to both sides. In
 completed workouts, **Edit set** can change a set's side.
 
+## Set types
+
+Tap a set's number to mark it as a **Warm-up**, **Drop set** or **Myo-reps**, or
+back to a **Working set**. A marked set shows **W**, **D** or **M** in place of its
+number, and only working sets are numbered, so a warm-up then two working sets
+read W, 1, 2. **Add set** copies the type of the set above, and the next workout
+with that Exercise Configuration starts its sets with last time's types. Warm-ups
+are left out of Progress; drop sets and myo-reps count like any other set. In
+completed workouts, **Edit set** can change a set's type.
+
 ## Compact workout view and finish summary
 
 Tap an exercise heading to collapse or expand its sets. Completion counts stay
@@ -544,7 +554,8 @@ To keep daily backups on the Pi and on a second machine, see
 Use **Export CSV** in Workout history to download workout, exercise, and set rows.
 The CSV includes empty workouts and unfinished sets. The `effort` column holds
 each set's Effort (`failure`, `0` to `3`, or `4+`; empty when not recorded), and `side`
-holds `right` or `left` (empty for both sides). The `workout_note` and
+holds `right` or `left` (empty for both sides). `set_type` holds `warmup`,
+`drop` or `myo` (empty for a working set). The `workout_note` and
 `exercise_note` columns hold the notes; a note repeats on every row of its
 workout or exercise. It is for spreadsheets and
 analysis; it does not contain the full catalog or gym configurations. Unlike the

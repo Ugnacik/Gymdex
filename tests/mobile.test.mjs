@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import vm from 'node:vm';
-import { DraftStore, effortText, setPayload, sideText } from '../static/drafts.mjs';
+import { DraftStore, effortText, setLabels, setPayload, sideText } from '../static/drafts.mjs';
 
 function storage() {
   const data = new Map();
@@ -114,6 +114,20 @@ test('Side travels like Effort: sent only when carried, restored from drafts, un
   assert.equal(reloaded.get(1, 2).side, 'right');
   assert.equal(reloaded.get(1, 3), null);
   assert.deepEqual(['right', 'left', null].map((side) => sideText(side, { short: true })), ['R', 'L', 'Both']);
+});
+
+test('only working sets are numbered; typed sets show their letter, and Set Type drafts survive a reload', () => {
+  assert.deepEqual(setLabels([null, 'warmup', null, 'drop', 'myo', null]), ['Set 1', 'W', 'Set 2', 'D', 'M', 'Set 3']);
+  assert.deepEqual(setLabels(['warmup', null], { short: false }), ['Warm-up', 'Set 1']);
+  assert.equal('set_type' in setPayload(values), false);
+  assert.equal(setPayload({ ...values, set_type: null }).set_type, null);
+  const disk = storage();
+  const store = new DraftStore(() => disk);
+  store.put(1, 2, { ...values, set_type: 'myo' });
+  store.put(1, 3, { ...values, set_type: 'cluster' });
+  const reloaded = new DraftStore(() => disk);
+  assert.equal(reloaded.get(1, 2).set_type, 'myo');
+  assert.equal(reloaded.get(1, 3), null);
 });
 
 test('worker upgrade installs the current shell and removes the previous offline version', async () => {

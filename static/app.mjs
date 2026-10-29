@@ -1,4 +1,4 @@
-import { DraftStore, effortsFor, effortText, setPayload, SIDES, sideText, WEIGHT_PATTERN } from "./drafts.mjs";
+import { DraftStore, effortsFor, effortText, setLabels, setPayload, SET_TYPES, setTypeText, SIDES, sideText, WEIGHT_PATTERN } from "./drafts.mjs";
 import { NOTE_MAX_LENGTH, WorkoutEditor } from "./workout-editor.mjs";
 import { DEFAULT_REST_DURATION_SECONDS, RestTimer } from "./rest-timer.mjs";
 import { askTextInPage, chooseInPage, confirmInPage } from "./confirm-sheet.mjs";
@@ -671,20 +671,23 @@ function renderHistoryDetail(data, canRepeat) {
         ${renderHistoryNote(`exercise:${entry.id}`, entry.note, "note", ` for ${exerciseDisplayName(entry)}`)}
         <div class="history-exercise-heading"><h3>${escapeHtml(exerciseDisplayName(entry))}</h3>${entry.variation_id ? `<button type="button" class="text-button" data-progress-variation="${entry.variation_id}" data-progress-equipment="${escapeHtml(entry.equipment)}" data-progress-manufacturer="${escapeHtml(entry.manufacturer || "")}" data-progress-label="${escapeHtml(entry.label || "")}">View progress</button>` : ""}</div>
         <p class="meta">${escapeHtml(configurationLabel(entry))}</p>
-        ${entry.sets.length ? `<ol class="history-sets">${entry.sets.map((set, index) => {
+        ${entry.sets.length ? `<ol class="history-sets">${entry.sets.map((set, index, sets) => {
+          const label = setLabels(sets.map((item) => item.set_type ?? null), { short: false })[index];
+          const lower = label[0].toLowerCase() + label.slice(1);
           const weight = set.weight === null ? "No weight recorded" : `${Math.abs(set.weight)} kg${set.weight < 0 ? " assistance" : ""}`;
           const result = set.result === null ? "No result recorded" : `${set.result} ${entry.tracking_type === "duration" ? "seconds" : "reps"}`;
           const assisted = Boolean(entry.assisted) || set.weight < 0;
           const effort = set.effort ? ` · ${effortText(set.effort)}` : "";
           const side = set.side ? ` ${sideText(set.side, { short: true })}` : "";
-          return `<li><span>Set ${index + 1}${side}: ${escapeHtml(result)} · ${escapeHtml(weight)}${escapeHtml(effort)}</span><span class="meta">${set.completed ? "Completed" : "Not completed"}</span>
-            ${set.id ? `<div class="history-set-actions"><button type="button" class="text-button history-edit-toggle" data-edit-set="${set.id}">Edit set ${index + 1}</button><button type="button" class="text-button history-delete-set" data-delete-history-set="${set.id}">Delete set ${index + 1}</button></div>
+          return `<li><span>${label}${side}: ${escapeHtml(result)} · ${escapeHtml(weight)}${escapeHtml(effort)}</span><span class="meta">${set.completed ? "Completed" : "Not completed"}</span>
+            ${set.id ? `<div class="history-set-actions"><button type="button" class="text-button history-edit-toggle" data-edit-set="${set.id}">Edit ${lower}</button><button type="button" class="text-button history-delete-set" data-delete-history-set="${set.id}">Delete ${lower}</button></div>
               <form class="history-set-form" data-history-set="${set.id}" data-assisted="${assisted}" hidden>
                 <div class="set-inputs">
                   <label>${assisted ? "Assist kg" : "kg"} <input name="weight" type="text" inputmode="decimal" pattern="${WEIGHT_PATTERN}" autocomplete="off" title="A number such as 62.5 or 62,5" value="${set.weight === null ? "" : Math.abs(set.weight)}" /></label>
                   <label>${entry.tracking_type === "duration" ? "Seconds" : "Reps"} <input name="result" type="number" inputmode="numeric" min="1" max="1000000" step="1" value="${set.result ?? ""}" ${set.completed ? "required" : ""} /></label>
                 </div>
                 ${renderEffortOptions(entry, set)}
+                ${renderSetTypeOptions(set)}
                 ${renderSideOptions(set)}
                 <label class="set-complete"><input name="completed" type="checkbox" ${set.completed ? "checked" : ""} /> Set completed</label>
                 <div class="history-edit-actions"><button type="submit" class="secondary">Save correction</button><button type="button" class="text-button" data-cancel-edit>Cancel</button></div>
@@ -709,6 +712,14 @@ function renderEffortOptions(entry, set) {
   return `<fieldset class="effort-options"><legend>Effort</legend><div>
     ${[null, ...effortsFor(entry.tracking_type)].map((value) => `<label><input type="radio" name="effort" value="${value ?? ""}"
       aria-label="${value === null ? "No effort" : effortText(value)}" ${(set.effort ?? null) === value ? "checked" : ""} /><span>${value === null ? "None" : value === "failure" ? "Failure" : value}</span></label>`).join("")}
+  </div></fieldset>`;
+}
+
+// The Completed Workout correction form's Set Type choice, where Working set is a set without one.
+function renderSetTypeOptions(set) {
+  return `<fieldset class="effort-options set-type-options"><legend>Set type</legend><div>
+    ${[null, ...SET_TYPES].map((value) => `<label><input type="radio" name="set_type" value="${value ?? ""}"
+      ${(set.set_type ?? null) === value ? "checked" : ""} /><span>${value ? setTypeText(value) : "Working"}</span></label>`).join("")}
   </div></fieldset>`;
 }
 
@@ -1115,7 +1126,7 @@ async function openProgress(initialVariationId = null, initialGymId = null, init
       const entries = detail.workout_exercises.filter(entry => entry.variation_id === variationId
         && (!selectedConfig || ["equipment", "manufacturer", "label"].every(field => (entry[field] ?? "") === (selectedConfig[field] ?? ""))));
       panel.innerHTML = `<p><strong>${escapeHtml(formatLocalDateTime(point.completed_at))}</strong> · ${escapeHtml(detail.workout.gym_name)}</p>
-        ${entries.map(entry => `<p>${escapeHtml(configurationLabel(entry))}</p><ul>${entry.sets.filter(set => set.completed).map(set =>
+        ${entries.map(entry => `<p>${escapeHtml(configurationLabel(entry))}</p><ul>${entry.sets.filter(set => set.completed && set.set_type !== "warmup").map(set =>
           `<li>${set.side ? `${sideText(set.side)} · ` : ""}${set.result} ${entry.tracking_type === "duration" ? "seconds" : "reps"} · ${set.weight === null ? "No weight recorded" : `${Math.abs(set.weight)} kg${set.weight < 0 ? " assistance" : ""}`}${set.effort ? ` · ${effortText(set.effort)}` : ""}</li>`).join("")}</ul>`).join("") || "<p>No matching completed sets remain.</p>"}`;
       panel.scrollIntoView?.({ block: "nearest" });
     } catch (error) { if (version === pointRequest && dialog.open) panel.textContent = error.message; }
@@ -2000,14 +2011,17 @@ function renderSet(entry, set, index) {
   // A draft from before Effort existed has no effort key and shows the saved one.
   const effort = draft && "effort" in draft ? draft.effort : set.effort ?? null;
   const side = setSide(set);
+  const setType = setTypeOf(set);
+  const label = setLabels(entry.sets.map(setTypeOf))[index];
   const previousText = previous
     ? `${previous.weight === null ? "" : `${Math.abs(previous.weight)} kg${previous.weight < 0 ? " assistance" : ""} × `}${previous.result} ${unit}${previous.effort ? ` · ${effortText(previous.effort)}` : ""}`
     : "No completed set";
   return `<form class="set-form${set.completed ? " is-complete" : ""}" data-set-id="${set.id}" data-entry-id="${entry.id}" data-assisted="${assisted}">
     <fieldset>
-      <legend>Set ${set.position}${recordsSides(entry) ? renderSideButton(name, side) : ""}</legend>
+      <legend>${renderSetTypeButton(name, label, setType)}${recordsSides(entry) ? renderSideButton(name, side) : ""}</legend>
       <input type="hidden" name="effort" value="${escapeHtml(effort ?? "")}" />
       <input type="hidden" name="side" value="${side ?? ""}" />
+      <input type="hidden" name="set_type" value="${setType ?? ""}" />
       <button type="button" class="remove-set" aria-label="Remove ${escapeHtml(name)}"><span aria-hidden="true">×</span></button>
       ${previous
         ? `<button type="button" class="previous-set fill-previous" data-previous-weight="${previous.weight ?? ""}" data-previous-result="${previous.result}" aria-label="Fill ${escapeHtml(name)} from last workout: ${escapeHtml(previousText)}">Last workout: ${escapeHtml(previousText)}</button>`
@@ -2030,6 +2044,37 @@ function renderSet(entry, set, index) {
 function setSide(set) {
   const draft = state.editor?.status(set.id)?.values;
   return draft && "side" in draft ? draft.side : set.side ?? null;
+}
+
+// A set's Set Type: its draft's, or the saved one. Drafts from before Set Type existed have no set_type key.
+function setTypeOf(set) {
+  const draft = state.editor?.status(set.id)?.values;
+  return draft && "set_type" in draft ? draft.set_type : set.set_type ?? null;
+}
+
+// The set number, or a typed Set's letter, opens the Set Type choice.
+function renderSetTypeButton(name, label, type) {
+  return `<button type="button" class="set-type" data-set-type data-recorded="${Boolean(type)}" aria-label="${escapeHtml(`${name}: ${setTypeText(type)}. Tap to change the set type.`)}">${escapeHtml(label)}</button>`;
+}
+
+// Picking a Set Type saves at once like Effort. The sets are renumbered, since only working sets have numbers.
+async function chooseSetType(form) {
+  if (!state.editor || state.editor.busy) return;
+  const entry = state.data.workout_exercises.find((item) => item.id === Number(form.dataset.entryId));
+  const set = entry?.sets.find((item) => item.id === Number(form.dataset.setId));
+  if (!set) return;
+  const current = form.elements.set_type.value || null;
+  const picked = await choose(`Set type for ${exerciseDisplayName(entry)}, set ${set.position}`, {
+    choices: [null, ...SET_TYPES].map((value) => ({ value, label: setTypeText(value), wide: true })),
+    selected: current,
+    hint: "Warm-ups are left out of Progress. Only working sets are numbered.",
+  });
+  if (picked === undefined || picked === current || state.editor.busy || !form.isConnected) return;
+  form.elements.set_type.value = picked ?? "";
+  saveSetForm(form);
+  const list = form.closest(".sets-list");
+  renderSets(entry, list);
+  [...list.querySelectorAll(".set-form")].find((item) => item.dataset.setId === String(set.id))?.querySelector("[data-set-type]")?.focus();
 }
 
 // Record sides is on while any set of the Workout Exercise has a Side.
@@ -2114,9 +2159,10 @@ function setValues(form) {
     completed: form.elements.completed.checked,
     assistance: form.dataset.assisted === "true",
   };
-  // Blank is no Effort and no Side; the Active Workout keeps them in hidden inputs, history in radio buttons.
+  // Blank is no Effort, no Side and a working set; the Active Workout keeps them in hidden inputs, history in radio buttons.
   if (form.elements.effort) values.effort = form.elements.effort.value || null;
   if (form.elements.side) values.side = form.elements.side.value || null;
+  if (form.elements.set_type) values.set_type = form.elements.set_type.value || null;
   return values;
 }
 
@@ -2341,6 +2387,8 @@ app.addEventListener("click", (event) => {
   if (effort) return chooseSetEffort(effort.closest(".set-form"));
   const side = event.target.closest?.("[data-set-side]");
   if (side) return flipSetSide(side.closest(".set-form"));
+  const setType = event.target.closest?.("[data-set-type]");
+  if (setType) return chooseSetType(setType.closest(".set-form"));
   const routine = event.target.closest?.("[data-start-routine]");
   if (routine) return startRoutine(routine);
   if (event.target.closest?.("#open-routines")) return openRoutinesScreen();

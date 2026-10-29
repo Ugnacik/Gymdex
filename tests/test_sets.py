@@ -162,6 +162,44 @@ class SetTests(unittest.TestCase):
         entry = db.bootstrap(self.connection)['workout_exercises'][0]
         self.assertEqual([s['side'] for s in entry['sets']], ['right', 'left'])
 
+    def test_set_type_is_kept_when_absent_cleared_by_null_and_rejected_when_invalid(self):
+        item = self.first_set()
+        self.assertIsNone(item['set_type'])
+        self.assertEqual(self.save_effort(item, set_type='warmup')['set_type'], 'warmup')
+        # Cached clients and queued offline drafts omit set_type; their saves keep it.
+        self.assertEqual(self.save_effort(item)['set_type'], 'warmup')
+        for set_type in ['W', 'Warm-up', 'working', '', 0, ['drop']]:
+            with self.subTest(set_type=set_type), self.assertRaises(ValueError):
+                self.save_effort(item, set_type=set_type, result=12)
+        self.assertEqual((self.first_set()['set_type'], self.first_set()['result']), ('warmup', 8))
+        self.assertIsNone(self.save_effort(item, set_type=None)['set_type'])
+
+    def test_added_sets_copy_the_set_type_above_and_new_slots_take_last_workouts(self):
+        self.save_effort(self.first_set(), set_type='warmup')
+        working = db.add_set(self.connection, self.entry['id'])
+        self.assertEqual(working['set_type'], 'warmup')
+        self.save_effort(working, set_type=None)
+        self.save_effort(db.add_set(self.connection, self.entry['id']), set_type='drop')
+        self.assertEqual(db.add_set(self.connection, self.entry['id'])['set_type'], 'drop')
+        db.delete_set(self.connection, db.sets_for_exercise(self.connection, self.entry['id'])[-1]['id'])
+        db.complete_workout(self.connection, self.workout['id'])
+        self.workout = db.start_workout(self.connection, self.gym['id'])
+        slots = db.sets_for_exercise(self.connection, self.add_exercise(self.press, 'Barbell')['id'])
+        self.assertEqual([s['set_type'] for s in slots], ['warmup', None, 'drop'])
+        first = self.workout['id'] - 1
+        db.cancel_workout(self.connection, self.workout['id'])
+        db.repeat_workout(self.connection, first)
+        repeated = db.bootstrap(self.connection)['workout_exercises'][0]
+        self.assertEqual([s['set_type'] for s in repeated['sets']], ['warmup', None, 'drop'])
+
+    def test_progress_leaves_out_warmup_sets(self):
+        self.save_effort(self.first_set(), set_type='warmup', weight=20, result=15)
+        self.save_effort(db.add_set(self.connection, self.entry['id']), set_type=None, weight=60, result=5)
+        self.save_effort(db.add_set(self.connection, self.entry['id']), set_type='drop', weight=40, result=10)
+        db.complete_workout(self.connection, self.workout['id'])
+        point, = db.exercise_progress(self.connection, self.press['id'], self.gym['id'])['points']
+        self.assertEqual((point['best_weight'], point['best_result'], point['completed_sets']), (60, 10, 2))
+
     def test_removing_a_set_renumbers_the_remaining_sets_and_missing_ids_are_not_found(self):
         first = self.first_set()
         second = db.add_set(self.connection, self.entry['id'])
