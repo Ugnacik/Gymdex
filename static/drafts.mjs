@@ -161,8 +161,9 @@ export function setTypeText(type, { short = false } = {}) {
   return SET_TYPE_NAMES[type]?.[short ? 0 : 1] ?? "Working set";
 }
 
-// Like Strong, only working sets are numbered: types [warmup, null, drop, null] read "W", "Set 1", "D", "Set 2".
+// Like Strong, only working sets are numbered: types [warmup, null, drop, null] read "W", "1", "D", "2",
+// or "Warm-up", "Set 1", "Drop set", "Set 2" in full.
 export function setLabels(types, { short = true } = {}) {
   let number = 0;
-  return types.map((type) => type ? setTypeText(type, { short }) : `Set ${++number}`);
+  return types.map((type) => type ? setTypeText(type, { short }) : `${short ? "" : "Set "}${++number}`);
 }

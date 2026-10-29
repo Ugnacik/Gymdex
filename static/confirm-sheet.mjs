@@ -109,7 +109,8 @@ export function askTextInPage(document, question, { label, value = "", confirmLa
 
 // Offers a few choices, such as a Set's Effort, in the same kind of sheet. Each choice is
 // { value, label, name, wide }: name is its accessible name when the label alone is unclear,
-// and wide gives it a row of its own. The selected value shows as pressed. Resolves with the
+// and wide gives it a row of its own. The selected value, or each of an array of them, shows
+// as pressed. Resolves with the
 // tapped value, or undefined when the user leaves with Cancel, Escape or a backdrop tap.
 export function chooseInPage(document, question, { choices, selected = null, hint = "", cancelLabel = "Cancel" }) {
   const returnFocus = document.activeElement;
@@ -123,13 +124,14 @@ export function chooseInPage(document, question, { choices, selected = null, hin
   body.append(text);
   if (hint) body.append(element("p", "choice-hint", hint));
   const options = element("div", "choice-options", "");
+  const pressed = Array.isArray(selected) ? selected : [selected];
   let chosen;
   let focused = null;
   for (const choice of choices) {
     const button = element("button", choice.wide ? "choice-option wide" : "choice-option", choice.label);
     button.type = "button";
-    button.setAttribute("aria-pressed", String(choice.value === selected));
-    if (choice.value === selected || !focused) focused = button;
+    button.setAttribute("aria-pressed", String(pressed.includes(choice.value)));
+    if (pressed.includes(choice.value) || !focused) focused = button;
     if (choice.name) button.setAttribute("aria-label", choice.name);
     button.addEventListener("click", () => { chosen = choice.value; dialog.close("choose"); });
     options.append(button);

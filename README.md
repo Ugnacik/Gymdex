@@ -405,19 +405,19 @@ Effort.
 ## Sides for single-limb exercises
 
 For one-arm or one-leg work, open **Exercise options** on the exercise and turn
-on **Record sides**. Each set gets an **R** or **L** tag beside its number,
-alternating from R. Tap a tag to switch it, and **Add set** takes the other side
-of the set above. The next workout with that Exercise Configuration starts its
+on **Record sides**. Each set's number gets a small **R** (red) or **L** (purple),
+alternating from R. Tap the number to switch the side, and **Add set** takes the
+other side of the set above. The next workout with that Exercise Configuration starts its
 sets with last time's sides, so "Last workout" compares right with right and
 left with left. Turning the switch off returns the sets to both sides. In
 completed workouts, **Edit set** can change a set's side.
 
 ## Set types
 
-Tap a set's number to mark it as a **Warm-up**, **Drop set** or **Myo-reps**, or
-back to a **Working set**. A marked set shows **W**, **D** or **M** in place of its
-number, and only working sets are numbered, so a warm-up then two working sets
-read W, 1, 2. **Add set** copies the type of the set above, and the next workout
+Tap a set's number, at the start of its row, to mark it as a **Warm-up**,
+**Drop set** or **Myo-reps**, or back to a **Working set**. A marked set shows
+**W**, **D** or **M** in place of its number, and only working sets are numbered,
+so a warm-up then two working sets read W, 1, 2. **Add set** copies the type of the set above, and the next workout
 with that Exercise Configuration starts its sets with last time's types. Warm-ups
 are left out of Progress; drop sets and myo-reps count like any other set. In
 completed workouts, **Edit set** can change a set's type.

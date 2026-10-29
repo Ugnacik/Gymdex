@@ -117,7 +117,7 @@ test('Side travels like Effort: sent only when carried, restored from drafts, un
 });
 
 test('only working sets are numbered; typed sets show their letter, and Set Type drafts survive a reload', () => {
-  assert.deepEqual(setLabels([null, 'warmup', null, 'drop', 'myo', null]), ['Set 1', 'W', 'Set 2', 'D', 'M', 'Set 3']);
+  assert.deepEqual(setLabels([null, 'warmup', null, 'drop', 'myo', null]), ['1', 'W', '2', 'D', 'M', '3']);
   assert.deepEqual(setLabels(['warmup', null], { short: false }), ['Warm-up', 'Set 1']);
   assert.equal('set_type' in setPayload(values), false);
   assert.equal(setPayload({ ...values, set_type: null }).set_type, null);

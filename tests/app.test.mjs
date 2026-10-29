@@ -74,7 +74,7 @@ async function harness(disk = storage(), initialData = {}, { now = Date.parse('2
   forms.push(form);
   const list = { insertAdjacentHTML(_, html) {
     this.html = html;
-    const [, id, position] = html.match(/data-set-id="(\d+)"[\s\S]*?data-set-type[^>]*>Set (\d+)/);
+    const [, id, position] = html.match(/data-set-id="(\d+)"[\s\S]*?data-set-type[^>]*>(\d+)/);
     const added = setForm(Number(id), Number(position));
     added.elements.weight.value = html.match(/name="weight"[^>]*value="([^"]*)"/)[1];
     added.elements.result.value = html.match(/name="result"[^>]*value="([^"]*)"/)[1];
@@ -1251,7 +1251,7 @@ test('removing a set renumbers the remaining sets and pairs them with Last worko
   await app.form.querySelector('.remove-set').events.click();
   assert.deepEqual(questions, ['Remove set 1?', { confirmLabel: 'Remove', danger: true }]);
   assert.deepEqual(requests, ['DELETE /api/sets/2']);
-  const legends = [...list.innerHTML.matchAll(/data-set-id="(\d+)"[\s\S]*?data-set-type[^>]*>Set (\d+)<\/button>/g)].map(([, id, position]) => [id, position]);
+  const legends = [...list.innerHTML.matchAll(/data-set-id="(\d+)"[\s\S]*?data-set-type[^>]*>(\d+)<\/button>/g)].map(([, id, position]) => [id, position]);
   assert.deepEqual(legends, [['5', '1'], ['6', '2']]);
   assert.match(list.innerHTML, /aria-label="Remove Bench Press, set 2"/);
   assert.match(list.innerHTML, /data-set-id="5"[\s\S]*?Last workout: 80 kg × 8 reps[\s\S]*?data-set-id="6"[\s\S]*?Last workout: 85 kg × 6 reps/);

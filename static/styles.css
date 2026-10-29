@@ -31,6 +31,8 @@
   --accent-line: rgba(255, 122, 61, 0.5);
   --accent-ink: #210b02;
   --danger: #ff8d97;
+  --side-right: #ff6464;
+  --side-left: #b99aff;
   --danger-soft: rgba(255, 141, 151, 0.11);
   --radius-card: 24px;
   --radius-well: 18px;
@@ -721,13 +723,6 @@ textarea {
   box-shadow: inset 0 0 0 1px rgba(255, 122, 61, 0.26);
 }
 .set-form fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
-.set-form legend { float: left; padding: 0; margin: 0 10px 2px 0; color: var(--ink); font-size: 0.92rem; font-weight: 650; letter-spacing: -0.01em; line-height: 44px; }
-.set-form legend + * { clear: none; }
-/* The set number opens the Set Type choice; a typed set shows its letter as an orange pill instead. */
-.set-type { position: relative; z-index: 0; min-width: 44px; min-height: 44px; margin: 0 0 0 -8px; padding: 0 8px; border: 0; background: transparent; color: inherit; font: inherit; letter-spacing: inherit; line-height: 44px; }
-.set-type[data-recorded="true"] { color: var(--accent); font-weight: 750; }
-.set-type[data-recorded="true"]::before { content: ""; position: absolute; inset: 9px 4px; z-index: -1; border-radius: 999px; background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent-line); }
-.set-type:active { transform: scale(0.94); }
 .remove-set {
   position: absolute;
   top: 2px;
@@ -751,7 +746,7 @@ textarea {
 .fill-previous {
   display: inline-flex;
   align-items: center;
-  max-width: calc(100% - 110px);
+  max-width: 100%;
   min-height: 44px;
   margin: 0 44px 2px 0;
   padding: 0 12px;
@@ -778,13 +773,34 @@ textarea {
 .fill-previous { z-index: 1; }
 .fill-previous:active { transform: scale(0.97); }
 .set-inputs { display: grid; clear: both; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
-.set-form .set-inputs { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 56px; }
+.set-form .set-inputs { grid-template-columns: 34px minmax(0, 1fr) minmax(0, 1fr) 56px; }
+/* The set marker leads the input row at the inputs' height; its tap area reaches into the gaps to 44px. */
+.set-marker {
+  position: relative;
+  align-self: end;
+  height: 54px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--ink);
+  font-size: 1rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.set-marker::before { content: ""; position: absolute; inset: 0 -6px; }
+.set-marker[data-recorded="true"] { background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent-line); color: var(--accent); }
+.set-marker sup { margin-left: 1px; font-size: 0.66rem; font-weight: 750; line-height: 0; vertical-align: 0.55em; }
+.set-marker sup[data-side="right"] { color: var(--side-right); }
+.set-marker sup[data-side="left"] { color: var(--side-left); }
+.set-marker:active { transform: scale(0.94); }
 /* The Effort button is a small pill at the right of the result column's label row, positioned
    so it never changes the row's height. Its tap area grows 44px up and left from the input's top edge. */
 .set-form .set-inputs { position: relative; }
 .effort-button {
   position: absolute;
-  grid-column: 2 / 3;
+  grid-column: 3 / 4;
   grid-row: 1 / 2;
   top: 0;
   right: 0;
@@ -1413,9 +1429,9 @@ textarea {
   .app-header nav .text-button { padding: 0 11px; }
   .workout-exercise-card { padding: 6px 10px 12px; }
   .set-form { padding: 8px 10px 4px; }
-  .set-form .set-inputs { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 52px; gap: 6px; }
-  /* "Seconds" leaves too little room for a Duration Set's "Failure": that pill may use the gap before Done. */
-  .effort-button[aria-pressed] { right: -6px; padding: 0 5px; font-size: 0.66rem; }
+  .set-form .set-inputs { grid-template-columns: 32px minmax(0, 1fr) minmax(0, 1fr) 52px; gap: 6px; }
+  /* The narrow result label leaves too little room for "Failure": the pill may use the gap before Done. */
+  .effort-button { right: -6px; padding: 0 5px; font-size: 0.66rem; }
   .rest-readout strong { font-size: 2.35rem; }
   .rest-actions button { min-width: 74px; padding: 0 14px; }
 }
@@ -1486,29 +1502,6 @@ textarea {
 .reorder-row.is-dragging .reorder-handle { color: var(--accent); cursor: grabbing; }
 #reorder-status { margin-bottom: 0; font-size: 0.88rem; }
 
-/* Side tag beside the set number while Record sides is on; its tap area is 44px square. */
-.side-tag {
-  position: relative;
-  display: inline-grid;
-  place-items: center;
-  min-width: 30px;
-  height: 26px;
-  margin-left: 8px;
-  padding: 0 8px;
-  border: 0;
-  border-radius: 999px;
-  background: var(--surface-3);
-  box-shadow: inset 0 0 0 1px var(--hairline-strong);
-  color: var(--ink-2);
-  font-size: 0.8rem;
-  font-weight: 700;
-  line-height: 26px;
-  vertical-align: middle;
-}
-.side-tag::before { content: ""; position: absolute; inset: -9px -7px; }
-.side-tag[data-recorded="true"] { background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent-line); color: var(--accent); }
-.side-tag:active { transform: scale(0.94); }
-.set-form:has(.side-tag) .fill-previous { max-width: calc(100% - 150px); }
 .sides-option { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 4px 4px; color: var(--ink); font-size: 0.92rem; font-weight: 580; cursor: pointer; }
 .sides-option small { display: block; color: var(--muted); font-size: 0.78rem; font-weight: 500; }
 .sides-option:has(input:disabled) { opacity: 0.45; cursor: default; }

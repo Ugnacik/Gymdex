@@ -2018,7 +2018,7 @@ function renderSet(entry, set, index) {
     : "No completed set";
   return `<form class="set-form${set.completed ? " is-complete" : ""}" data-set-id="${set.id}" data-entry-id="${entry.id}" data-assisted="${assisted}">
     <fieldset>
-      <legend>${renderSetTypeButton(name, label, setType)}${recordsSides(entry) ? renderSideButton(name, side) : ""}</legend>
+      <legend class="visually-hidden">${escapeHtml(name)}</legend>
       <input type="hidden" name="effort" value="${escapeHtml(effort ?? "")}" />
       <input type="hidden" name="side" value="${side ?? ""}" />
       <input type="hidden" name="set_type" value="${setType ?? ""}" />
@@ -2027,8 +2027,9 @@ function renderSet(entry, set, index) {
         ? `<button type="button" class="previous-set fill-previous" data-previous-weight="${previous.weight ?? ""}" data-previous-result="${previous.result}" aria-label="Fill ${escapeHtml(name)} from last workout: ${escapeHtml(previousText)}">Last workout: ${escapeHtml(previousText)}</button>`
         : `<p class="previous-set">Last workout: ${escapeHtml(previousText)}</p>`}
       <div class="set-inputs">
+        ${renderSetMarker(name, label, setType, recordsSides(entry) ? side : undefined)}
         <label>${assisted ? "Assist kg" : "kg"} <input name="weight" type="text" inputmode="decimal" pattern="${WEIGHT_PATTERN}" autocomplete="off" title="A number such as 62.5 or 62,5" aria-label="${escapeHtml(name)} ${assisted ? "assistance" : "weight"} in kilograms" value="${set.weight === null ? "" : Math.abs(set.weight)}" /></label>
-        <label>${unit === "sec" ? "Seconds" : "Reps"} <input name="result" type="number" inputmode="numeric" min="1" max="1000000" step="1" aria-label="${escapeHtml(name)} ${unit}" value="${set.result ?? ""}" ${set.completed ? "required" : ""} /></label>
+        <label>${unit === "sec" ? "Sec" : "Reps"} <input name="result" type="number" inputmode="numeric" min="1" max="1000000" step="1" aria-label="${escapeHtml(name)} ${unit}" value="${set.result ?? ""}" ${set.completed ? "required" : ""} /></label>
         ${renderEffortButton(entry, name, effort)}
         <label class="set-complete">Done <input name="completed" type="checkbox" aria-label="Mark ${escapeHtml(name)} completed and save" ${set.completed ? "checked" : ""} /></label>
       </div>
@@ -2052,25 +2053,31 @@ function setTypeOf(set) {
   return draft && "set_type" in draft ? draft.set_type : set.set_type ?? null;
 }
 
-// The set number, or a typed Set's letter, opens the Set Type choice.
-function renderSetTypeButton(name, label, type) {
-  return `<button type="button" class="set-type" data-set-type data-recorded="${Boolean(type)}" aria-label="${escapeHtml(`${name}: ${setTypeText(type)}. Tap to change the set type.`)}">${escapeHtml(label)}</button>`;
+// The set marker leads the input row: the set number, or a typed Set's letter, with its Side as
+// a superscript R or L while Record sides is on (side is undefined while it is off). It opens
+// one sheet for both, since the superscript is too small for a tap target of its own.
+function renderSetMarker(name, label, type, side) {
+  const sideNote = side === undefined ? "" : `, ${sideText(side)}`;
+  return `<button type="button" class="set-marker" data-set-type data-recorded="${Boolean(type)}" aria-label="${escapeHtml(`${name}: ${setTypeText(type)}${sideNote}. Tap to change.`)}">${escapeHtml(label)}${side ? `<sup data-side="${side}">${sideText(side, { short: true })}</sup>` : ""}</button>`;
 }
 
-// Picking a Set Type saves at once like Effort. The sets are renumbered, since only working sets have numbers.
+// Picking a Set Type or a Side saves at once like Effort. The sets are renumbered, since only working sets have numbers.
 async function chooseSetType(form) {
   if (!state.editor || state.editor.busy) return;
   const entry = state.data.workout_exercises.find((item) => item.id === Number(form.dataset.entryId));
   const set = entry?.sets.find((item) => item.id === Number(form.dataset.setId));
   if (!set) return;
   const current = form.elements.set_type.value || null;
-  const picked = await choose(`Set type for ${exerciseDisplayName(entry)}, set ${set.position}`, {
-    choices: [null, ...SET_TYPES].map((value) => ({ value, label: setTypeText(value), wide: true })),
-    selected: current,
+  const side = form.elements.side.value || null;
+  const sides = recordsSides(entry) ? SIDES.map((value) => ({ value: `side:${value}`, label: `${sideText(value)} side`, wide: true })) : [];
+  const picked = await choose(`${exerciseDisplayName(entry)}, set ${set.position}`, {
+    choices: [...[null, ...SET_TYPES].map((value) => ({ value, label: setTypeText(value), wide: true })), ...sides],
+    selected: [current, `side:${side}`],
     hint: "Warm-ups are left out of Progress. Only working sets are numbered.",
   });
-  if (picked === undefined || picked === current || state.editor.busy || !form.isConnected) return;
-  form.elements.set_type.value = picked ?? "";
+  if (picked === undefined || picked === current || picked === `side:${side}` || state.editor.busy || !form.isConnected) return;
+  if (picked?.startsWith("side:")) form.elements.side.value = picked.slice(5);
+  else form.elements.set_type.value = picked ?? "";
   saveSetForm(form);
   const list = form.closest(".sets-list");
   renderSets(entry, list);
@@ -2080,24 +2087,6 @@ async function chooseSetType(form) {
 // Record sides is on while any set of the Workout Exercise has a Side.
 function recordsSides(entry) {
   return entry.sets.some((set) => setSide(set));
-}
-
-// The side tag beside the set number; a tap flips it between R and L.
-function renderSideButton(name, side) {
-  return `<button type="button" class="side-tag" data-set-side data-recorded="${Boolean(side)}" aria-label="${escapeHtml(`Side of ${name}: ${sideText(side)}. Tap to switch.`)}">${sideText(side, { short: true })}</button>`;
-}
-
-// Flipping a Side saves at once like Effort; a set without one becomes Right.
-function flipSetSide(form) {
-  if (!state.editor || state.editor.busy) return;
-  const entry = state.data.workout_exercises.find((item) => item.id === Number(form.dataset.entryId));
-  const set = entry?.sets.find((item) => item.id === Number(form.dataset.setId));
-  if (!set) return;
-  const side = form.elements.side.value === "right" ? "left" : "right";
-  form.elements.side.value = side;
-  form.querySelector("[data-set-side]").outerHTML = renderSideButton(`${exerciseDisplayName(entry)}, set ${set.position}`, side);
-  form.querySelector("[data-set-side]").focus();
-  saveSetForm(form);
 }
 
 function saveSetForm(form) {
@@ -2385,8 +2374,6 @@ async function removeSet(form) {
 app.addEventListener("click", (event) => {
   const effort = event.target.closest?.("[data-set-effort]");
   if (effort) return chooseSetEffort(effort.closest(".set-form"));
-  const side = event.target.closest?.("[data-set-side]");
-  if (side) return flipSetSide(side.closest(".set-form"));
   const setType = event.target.closest?.("[data-set-type]");
   if (setType) return chooseSetType(setType.closest(".set-form"));
   const routine = event.target.closest?.("[data-start-routine]");
