@@ -36,10 +36,9 @@ function node() {
 
 function setForm(setId, position) {
   const formNodes = { fieldset: node(), '.set-status': node(), '.remove-set': node(), '.set-retry': Object.assign(node(), { hidden: true }),
-    legend: node(), '.fill-previous': node(), '[data-set-effort]': Object.assign(node(), { dataset: {} }) };
-  formNodes.legend.textContent = `Set ${position}`;
+    '.fill-previous': node(), '[data-set-effort]': Object.assign(node(), { dataset: {} }) };
   const form = Object.assign(node(), {
-    isConnected: true, dataset: { setId: String(setId), entryId: '3' },
+    isConnected: true, dataset: { setId: String(setId), entryId: '3', setLabel: `set ${position}` },
     elements: { weight: Object.assign(node(), { value: '', attributes: { 'aria-label': `Bench Press, set ${position} weight in kilograms` },
       getAttribute(name) { return this.attributes[name]; }, setAttribute(name, value) { this.attributes[name] = value; } }),
     result: { value: '', required: false },

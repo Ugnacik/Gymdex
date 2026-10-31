@@ -2004,7 +2004,7 @@ async function addConfiguredExercise(event, { manufacturer, label }) {
 function renderSet(entry, set, index) {
   const previous = entry.previous_sets[index];
   const unit = entry.tracking_type === "duration" ? "sec" : "reps";
-  const name = `${exerciseDisplayName(entry)}, set ${set.position}`;
+  const name = setName(entry, index);
   // Negative weights recorded before assistance moved to the variation stay assisted.
   const draft = state.editor?.status(set.id)?.values;
   const assisted = Boolean(entry.assisted) || set.weight < 0 || draft?.assistance === true;
@@ -2016,7 +2016,7 @@ function renderSet(entry, set, index) {
   const previousText = previous
     ? `${previous.weight === null ? "" : `${Math.abs(previous.weight)} kg${previous.weight < 0 ? " assistance" : ""} × `}${previous.result} ${unit}${previous.effort ? ` · ${effortText(previous.effort)}` : ""}`
     : "No completed set";
-  return `<form class="set-form${set.completed ? " is-complete" : ""}" data-set-id="${set.id}" data-entry-id="${entry.id}" data-assisted="${assisted}">
+  return `<form class="set-form${set.completed ? " is-complete" : ""}" data-set-id="${set.id}" data-set-label="${escapeHtml(setName(entry, index, { exercise: false }))}" data-entry-id="${entry.id}" data-assisted="${assisted}">
     <fieldset>
       <legend class="visually-hidden">${escapeHtml(name)}</legend>
       <input type="hidden" name="effort" value="${escapeHtml(effort ?? "")}" />
@@ -2047,6 +2047,14 @@ function setSide(set) {
   return draft && "side" in draft ? draft.side : set.side ?? null;
 }
 
+// How a set is named in labels and questions, after its visible marker: "Bench Press, set 1" or
+// "Bench Press, warm-up", since only working sets are numbered. Without the exercise: "set 1".
+function setName(entry, index, { exercise = true } = {}) {
+  const label = setLabels(entry.sets.map(setTypeOf), { short: false })[index];
+  const lower = label[0].toLowerCase() + label.slice(1);
+  return exercise ? `${exerciseDisplayName(entry)}, ${lower}` : lower;
+}
+
 // A set's Set Type: its draft's, or the saved one. Drafts from before Set Type existed have no set_type key.
 function setTypeOf(set) {
   const draft = state.editor?.status(set.id)?.values;
@@ -2070,7 +2078,7 @@ async function chooseSetType(form) {
   const current = form.elements.set_type.value || null;
   const side = form.elements.side.value || null;
   const sides = recordsSides(entry) ? SIDES.map((value) => ({ value: `side:${value}`, label: `${sideText(value)} side`, wide: true })) : [];
-  const picked = await choose(`${exerciseDisplayName(entry)}, set ${set.position}`, {
+  const picked = await choose(setName(entry, entry.sets.indexOf(set)), {
     choices: [...[null, ...SET_TYPES].map((value) => ({ value, label: setTypeText(value), wide: true })), ...sides],
     selected: [current, `side:${side}`],
     hint: "Warm-ups are left out of Progress. Only working sets are numbered.",
@@ -2164,7 +2172,7 @@ async function chooseSetEffort(form) {
   if (!set) return;
   const current = form.elements.effort.value || null;
   const duration = entry.tracking_type === "duration";
-  const picked = duration ? "failure" : await choose(`Effort for ${exerciseDisplayName(entry)}, set ${set.position}`, {
+  const picked = duration ? "failure" : await choose(`Effort for ${setName(entry, entry.sets.indexOf(set))}`, {
     choices: effortsFor(entry.tracking_type).map((value) => value === "failure"
       ? { value, label: "Failure", wide: true }
       : { value, label: value, name: effortText(value) }),
@@ -2175,7 +2183,7 @@ async function chooseSetEffort(form) {
   const effort = picked === current ? null : picked;
   form.elements.effort.value = effort ?? "";
   const button = form.querySelector("[data-set-effort]");
-  const { text, label, pressed } = effortButtonState(entry, `${exerciseDisplayName(entry)}, set ${set.position}`, effort);
+  const { text, label, pressed } = effortButtonState(entry, setName(entry, entry.sets.indexOf(set)), effort);
   button.textContent = text;
   button.dataset.recorded = String(Boolean(effort));
   button.setAttribute("aria-label", label);
@@ -2356,7 +2364,7 @@ async function removeExercise(entryId) {
 
 async function removeSet(form) {
   if (state.editor.busy) return;
-  if (!await ask(`Remove set ${form.querySelector("legend").textContent.replace("Set ", "")}?`, { confirmLabel: "Remove", danger: true })) return;
+  if (!await ask(`Remove ${form.dataset.setLabel}?`, { confirmLabel: "Remove", danger: true })) return;
   const entryNode = form.closest(".exercise-entry");
   const addButton = entryNode.querySelector(".add-set");
   if (await state.editor.remove(form.dataset.setId)) {

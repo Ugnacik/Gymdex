@@ -470,6 +470,8 @@ try {
   await screenshot('set-type-sheet');
   await pickEffort('Warm-up');
   check('Picking Warm-up shows W and saves it', await set.locator('[data-set-type]').innerText() === 'W' && await eventually(async () => await setTypeOf(0) === 'warmup'));
+  check('A warm-up is named after its marker, not its position', await set.getAttribute('data-set-label') === 'warm-up'
+    && await set.locator('[name=weight]').getAttribute('aria-label') === 'Bench Press, warm-up weight in kilograms');
   const typeBox = await set.locator('[data-set-type]').boundingBox();
   check('The set marker keeps its size when typed', typeBox.width >= 32 && typeBox.height >= 44);
   await screenshot('set-type-warmup');
