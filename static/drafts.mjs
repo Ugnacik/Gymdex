@@ -41,11 +41,12 @@ export class DraftStore {
 
   get(workoutId, setId) {
     const draft = this.read(this.key(workoutId, setId));
-    // Drafts written before Effort or Side existed have no such key and are still valid.
+    // Drafts written before Effort, Side or Set Type existed have no such key and are still valid.
     if (!draft || typeof draft.weight !== "string" || typeof draft.result !== "string"
       || typeof draft.assistance !== "boolean" || typeof draft.completed !== "boolean"
       || ("effort" in draft && draft.effort !== null && !EFFORTS.includes(draft.effort))
-      || ("side" in draft && draft.side !== null && !SIDES.includes(draft.side))) return null;
+      || ("side" in draft && draft.side !== null && !SIDES.includes(draft.side))
+      || ("set_type" in draft && draft.set_type !== null && !SET_TYPES.includes(draft.set_type))) return null;
     return draft;
   }
 
@@ -116,7 +117,7 @@ export function parseWeight(text) {
   return new RegExp(`^(?:${WEIGHT_PATTERN})$`).test(value) ? Number(value.replace(",", ".")) : NaN;
 }
 
-// Values without an effort or side key (drafts from before they existed) leave the stored value unchanged.
+// Values without an effort, side or set_type key (drafts from before they existed) leave the stored value unchanged.
 export function setPayload(values) {
   const weight = parseWeight(values.weight);
   return {
@@ -125,6 +126,7 @@ export function setPayload(values) {
     completed: values.completed,
     ...("effort" in values ? { effort: values.effort } : {}),
     ...("side" in values ? { side: values.side } : {}),
+    ...("set_type" in values ? { set_type: values.set_type } : {}),
   };
 }
 
@@ -148,4 +150,20 @@ export const SIDES = ["right", "left"];
 export function sideText(side, { short = false } = {}) {
   const text = side === "left" ? "Left" : side === "right" ? "Right" : "Both";
   return short && side ? text[0] : text;
+}
+
+// A Set's optional Set Type; a Set without one is a working set.
+export const SET_TYPES = ["warmup", "drop", "myo"];
+const SET_TYPE_NAMES = { warmup: ["W", "Warm-up"], drop: ["D", "Drop set"], myo: ["M", "Myo-reps"] };
+
+// "Warm-up", "Drop set", "Myo-reps" or "Working set"; short gives the letter that replaces a typed Set's number.
+export function setTypeText(type, { short = false } = {}) {
+  return SET_TYPE_NAMES[type]?.[short ? 0 : 1] ?? "Working set";
+}
+
+// Like Strong, only working sets are numbered: types [warmup, null, drop, null] read "W", "1", "D", "2",
+// or "Warm-up", "Set 1", "Drop set", "Set 2" in full.
+export function setLabels(types, { short = true } = {}) {
+  let number = 0;
+  return types.map((type) => type ? setTypeText(type, { short }) : `${short ? "" : "Set "}${++number}`);
 }

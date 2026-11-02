@@ -56,6 +56,10 @@ A recorded effort of one Exercise Variation within a Workout. A Set records the 
 **Effort**:
 The optional record of how hard a Set was: Failure, meaning another repetition was attempted and missed, or the repetitions left in reserve: 0, 1, 2, 3 or 4+. Duration Sets record only Failure.
 
+**Set Type**:
+The optional mark that a Set was a Warm-up, a Drop set or Myo-reps. A Set without a Set Type is a working set. Warm-ups are left out of Progress.
+_Avoid_: Set kind, set tag
+
 **Side**:
 The optional record that a Set of a single-limb exercise worked only the right or only the left side. A Set without a Side worked both sides.
 _Avoid_: Hand, limb, arm

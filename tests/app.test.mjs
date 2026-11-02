@@ -36,10 +36,9 @@ function node() {
 
 function setForm(setId, position) {
   const formNodes = { fieldset: node(), '.set-status': node(), '.remove-set': node(), '.set-retry': Object.assign(node(), { hidden: true }),
-    legend: node(), '.fill-previous': node(), '[data-set-effort]': Object.assign(node(), { dataset: {} }) };
-  formNodes.legend.textContent = `Set ${position}`;
+    '.fill-previous': node(), '[data-set-effort]': Object.assign(node(), { dataset: {} }) };
   const form = Object.assign(node(), {
-    isConnected: true, dataset: { setId: String(setId), entryId: '3' },
+    isConnected: true, dataset: { setId: String(setId), entryId: '3', setLabel: `set ${position}` },
     elements: { weight: Object.assign(node(), { value: '', attributes: { 'aria-label': `Bench Press, set ${position} weight in kilograms` },
       getAttribute(name) { return this.attributes[name]; }, setAttribute(name, value) { this.attributes[name] = value; } }),
     result: { value: '', required: false },
@@ -74,7 +73,7 @@ async function harness(disk = storage(), initialData = {}, { now = Date.parse('2
   forms.push(form);
   const list = { insertAdjacentHTML(_, html) {
     this.html = html;
-    const [, id, position] = html.match(/data-set-id="(\d+)"[\s\S]*?<legend>Set (\d+)/);
+    const [, id, position] = html.match(/data-set-id="(\d+)"[\s\S]*?data-set-type[^>]*>(\d+)/);
     const added = setForm(Number(id), Number(position));
     added.elements.weight.value = html.match(/name="weight"[^>]*value="([^"]*)"/)[1];
     added.elements.result.value = html.match(/name="result"[^>]*value="([^"]*)"/)[1];
@@ -1251,7 +1250,7 @@ test('removing a set renumbers the remaining sets and pairs them with Last worko
   await app.form.querySelector('.remove-set').events.click();
   assert.deepEqual(questions, ['Remove set 1?', { confirmLabel: 'Remove', danger: true }]);
   assert.deepEqual(requests, ['DELETE /api/sets/2']);
-  const legends = [...list.innerHTML.matchAll(/data-set-id="(\d+)"[\s\S]*?<legend>Set (\d+)<\/legend>/g)].map(([, id, position]) => [id, position]);
+  const legends = [...list.innerHTML.matchAll(/data-set-id="(\d+)"[\s\S]*?data-set-type[^>]*>(\d+)<\/button>/g)].map(([, id, position]) => [id, position]);
   assert.deepEqual(legends, [['5', '1'], ['6', '2']]);
   assert.match(list.innerHTML, /aria-label="Remove Bench Press, set 2"/);
   assert.match(list.innerHTML, /data-set-id="5"[\s\S]*?Last workout: 80 kg × 8 reps[\s\S]*?data-set-id="6"[\s\S]*?Last workout: 85 kg × 6 reps/);

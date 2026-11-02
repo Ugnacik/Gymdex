@@ -359,7 +359,8 @@ try {
   await set.locator('[name=completed]').check();
   await page.waitForFunction(() => document.querySelector('[data-exercise-count]')?.textContent === '1/2 done');
   check('Done completes a Set in one tap', (await read('/api/bootstrap')).workout_exercises[0].sets[0].completed === 1);
-  check('The Set number is plain text', await set.locator('legend').innerText() === 'Set 1' && await set.locator('legend button').count() === 0);
+  check('The set marker leads the inputs and shows the working set number', await set.locator('[data-set-type]').innerText() === '1'
+    && await set.locator('.set-inputs > :first-child').evaluate(node => node.matches('[data-set-type]')));
   check('An unrecorded Repetitions Set shows RIR beside Reps', await effortButton(set).innerText() === 'RIR'
     && await effortButton(set).getAttribute('aria-label') === 'Effort for Bench Press, set 1: none');
   for (const width of [390, 320]) {
@@ -398,7 +399,7 @@ try {
   check('Failure is recorded on the Set', await effortButton(set).innerText() === 'Failure' && await eventually(async () => await setEffortOf(0) === 'failure'));
   const durationSet = page.locator('.workout-exercise-card', { hasText: 'Long Custom Duration' }).locator('.set-form').first();
   const durationEffort = async () => (await read('/api/bootstrap')).workout_exercises[1].sets[0].effort;
-  check('A Duration Set offers a Failure toggle beside Seconds', await effortButton(durationSet).innerText() === 'Failure'
+  check('A Duration Set offers a Failure toggle beside Sec', await effortButton(durationSet).innerText() === 'Failure'
     && await effortButton(durationSet).getAttribute('aria-pressed') === 'false');
   await effortButton(durationSet).click();
   check('Tapping Failure on a Duration Set records it without a sheet', await page.locator('.choice-sheet').count() === 0
@@ -418,31 +419,65 @@ try {
       range.selectNodeContents(form.elements.result.labels[0].firstChild);
       return range.getBoundingClientRect().right <= form.querySelector('[data-set-effort]').getBoundingClientRect().left;
     });
-    check(`Duration Failure clears the Seconds label, input and Done at ${width}px`, clear && area.bottom <= area.resultTop && area.right <= area.doneLeft);
+    check(`Duration Failure clears the Sec label, input and Done at ${width}px`, clear && area.bottom <= area.resultTop && area.right <= area.doneLeft);
   }
   await page.setViewportSize({ width: 390, height: 844 });
   const benchCard = page.locator('.workout-exercise-card').first();
   const sideOf = async index => (await read('/api/bootstrap')).workout_exercises[0].sets[index].side;
   await benchCard.locator('.exercise-options > summary').click();
   await benchCard.locator('[data-record-sides]').click();
-  const sideTag = set.locator('[data-set-side]');
-  check('Record sides tags the first set R and saves it', await sideTag.innerText() === 'R' && await eventually(async () => await sideOf(0) === 'right'));
-  await sideTag.click();
-  check('Tapping the side tag flips it to L', await sideTag.innerText() === 'L' && await eventually(async () => await sideOf(0) === 'left'));
+  const marker = set.locator('[data-set-type]');
+  const openMarker = async () => { await marker.click(); await page.locator('.choice-sheet').evaluate(sheet => Promise.all(sheet.getAnimations().map(animation => animation.finished))); };
+  check('Record sides marks the first set R in red and saves it', await marker.locator('sup').innerText() === 'R'
+    && await marker.locator('sup').evaluate(sup => getComputedStyle(sup).color) === 'rgb(255, 100, 100)' && await eventually(async () => await sideOf(0) === 'right'));
+  await openMarker();
+  check('The set sheet shows the Side and the Set Type as chosen', await page.locator('.choice-sheet').getByRole('button', { name: 'Right side', exact: true }).getAttribute('aria-pressed') === 'true'
+    && await page.locator('.choice-sheet').getByRole('button', { name: 'Working set', exact: true }).getAttribute('aria-pressed') === 'true');
+  await pickEffort('Left side');
+  check('Picking Left side marks the set L in purple', await marker.locator('sup').innerText() === 'L'
+    && await marker.locator('sup').evaluate(sup => getComputedStyle(sup).color) === 'rgb(185, 154, 255)' && await eventually(async () => await sideOf(0) === 'left'));
   for (const width of [390, 320]) {
     await page.setViewportSize({ width, height: 844 });
-    const area = await sideTag.evaluate(tag => { const box = tag.getBoundingClientRect(); const style = getComputedStyle(tag, '::before');
-      return { width: box.width - 2 * parseFloat(style.left), height: box.height - 2 * parseFloat(style.top) }; });
-    check(`Side tag is touch-sized and the set fits ${width}px`, area.width >= 44 && area.height >= 44
+    const area = await marker.evaluate(button => { const box = button.getBoundingClientRect(); const style = getComputedStyle(button, '::before');
+      return { width: box.width - 2 * parseFloat(style.left), height: box.height }; });
+    const weight = await set.locator('[name=weight]').evaluate(input => { input.value = '142.5'; return input.scrollWidth <= input.clientWidth; });
+    const repsClear = await set.evaluate(form => {
+      const button = form.querySelector('[data-set-effort]');
+      const saved = button.textContent; button.textContent = 'Failure';
+      const range = document.createRange(); range.selectNodeContents(form.elements.result.labels[0].firstChild);
+      const clear = range.getBoundingClientRect().right <= button.getBoundingClientRect().left
+        && button.getBoundingClientRect().right <= form.elements.completed.getBoundingClientRect().left;
+      button.textContent = saved; return clear;
+    });
+    check(`A Repetitions Failure pill clears the Reps label and Done at ${width}px`, repsClear);
+    check(`Set marker is touch-sized, 142.5 kg fits and the set fits ${width}px`, area.width >= 44 && area.height >= 44 && weight
       && await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth));
+    await set.locator('[name=weight]').evaluate(input => { input.value = '42.5'; });
   }
   await page.setViewportSize({ width: 390, height: 844 });
   await set.scrollIntoViewIfNeeded();
-  await screenshot('set-side-tag');
+  await screenshot('set-marker-side');
   await benchCard.locator('[data-record-sides]').click();
-  check('Turning Record sides off removes the tags and the saved sides', await set.locator('[data-set-side]').count() === 0
+  check('Turning Record sides off removes the side marks and the saved sides', await marker.locator('sup').count() === 0
     && await eventually(async () => await sideOf(0) === null));
   await benchCard.locator('.exercise-options > summary').click();
+  const setTypeOf = async index => (await read('/api/bootstrap')).workout_exercises[0].sets[index].set_type;
+  const setTypeButton = set.locator('[data-set-type]');
+
+  await setTypeButton.click();
+  await page.locator('.choice-sheet').evaluate(sheet => Promise.all(sheet.getAnimations().map(animation => animation.finished)));
+  check('The Set Type sheet marks Working set as chosen', await page.locator('.choice-sheet').getByRole('button', { name: 'Working set', exact: true }).getAttribute('aria-pressed') === 'true');
+  await screenshot('set-type-sheet');
+  await pickEffort('Warm-up');
+  check('Picking Warm-up shows W and saves it', await set.locator('[data-set-type]').innerText() === 'W' && await eventually(async () => await setTypeOf(0) === 'warmup'));
+  check('A warm-up is named after its marker, not its position', await set.getAttribute('data-set-label') === 'warm-up'
+    && await set.locator('[name=weight]').getAttribute('aria-label') === 'Bench Press, warm-up weight in kilograms');
+  const typeBox = await set.locator('[data-set-type]').boundingBox();
+  check('The set marker keeps its size when typed', typeBox.width >= 32 && typeBox.height >= 44);
+  await screenshot('set-type-warmup');
+  await set.locator('[data-set-type]').click();
+  await pickEffort('Working set');
+  check('Picking Working set brings the number back and clears it', await set.locator('[data-set-type]').innerText() === '1' && await eventually(async () => await setTypeOf(0) === null));
   await page.locator('.exercise-summary').first().click();
   check('Exercise can collapse', !await page.locator('.workout-exercise').first().evaluate(card => card.open));
   await page.locator('.exercise-summary').first().click();

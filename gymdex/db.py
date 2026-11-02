@@ -330,6 +330,16 @@ def migrate(connection: sqlite3.Connection) -> None:
                     "ALTER TABLE workout_sets ADD COLUMN side TEXT CHECK (side IN ('left', 'right'))"
                 )
             connection.execute("PRAGMA user_version = 8")
+    if version < 9:
+        with connection:
+            connection.execute("BEGIN IMMEDIATE")
+            # A Set's Set Type (see CONTEXT.md) stays NULL for working sets.
+            columns = {row["name"] for row in connection.execute("PRAGMA table_info(workout_sets)")}
+            if "set_type" not in columns:
+                connection.execute(
+                    "ALTER TABLE workout_sets ADD COLUMN set_type TEXT CHECK (set_type IN ('warmup', 'drop', 'myo'))"
+                )
+            connection.execute("PRAGMA user_version = 9")
 
 
 def rows(cursor: sqlite3.Cursor) -> list[dict[str, Any]]:
@@ -422,11 +432,13 @@ def slot_sides(previous: list[dict[str, Any]], count: int) -> list[str | None]:
 def insert_slots(
     connection: sqlite3.Connection, exercise_id: int, previous: list[dict[str, Any]], count: int,
 ) -> None:
-    """Add blank sets 1..count (at least one) that take their Sides from Last workout."""
+    """Add blank sets 1..count (at least one) that take their Sides and Set Types from Last workout."""
     count = max(count, 1)
+    types = [item["set_type"] for item in previous[:count]] + [None] * count
     connection.executemany(
-        "INSERT INTO workout_sets(workout_exercise_id, position, side) VALUES (?, ?, ?)",
-        [(exercise_id, slot, side) for slot, side in enumerate(slot_sides(previous, count), start=1)],
+        "INSERT INTO workout_sets(workout_exercise_id, position, side, set_type) VALUES (?, ?, ?, ?)",
+        [(exercise_id, slot, side, types[slot - 1])
+         for slot, side in enumerate(slot_sides(previous, count), start=1)],
     )
 
 
@@ -1165,7 +1177,7 @@ def exercise_progress(
            JOIN workout_exercises e ON e.workout_id = w.id
            JOIN workout_sets s ON s.workout_exercise_id = e.id
            WHERE w.completed_at IS NOT NULL AND e.variation_id = ?
-             AND s.completed = 1 AND (? IS NULL OR w.gym_id = ?)
+             AND s.completed = 1 AND s.set_type IS NOT 'warmup' AND (? IS NULL OR w.gym_id = ?)
              AND (? IS NULL OR e.equipment_snapshot = ?)
              AND (? IS NULL OR e.manufacturer_snapshot = ?)
              AND (? IS NULL OR e.label_snapshot = ?)
@@ -1422,7 +1434,7 @@ def set_workout_exercise_note(
 
 
 # The columns of every Set the API returns.
-SET_COLUMNS = "id, position, weight, result, completed, effort, side"
+SET_COLUMNS = "id, position, weight, result, completed, effort, side, set_type"
 
 
 def sets_for_exercise(connection: sqlite3.Connection, exercise_id: int) -> list[dict[str, Any]]:
@@ -1517,20 +1529,21 @@ def move_workout_exercise(
 
 
 def append_set(connection: sqlite3.Connection, exercise_id: int) -> dict[str, Any]:
-    """Append a set that copies the weight and result of the set above, not completed
-    and without its effort, on the other Side when the set above has one.
+    """Append a set that copies the weight, result and Set Type of the set above, not
+    completed and without its effort, on the other Side when the set above has one.
 
     Works for active and completed workouts; the caller owns the transaction.
     """
     above = connection.execute(
-        """SELECT position, weight, result, side FROM workout_sets
+        """SELECT position, weight, result, side, set_type FROM workout_sets
            WHERE workout_exercise_id = ? ORDER BY position DESC LIMIT 1""",
         (exercise_id,),
     ).fetchone()
     cursor = connection.execute(
-        "INSERT INTO workout_sets(workout_exercise_id, position, weight, result, side) VALUES (?, ?, ?, ?, ?)",
-        (exercise_id, above["position"] + 1, above["weight"], above["result"], OTHER_SIDE[above["side"]])
-        if above else (exercise_id, 1, None, None, None),
+        """INSERT INTO workout_sets(workout_exercise_id, position, weight, result, side, set_type)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (exercise_id, above["position"] + 1, above["weight"], above["result"], OTHER_SIDE[above["side"]], above["set_type"])
+        if above else (exercise_id, 1, None, None, None, None),
     )
     return _set_row(connection, cursor.lastrowid)
 
@@ -1572,6 +1585,15 @@ def validate_side(payload: dict) -> None:
         raise ValueError("Side must be left, right or null.")
 
 
+SET_TYPES = ("warmup", "drop", "myo")
+
+
+def validate_set_type(payload: dict) -> None:
+    """A set_type key is optional like side: absent keeps the stored Set Type and null makes a working set."""
+    if payload.get("set_type") not in (None, *SET_TYPES):
+        raise ValueError("Set type must be warmup, drop, myo or null.")
+
+
 def _save_set(
     connection: sqlite3.Connection, set_id: int, payload: dict,
     values: tuple[int | float | None, int | None, bool],
@@ -1590,6 +1612,8 @@ def _save_set(
         connection.execute("UPDATE workout_sets SET effort = ? WHERE id = ?", (effort, set_id))
     if "side" in payload:
         connection.execute("UPDATE workout_sets SET side = ? WHERE id = ?", (payload["side"], set_id))
+    if "set_type" in payload:
+        connection.execute("UPDATE workout_sets SET set_type = ? WHERE id = ?", (payload["set_type"], set_id))
     return _set_row(connection, set_id)
 
 
@@ -1612,6 +1636,7 @@ def update_set(connection: sqlite3.Connection, set_id: int, payload: dict) -> di
     values = validate_set_values(payload)
     validate_effort(payload)
     validate_side(payload)
+    validate_set_type(payload)
     with connection:
         connection.execute("BEGIN IMMEDIATE")
         item = connection.execute("SELECT workout_exercise_id FROM workout_sets WHERE id = ?", (set_id,)).fetchone()
@@ -1630,6 +1655,7 @@ def correct_completed_set(
     values = validate_set_values(payload)
     validate_effort(payload)
     validate_side(payload)
+    validate_set_type(payload)
     with connection:
         connection.execute("BEGIN IMMEDIATE")
         if not connection.execute(

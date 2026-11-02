@@ -31,7 +31,7 @@ class ExportAndBackupTests(unittest.TestCase):
         exercise = db.add_workout_exercise(self.connection, workout["id"], variation["id"], "Barbell")
         first = db.sets_for_exercise(self.connection, exercise["id"])[0]
         db.update_set(self.connection, first["id"],
-                      {"weight": 42.5, "result": 8, "completed": True, "effort": "4+", "side": "right"})
+                      {"weight": 42.5, "result": 8, "completed": True, "effort": "4+", "side": "right", "set_type": "drop"})
         db.add_set(self.connection, exercise["id"])
         db.complete_workout(self.connection, workout["id"])
 
@@ -48,6 +48,7 @@ class ExportAndBackupTests(unittest.TestCase):
         self.assertEqual(exported[1]["effort"], "4+")
         self.assertEqual(exported[2]["effort"], "")
         self.assertEqual((exported[1]["side"], exported[2]["side"]), ("right", "left"))
+        self.assertEqual((exported[1]["set_type"], exported[2]["set_type"]), ("drop", "drop"))
         self.assertEqual(exported[2]["set_position"], "2")
         self.assertEqual(exported[2]["completed"], "0")
 
