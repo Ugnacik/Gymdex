@@ -2098,9 +2098,12 @@ test('a routine that cannot start says why and stays on the start screen', async
 test('history saves a completed workout as a routine named in the in-app sheet', async () => {
   const app = await harness(storage(), { ...startData([home]), routines: [] });
   const saved = { id: 9, gym_id: 1, name: 'Monday', skipped: 1, exercises: [{ id: 1 }, { id: 2 }] };
-  const { nodes, requests, click } = await openHistoryDetail(app, completedDetail(), { 'POST /api/history/22/routine': saved });
+  const detail = completedDetail();
+  detail.workout = { ...detail.workout, muscle_groups: ['Chest', 'Triceps'] };
+  const { nodes, requests, click } = await openHistoryDetail(app, detail, { 'POST /api/history/22/routine': saved });
   const html = nodes['#history-detail'].innerHTML;
   assert.match(html, /data-repeat-workout="22">Repeat this workout<\/button>\s*<button class="secondary history-save-routine" type="button" data-save-routine="22">Save as routine<\/button>/);
+  assert.match(html, /<h3>Chest &amp; Triceps<\/h3>/);
   const asked = [];
   const submitted = [];
   app.env.askText = async (question, options) => {
@@ -2115,7 +2118,8 @@ test('history saves a completed workout as a routine named in the in-app sheet',
   assert.equal(asked.length, 1);
   assert.equal(asked[0][0], 'Save this workout as a routine at Home');
   assert.equal(asked[0][1], 'Routine name');
-  assert.match(asked[0][2], /^Home .*21/);
+  assert.equal(asked[0][2], workoutTitle(detail.workout));
+  assert.equal(asked[0][2], 'Chest & Triceps');
   assert.equal(asked[0][3], 'Save routine');
   assert.ok(requests.includes('POST /api/history/22/routine'));
   assert.deepEqual(bodies, [{ name: 'Monday' }]);
@@ -2127,6 +2131,14 @@ test('history saves a completed workout as a routine named in the in-app sheet',
   const before = requests.length;
   await click('[data-save-routine]', { saveRoutine: '22' });
   assert.equal(requests.length, before);
+
+  // Without trained Muscle Groups, the default name is the Gym, matching history.
+  const bare = await harness(storage(), { ...startData([home]), routines: [] });
+  const { click: bareClick } = await openHistoryDetail(bare, completedDetail(), { 'POST /api/history/22/routine': saved });
+  const bareAsked = [];
+  bare.env.askText = async (question, options) => { bareAsked.push(options.value); return null; };
+  await bareClick('[data-save-routine]', { saveRoutine: '22' });
+  assert.deepEqual(bareAsked, ['Home']);
 });
 
 test('a routine saved from history takes its place by name on the start screen, as after a reload', async () => {

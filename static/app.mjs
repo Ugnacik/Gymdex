@@ -184,7 +184,8 @@ function renderFinishSummary() {
 async function saveWorkoutRoutine(workout) {
   const saved = await askText(`Save this workout as a routine at ${workout.gym_name}`, {
     label: "Routine name", confirmLabel: "Save routine",
-    value: `${workout.gym_name} ${new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short" }).format(parseServerTime(workout.started_at))}`,
+    // Same title history shows for this workout (trained Muscle Groups, or the Gym).
+    value: workoutTitle(workout),
     submit: (name) => api(`/api/history/${workout.id}/routine`, { method: "POST", body: JSON.stringify({ name }) }),
   });
   if (!saved) return;
