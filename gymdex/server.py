@@ -225,7 +225,10 @@ class GymdexHandler(BaseHTTPRequestHandler):
         routine = len(parts) == 3 and parts[:2] == ["api", "routines"]
         configuration = (len(parts) == 6 and parts[:2] == ["api", "workouts"]
                          and parts[3] == "exercises" and parts[5] == "configuration")
-        if not (active_set or history_set or workout_exercise or note or kind or routine or configuration):
+        replace = (len(parts) == 6 and parts[:2] == ["api", "workouts"]
+                   and parts[3] == "exercises" and parts[5] == "replace")
+        if not (active_set or history_set or workout_exercise or note or kind or routine
+                or configuration or replace):
             return self._json_error("Route not found.", HTTPStatus.NOT_FOUND)
         try:
             payload = self._read_json()
@@ -241,6 +244,16 @@ class GymdexHandler(BaseHTTPRequestHandler):
             return self._with_db(lambda connection: db.change_workout_exercise_configuration(
                 connection, workout_id, exercise_id, text_field(payload, "equipment"),
                 text_field(payload, "manufacturer"), text_field(payload, "label"),
+            ))
+        if replace:
+            try:
+                workout_id, exercise_id = int(parts[2]), int(parts[4])
+            except ValueError:
+                return self._json_error("Active workout exercise not found.", HTTPStatus.NOT_FOUND)
+            return self._with_db(lambda connection: db.replace_workout_exercise(
+                connection, workout_id, exercise_id, id_field(payload, "variation_id"),
+                text_field(payload, "equipment"), text_field(payload, "manufacturer"),
+                text_field(payload, "label"),
             ))
         if kind == "variation" and "muscle_groups" in payload:
             return self._with_db(lambda connection: db.set_variation_muscle_groups(

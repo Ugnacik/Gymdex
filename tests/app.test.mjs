@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { readFile } from 'node:fs/promises';
 import { createApp, workoutTitle } from '../static/app.mjs';
 import { DraftStore } from '../static/drafts.mjs';
 import { choiceContainer, choose, listed, toggleList, type } from './fake-choice-field.mjs';
@@ -911,6 +912,45 @@ test('Edit manufacturer / machine saves set drafts, then switches the exercise t
   assert.equal(app.nodes['#toast'].textContent, 'Changed to Sled · Technogym · Upstairs.');
 });
 
+test('Replace exercise in an Active Workout saves drafts, picks another Variation and keeps the card', async () => {
+  const app = await harness(storage(), { workout_exercises: [legPressEntry] });
+  assert.match(app.nodes['#app'].innerHTML, /data-replace-exercise="3" aria-label="Replace Single Leg Leg Press">Replace exercise<\/button>/);
+  const { sheet } = pickerSheet(app);
+  const replaced = { ...structuredClone(legPressEntry), variation_id: 30, exercise_name: 'Plank', variation_name: 'Front Plank',
+    equipment: 'Bodyweight', manufacturer: '', tracking_type: 'duration',
+    sets: [{ id: 2, position: 1, weight: null, result: null, completed: false }] };
+  const requests = [];
+  app.env.fetch = async (url, options = {}) => {
+    requests.push([`${options.method ?? 'GET'} ${url}`, options.body && JSON.parse(options.body)]);
+    if (url === '/api/sets/2') return response({ id: 2, position: 1, weight: 100, result: null, completed: false });
+    if (url.startsWith('/api/catalog')) return response(structuredClone(suggestionCatalog));
+    if (url.endsWith('/replace')) return response({ id: 3, variation_id: 30, exercise_name: 'Plank', variation_name: 'Front Plank',
+      equipment: 'Bodyweight', manufacturer: '', label: '', tracking_type: 'duration', assisted: false, cleared: true });
+    if (url === '/api/bootstrap') return response({ gyms: [], active_workout: { id: 1, gym_id: 1, gym_name: 'Home', started_at: '2026-09-22 10:00:00' }, workout_exercises: [replaced] });
+    throw new Error(`Unexpected ${url}`);
+  };
+  const equipmentButtons = ['Bodyweight'].map((equipment) => Object.assign(node(), { dataset: { equipment }, setAttribute() {} }));
+  const querySelectorAll = app.env.document.querySelectorAll;
+  app.env.document.querySelectorAll = (selector) => selector === '[data-equipment]' ? equipmentButtons : querySelectorAll(selector);
+  app.form.elements.weight.value = '100';
+  app.form.events.input();
+
+  await clickIn(app, '[data-replace-exercise]', { replaceExercise: '3' });
+  assert.deepEqual(requests.map(([request]) => request), ['PUT /api/sets/2', 'GET /api/catalog?gym_id=1'], 'set drafts are saved first');
+  assert.match(app.nodes['#picker'].innerHTML, /<h2 id="picker-title">Replace exercise<\/h2>/);
+  assert.match(app.nodes['#picker'].innerHTML, /Single Leg Leg Press keeps its note and set slots\./);
+  pickVariation(app, 30);
+  assert.match(sheet.innerHTML, /<button class="primary accent" type="submit">Replace exercise<\/button>/);
+  equipmentButtons[0].events.click();
+  await app.nodes['#configuration-form'].events.submit({ preventDefault() {}, currentTarget: app.nodes['#configuration-form'] });
+  assert.deepEqual(requests.slice(2), [
+    ['PUT /api/workouts/1/exercises/3/replace', { variation_id: 30, equipment: 'Bodyweight', manufacturer: '', label: '' }],
+    ['GET /api/bootstrap', undefined]]);
+  assert.equal(app.nodes['#picker'], undefined, 'the sheet closes');
+  assert.match(app.nodes['#app'].innerHTML, /data-set-id="2"/, 'the set slot stays');
+  assert.match(app.nodes['#toast'].textContent, /Replaced with Front Plank\. Cleared set values that no longer match\./);
+});
+
 test('Close in the picker and the custom exercise form returns focus to Add exercise', async () => {
   const app = await harness();
   const { sheetNodes } = await openPickerSheet(app, suggestionCatalog);
@@ -1326,7 +1366,7 @@ test('each exercise offers move up and move down with the ends disabled, and rem
   assert.match(html, /data-move-exercise="3" data-move-to="2" aria-label="Move Bench Press down" >Move down/);
   assert.match(html, /data-move-exercise="4" data-move-to="1" aria-label="Move Front Plank up" >Move up/);
   assert.match(html, /data-move-exercise="4" data-move-to="3" aria-label="Move Front Plank down" disabled>Move down/);
-  assert.match(html, /<summary class="exercise-summary"><h3 data-reorder-name="4">Front Plank<\/h3>[\s\S]*?<details class="exercise-options"[^>]*><summary>Exercise options<\/summary>[\s\S]*?data-remove-exercise="4" aria-label="Remove Front Plank">Remove exercise<\/button>/);
+  assert.match(html, /<summary class="exercise-summary"><h3 data-reorder-name="4">Front Plank<\/h3>[\s\S]*?<details class="exercise-options"[^>]*><summary>Exercise options<\/summary>[\s\S]*?data-replace-exercise="4" aria-label="Replace Front Plank">Replace exercise<\/button>[\s\S]*?data-remove-exercise="4" aria-label="Remove Front Plank">Remove exercise<\/button>/);
   assert.doesNotMatch(html, />Remove</, 'removal has a specific exercise label');
 });
 
@@ -1489,6 +1529,9 @@ test('workout and exercise notes stay collapsed, keep drafts on the phone, and a
   assert.match(app.nodes['#sync-status'].textContent, /1 note waiting to save/);
   const reopened = await harness(app.disk, noted);
   assert.match(reopened.nodes['#app'].innerHTML, /<details class="note" open[^>]*>[\s\S]*?<textarea data-note-target="exercise:3"[^>]*>Seat 4<\/textarea>/);
+  assert.match(reopened.nodes['#app'].innerHTML, /<details class="note" open[^>]*>\s*<summary data-collapse-label="Collapse note for Bench Press" aria-label="Collapse note for Bench Press">/,
+    'an open note is named for collapsing, not deleting');
+  assert.match(html, /<summary data-collapse-label="Collapse workout note">/, 'a closed note keeps its visible label as its name');
   assert.deepEqual(requests, []);
   [...app.timers.values()].find((timer) => timer.delay === 800).callback();
   await settle();
@@ -1519,6 +1562,7 @@ test('history detail shows notes as text and saves an added exercise note', asyn
   assert.match(html, /<p class="note-text">Line one\n&lt;b&gt;bold&lt;\/b&gt;<\/p>/);
   assert.match(html, /data-edit-note="exercise:33"[\s\S]*?<div class="history-exercise-heading"><h3>Bench Press<\/h3>[\s\S]*?<p class="meta">Barbell<\/p>/, 'the exercise note sits above the exercise heading');
   assert.doesNotMatch(html, /<b>/);
+  assert.doesNotMatch(html, /data-replace-exercise|Replace exercise/, 'a Completed Workout cannot replace an exercise');
   assert.match(html, /data-edit-note="workout"[^>]*>Edit workout note</);
   assert.match(html, /data-edit-note="exercise:33"[^>]*aria-label="Add note for Bench Press"[^>]*>Add note</);
   assert.match(html, /<form class="history-note-form" data-history-note="exercise:33" hidden>[\s\S]*?<textarea name="note"[^>]*maxlength="1000"/);
@@ -2523,4 +2567,12 @@ test('a workout in history is named by its trained muscle groups, or by its gym'
   assert.equal(workoutTitle({ gym_name: 'VIP gym', muscle_groups: ['Chest'] }), 'Chest');
   assert.equal(workoutTitle({ gym_name: 'VIP gym', muscle_groups: ['Chest', 'Triceps'] }), 'Chest & Triceps');
   assert.equal(workoutTitle({ gym_name: 'VIP gym', muscle_groups: ['Back', 'Biceps', 'Forearms'] }), 'Back, Biceps & Forearms');
+});
+
+test('an open note shows a minus, not a rotated plus that reads as an x', async () => {
+  const css = await readFile(new URL('../static/styles.css', import.meta.url), 'utf8');
+  const open = css.match(/\.note\[open\] summary::after\s*\{([^}]*)\}/)?.[1] ?? '';
+  assert.match(open, /mask: var\(--icon-minus\)/);
+  assert.doesNotMatch(open, /rotate/);
+  assert.match(css, /--icon-minus: url\("data:image\/svg\+xml,[^"]*M5 12h14'/);
 });

@@ -9,7 +9,16 @@ function element() {
     addEventListener(type, callback) { events[type] = callback; },
     removeEventListener(type) { delete events[type]; },
     setAttribute() {}, focus() { this.focused = true; },
-    classList: { add: value => classes.add(value), remove: value => classes.delete(value), contains: value => classes.has(value) },
+    classList: {
+      add: value => classes.add(value),
+      remove: value => classes.delete(value),
+      contains: value => classes.has(value),
+      toggle(value, force) {
+        const on = force === undefined ? !classes.has(value) : Boolean(force);
+        if (on) classes.add(value); else classes.delete(value);
+        return on;
+      },
+    },
   };
 }
 const pointer = (target, overrides = {}) => ({ target, button: 0, pointerId: 1, isPrimary: true, clientX: 10, clientY: 10,
@@ -66,7 +75,7 @@ test('moving, scrolling and cancelling a held name never open the reorder list',
   assert.deepEqual(h.opened, []);
 });
 
-function reorderHarness(onMove = async () => true) {
+function reorderHarness(onMove = async () => true, { onRemove } = {}) {
   const list = element();
   list.children = [];
   list.scrollTop = 0;
@@ -80,12 +89,30 @@ function reorderHarness(onMove = async () => true) {
     const up = Object.assign(element(), { dataset: { reorderStep: '-1' }, disabled: index === 0 });
     const down = Object.assign(element(), { dataset: { reorderStep: '1' }, disabled: index === count - 1 });
     const handle = element();
-    handle.closest = selector => selector === '.reorder-handle' ? handle : row;
-    for (const button of [up, down]) button.closest = selector => selector === '[data-reorder-step]' ? button : row;
-    row.querySelector = selector => selector.includes('"-1"') ? (!up.disabled ? up : null)
-      : selector.includes('"1"') ? (!down.disabled ? down : null) : (!up.disabled ? up : !down.disabled ? down : null);
+    const surface = Object.assign(element(), { style: {} });
+    const remove = Object.assign(element(), { dataset: { reorderRemove: '' } });
+    const name = element();
+    handle.closest = selector => selector === '.reorder-handle' ? handle
+      : selector === 'button' ? handle
+        : selector === '[data-reorder-id]' ? row : null;
+    for (const button of [up, down]) button.closest = selector => selector === '[data-reorder-step]' ? button
+      : selector === 'button' ? button
+        : selector === '[data-reorder-id]' ? row : null;
+    remove.closest = selector => selector === '[data-reorder-remove]' ? remove
+      : selector === 'button' ? remove
+        : selector === '[data-reorder-id]' ? row : null;
+    name.closest = selector => selector === '.reorder-handle' || selector === 'button' || selector === '[data-reorder-remove]' ? null
+      : selector === '[data-reorder-id]' ? row : null;
+    row.closest = selector => selector === '[data-reorder-id]' ? row : null;
+    row.querySelector = selector => {
+      if (selector === '.reorder-swipe') return surface;
+      if (selector.includes('"-1"')) return !up.disabled ? up : null;
+      if (selector.includes('"1"')) return !down.disabled ? down : null;
+      if (selector === '[data-reorder-step]:not(:disabled)') return !up.disabled ? up : !down.disabled ? down : null;
+      return null;
+    };
     row.getBoundingClientRect = () => ({ y: list.children.indexOf(row) * 60, height: 60 });
-    return Object.assign(row, { up, down, handle });
+    return Object.assign(row, { up, down, handle, surface, remove, name });
   };
   Object.defineProperty(list, 'innerHTML', { set(html) {
     const ids = [...html.matchAll(/data-reorder-id="(\d+)"/g)].map(match => Number(match[1]));
@@ -101,7 +128,7 @@ function reorderHarness(onMove = async () => true) {
   const document = { querySelector: () => null, createElement: () => dialog, body: { append() {} } };
   let closed = false;
   openExerciseReorder(document, { items: [{ id: 1, name: 'Bench' }, { id: 2, name: 'Plank' }, { id: 3, name: 'Dip' }],
-    onMove, onClose: () => { closed = true; }, escapeHtml: text => text });
+    onMove, onRemove, onClose: () => { closed = true; }, escapeHtml: text => text });
   const ids = () => list.children.map(row => Number(row.dataset.reorderId));
   const start = () => list.events.pointerdown(pointer(list.children[0].handle));
   const moveToEnd = () => list.events.pointermove(pointer(list, { clientY: 180 }));
@@ -178,4 +205,59 @@ test('moving a held handle near a list edge scrolls to further destinations and 
   h.list.events.pointercancel();
   h.list.events.pointermove(pointer(h.list, { clientY: 110 }));
   assert.equal(h.list.scrollTop, 48);
+});
+
+test('a left swipe past the threshold asks to remove and keeps the row when declined', async () => {
+  const removals = [];
+  const h = reorderHarness(async () => true, {
+    onRemove: async (id) => { removals.push(id); return false; },
+  });
+  const row = h.list.children[0];
+  h.list.events.pointerdown(pointer(row.name, { clientX: 200, clientY: 20 }));
+  h.list.events.pointermove(pointer(row.name, { clientX: 120, clientY: 22 }));
+  assert.equal(row.classList.contains('is-revealed'), true);
+  assert.match(row.surface.style.transform, /translateX\(-80px\)/);
+  await h.list.events.pointerup(pointer(row.name, { clientX: 120, clientY: 22 }));
+  assert.deepEqual(removals, [1]);
+  assert.deepEqual(h.ids(), [1, 2, 3]);
+  assert.match(h.status.textContent, /Bench kept/);
+  assert.equal(row.classList.contains('is-swiping'), false);
+});
+
+test('a confirmed swipe remove drops the exercise and closes once fewer than two remain', async () => {
+  const removals = [];
+  const h = reorderHarness(async () => true, {
+    onRemove: async (id) => { removals.push(id); return true; },
+  });
+  const first = h.list.children[0];
+  h.list.events.pointerdown(pointer(first.name, { clientX: 180, clientY: 10 }));
+  h.list.events.pointermove(pointer(first.name, { clientX: 90, clientY: 12 }));
+  await h.list.events.pointerup(pointer(first.name, { clientX: 90, clientY: 12 }));
+  assert.deepEqual(removals, [1]);
+  assert.deepEqual(h.ids(), [2, 3]);
+  assert.match(h.status.textContent, /Bench removed/);
+  const second = h.list.children[0];
+  h.list.events.pointerdown(pointer(second.name, { clientX: 180, clientY: 10 }));
+  h.list.events.pointermove(pointer(second.name, { clientX: 90, clientY: 10 }));
+  await h.list.events.pointerup(pointer(second.name, { clientX: 90, clientY: 10 }));
+  assert.deepEqual(removals, [1, 2]);
+  assert.equal(h.closed, true);
+});
+
+test('a short or vertical swipe never removes an exercise', async () => {
+  const removals = [];
+  const h = reorderHarness(async () => true, {
+    onRemove: async (id) => { removals.push(id); return true; },
+  });
+  const row = h.list.children[1];
+  h.list.events.pointerdown(pointer(row.name, { clientX: 160, clientY: 40 }));
+  h.list.events.pointermove(pointer(row.name, { clientX: 140, clientY: 42 }));
+  await h.list.events.pointerup(pointer(row.name, { clientX: 140, clientY: 42 }));
+  assert.deepEqual(removals, []);
+  assert.deepEqual(h.ids(), [1, 2, 3]);
+  h.list.events.pointerdown(pointer(row.name, { clientX: 160, clientY: 40 }));
+  h.list.events.pointermove(pointer(row.name, { clientX: 158, clientY: 90 }));
+  await h.list.events.pointerup(pointer(row.name, { clientX: 158, clientY: 90 }));
+  assert.deepEqual(removals, []);
+  assert.deepEqual(h.ids(), [1, 2, 3]);
 });

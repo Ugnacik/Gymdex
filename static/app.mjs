@@ -57,6 +57,7 @@ const state = {
   selectedGymId: null,
   picker: null,
   pickerContext: null,
+  pickerReplace: null,
   pickerQuery: "",
   pickerMuscleGroup: "",
   summary: null,
@@ -386,6 +387,7 @@ function renderWorkout() {
                     <span class="rest-switch"><input type="checkbox" role="switch" data-record-sides="${entry.id}" aria-label="Record sides for ${escapeHtml(exerciseDisplayName(entry))}" ${recordsSides(entry) ? "checked" : ""} ${entry.sets.length ? "" : "disabled"} /></span></label>
                   <div class="exercise-tools">
                     <button type="button" class="text-button" data-active-progress="${entry.variation_id}" data-progress-equipment="${escapeHtml(entry.equipment)}" data-progress-manufacturer="${escapeHtml(entry.manufacturer || "")}" data-progress-label="${escapeHtml(entry.label || "")}">View progress</button>
+                    <button type="button" class="text-button" data-replace-exercise="${entry.id}" aria-label="Replace ${escapeHtml(exerciseDisplayName(entry))}">Replace exercise</button>
                     <button type="button" class="text-button manage-remove" data-remove-exercise="${entry.id}" aria-label="Remove ${escapeHtml(exerciseDisplayName(entry))}">Remove exercise</button>
                   </div>
                   ${renderExerciseTools(entry, index, entries.length)}
@@ -417,6 +419,7 @@ function renderWorkout() {
     else state.exerciseOptions.delete(id);
   }));
   document.querySelectorAll(".set-form").forEach(bindSet);
+  document.querySelectorAll("details.note").forEach(bindNoteToggle);
   document.querySelectorAll("[data-note-target]").forEach(bindNote);
   document.querySelectorAll("[data-add-set]").forEach((button) => button.addEventListener("click", () => addSet(button)));
   document.querySelectorAll("[data-record-sides]").forEach((input) => input.addEventListener("change", () => recordSides(input)));
@@ -470,12 +473,15 @@ function stopWorkoutElapsed() {
 }
 
 // Notes are collapsed so they never lengthen the set recording path. A note still
-// waiting to reach the server opens so its draft is visible.
+// waiting to reach the server opens so its draft is visible. An open note shows a minus
+// icon and is named "Collapse …", so it does not read as deleting the note.
 function renderNote(target, label, accessibleName = label) {
   const status = state.editor?.noteStatus(target);
   const note = status?.note ?? "";
-  return `<details class="note" ${status?.dirty ? "open" : ""}>
-    <summary><span class="note-label" data-note-summary="${target}" data-label="${label}">${noteLabel(label, note)}</span><span class="note-preview" data-note-preview="${target}">${escapeHtml(note)}</span></summary>
+  const open = Boolean(status?.dirty);
+  const collapse = escapeHtml(`Collapse ${accessibleName[0].toLowerCase()}${accessibleName.slice(1)}`);
+  return `<details class="note" ${open ? "open" : ""}>
+    <summary data-collapse-label="${collapse}"${open ? ` aria-label="${collapse}"` : ""}><span class="note-label" data-note-summary="${target}" data-label="${label}">${noteLabel(label, note)}</span><span class="note-preview" data-note-preview="${target}">${escapeHtml(note)}</span></summary>
     <textarea data-note-target="${target}" maxlength="${NOTE_MAX_LENGTH}" rows="3" aria-label="${escapeHtml(accessibleName)}" placeholder="Optional">${escapeHtml(note)}</textarea>
     <p class="note-status" data-note-status="${target}" role="status"></p>
   </details>`;
@@ -488,6 +494,17 @@ function noteLabel(label, note) {
 function noteTargets() {
   if (!state.data?.active_workout) return [];
   return ["workout", ...state.data.workout_exercises.map((entry) => `exercise:${entry.id}`)];
+}
+
+function bindNoteToggle(details) {
+  const summary = details.querySelector("summary");
+  if (!summary) return;
+  const sync = () => {
+    if (details.open) summary.setAttribute("aria-label", summary.dataset.collapseLabel || "Collapse note");
+    else summary.removeAttribute("aria-label");
+  };
+  sync();
+  details.addEventListener("toggle", sync);
 }
 
 function bindNote(field) {
@@ -1601,6 +1618,7 @@ async function openPicker() {
   if (!await saveAllSets()) return;
   try {
     state.picker = await api(`/api/catalog?gym_id=${state.data.active_workout.gym_id}`);
+    state.pickerReplace = null;
     state.selectedExercise = null;
     state.selectedEquipment = null;
     state.pickerQuery = "";
@@ -1623,6 +1641,7 @@ function openSheet(content) {
       wrapper.cleaned = true;
       wrapper.remove();
       state.pickerContext = null;
+      state.pickerReplace = null;
       document.querySelector("main")?.removeAttribute("inert");
       if (origin?.isConnected) origin.focus();
       else document.querySelector("#open-picker")?.focus();
@@ -1646,6 +1665,7 @@ function openSheet(content) {
 async function openRoutineCatalog(gym, routine, onSave) {
   state.picker = await api(`/api/catalog?gym_id=${gym.id}`);
   state.pickerContext = { gym, routine, onSave };
+  state.pickerReplace = null;
   state.selectedExercise = null;
   state.selectedEquipment = null;
   state.pickerQuery = "";
@@ -1655,9 +1675,11 @@ async function openRoutineCatalog(gym, routine, onSave) {
 
 function renderPicker(query = state.pickerQuery) {
   state.pickerQuery = query;
+  const replacing = state.pickerReplace;
   openSheet(`
       <div class="sheet-handle" aria-hidden="true"></div>
-      <div class="sheet-header"><h2 id="picker-title">Add exercise</h2><button class="text-button" id="close-picker">Close</button></div>
+      <div class="sheet-header"><h2 id="picker-title">${replacing ? "Replace exercise" : "Add exercise"}</h2><button class="text-button" id="close-picker">${replacing ? "Cancel" : "Close"}</button></div>
+      ${replacing ? `<p>${escapeHtml(exerciseDisplayName(replacing.entry))} keeps its note and set slots. Weight, reps or seconds, and effort that no longer match are cleared.</p>` : ""}
       <input class="search" id="exercise-search" type="search" inputmode="search" autocomplete="off" placeholder="Search exercises" aria-label="Search exercises" value="${escapeHtml(query)}" />
       <button type="button" class="filter-chip" id="muscle-group-chip"${state.pickerMuscleGroup ? "" : " hidden"}></button>
       <div class="picker-filters">
@@ -1886,6 +1908,13 @@ async function addRecent(profileId) {
     return saveRoutineChoice({ variation_id: profile.variation_id, equipment: profile.equipment,
       manufacturer: profile.manufacturer, label: profile.label });
   }
+  const profile = (state.picker.saved ?? state.picker.recent).find(item => item.profile_id === profileId);
+  if (state.pickerReplace) {
+    return saveReplacedExercise({
+      variation_id: profile.variation_id, equipment: profile.equipment,
+      manufacturer: profile.manufacturer, label: profile.label,
+    });
+  }
   try {
     await api(`/api/workouts/${state.data.active_workout.id}/exercises`, { method: "POST", body: JSON.stringify({ profile_id: profileId }) });
     closePicker();
@@ -1902,25 +1931,30 @@ function chooseExercise(variationId) {
 
 // The Exercise Configuration form: equipment of state.selectedExercise plus manufacturer and
 // machine label. Adding a Variation starts empty; Editing manufacturer / machine (change) starts from a
-// Workout Exercise's current values and saves them to it instead.
+// Workout Exercise's current values and saves them to it instead. Replacing an Active Workout
+// exercise keeps its note and set slots.
 function renderConfiguration(change = null) {
   const sheet = document.querySelector("#picker .sheet");
   sheet.className = "sheet";
   const item = state.selectedExercise;
+  const replacing = !change && state.pickerReplace;
+  const submitLabel = change ? "Save"
+    : replacing ? "Replace exercise"
+      : state.pickerContext ? "Add to routine" : "Add exercise";
   sheet.innerHTML = `
     <div class="sheet-handle" aria-hidden="true"></div>
     ${change ? `<div class="sheet-header"><h2 id="picker-title">Edit manufacturer / machine</h2><button class="text-button" id="close-picker">Cancel</button></div>
-    <p>${escapeHtml(exerciseDisplayName(item))} keeps its sets and note.</p>` : `<div class="sheet-header"><button class="text-button" id="back-to-picker">Back</button><button class="text-button" id="close-picker">Close</button></div>
+    <p>${escapeHtml(exerciseDisplayName(item))} keeps its sets and note.</p>` : `<div class="sheet-header"><button class="text-button" id="back-to-picker">Back</button><button class="text-button" id="close-picker">${replacing ? "Cancel" : "Close"}</button></div>
     <h2 id="picker-title">${escapeHtml(exerciseDisplayName(item))}</h2>
-    <p>Choose the equipment used at this gym.</p>`}
+    <p>${replacing ? "Choose the equipment used at this gym. Mismatched weight, reps or seconds, and effort are cleared." : "Choose the equipment used at this gym."}</p>`}
     <div class="equipment-grid">${item.equipment.map((equipment) => `<button class="equipment-option" data-equipment="${escapeHtml(equipment)}" aria-pressed="${state.selectedEquipment === equipment}">${escapeHtml(equipment)}</button>`).join("")}</div>
     <form id="configuration-form">
       <div class="field choice-field" id="manufacturer-field"></div>
       <div class="field choice-field" id="machine-label-field"></div>
-      <button class="primary accent" type="submit">${change ? "Save" : state.pickerContext ? "Add to routine" : "Add exercise"}</button>
+      <button class="primary accent" type="submit">${submitLabel}</button>
     </form>`;
   document.querySelector("#back-to-picker")?.addEventListener("click", () => renderPicker());
-  document.querySelector("#close-picker").addEventListener("click", () => closePicker(change?.focus));
+  document.querySelector("#close-picker").addEventListener("click", () => closePicker(change?.focus || replacing?.focus));
   document.querySelectorAll("[data-equipment]").forEach((button) => button.addEventListener("click", () => {
     state.selectedEquipment = button.dataset.equipment;
     document.querySelectorAll("[data-equipment]").forEach((option) => option.setAttribute("aria-pressed", String(option === button)));
@@ -1939,6 +1973,45 @@ function renderConfiguration(change = null) {
     change ? saveMachine(event, change, details) : addConfiguredExercise(event, details));
 }
 
+// Replace an Active Workout's Workout Exercise with another Variation while keeping its note
+// and set slots. Finished workouts are refused by the server.
+async function replaceExercise(entryId) {
+  const entry = state.data.workout_exercises.find((item) => item.id === entryId);
+  if (!entry || !state.editor || state.editor.busy || state.pickerContext) return;
+  if (!await saveAllSets("Cannot replace this exercise yet")) return;
+  try {
+    state.picker = await api(`/api/catalog?gym_id=${state.data.active_workout.gym_id}`);
+  } catch (error) { showToast(error.message); return; }
+  state.pickerReplace = { entry, focus: `[data-replace-exercise="${entry.id}"]` };
+  state.selectedExercise = null;
+  state.selectedEquipment = null;
+  state.pickerQuery = "";
+  state.pickerMuscleGroup = "";
+  renderPicker();
+}
+
+async function saveReplacedExercise(choice, submit = null) {
+  const replacing = state.pickerReplace;
+  if (!replacing || !state.data.active_workout) return;
+  if (submit) submit.disabled = true;
+  try {
+    const saved = await api(
+      `/api/workouts/${state.data.active_workout.id}/exercises/${replacing.entry.id}/replace`,
+      { method: "PUT", body: JSON.stringify(choice) },
+    );
+    const focus = replacing.focus;
+    closePicker(focus);
+    await load();
+    document.querySelector(focus)?.focus();
+    showToast(saved.cleared
+      ? `Replaced with ${exerciseDisplayName(saved)}. Cleared set values that no longer match.`
+      : `Replaced with ${exerciseDisplayName(saved)}.`);
+  } catch (error) {
+    if (submit) submit.disabled = false;
+    showToast(error.message);
+  }
+}
+
 // Edit manufacturer / machine on a Workout Exercise card: saves set and note drafts first, like the other
 // card actions, then opens the Exercise Configuration form with the card's current values.
 async function changeMachine(entryId) {
@@ -1953,6 +2026,7 @@ async function changeMachine(entryId) {
     showToast(`${exerciseDisplayName(entry)} is archived. Restore it in Manage to edit its manufacturer or machine.`);
     return;
   }
+  state.pickerReplace = null;
   state.selectedExercise = variation;
   state.selectedEquipment = entry.equipment;
   openSheet("");
@@ -1984,6 +2058,14 @@ async function addConfiguredExercise(event, { manufacturer, label }) {
     variation_id: state.selectedExercise.id, equipment: state.selectedEquipment,
     manufacturer: manufacturer.value, label: label.value,
   });
+  if (state.pickerReplace) {
+    return saveReplacedExercise({
+      variation_id: state.selectedExercise.id,
+      equipment: state.selectedEquipment,
+      manufacturer: manufacturer.value,
+      label: label.value,
+    }, event.currentTarget.querySelector('[type="submit"]'));
+  }
   const submit = event.currentTarget.querySelector('[type="submit"]');
   submit.disabled = true;
   try {
@@ -2320,6 +2402,11 @@ function openWorkoutReorder(entryId) {
     onMove: async (id, index) => {
       if (!await saveExerciseMove(id, index + 1)) throw new Error("Close and save or correct your pending Sets and Notes, then try again.");
     },
+    onRemove: async (id) => {
+      const before = state.data.workout_exercises.length;
+      await removeExercise(id);
+      return state.data.workout_exercises.length < before;
+    },
     onClose: () => document.querySelector(`[data-reorder-name="${entryId}"]`)?.closest('summary')?.focus(),
   });
 }
@@ -2394,6 +2481,8 @@ app.addEventListener("click", (event) => {
   if (move) return moveExercise(Number(move.dataset.moveExercise), Number(move.dataset.moveTo));
   const remove = event.target.closest?.("[data-remove-exercise]");
   if (remove) return removeExercise(Number(remove.dataset.removeExercise));
+  const replace = event.target.closest?.("[data-replace-exercise]");
+  if (replace) return replaceExercise(Number(replace.dataset.replaceExercise));
   const machine = event.target.closest?.("[data-change-machine]");
   if (machine) return changeMachine(Number(machine.dataset.changeMachine));
 });

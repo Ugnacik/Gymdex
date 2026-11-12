@@ -1375,6 +1375,91 @@ def change_workout_exercise_configuration(
             "manufacturer": profile["manufacturer"], "label": profile["label"]}
 
 
+def replace_workout_exercise(
+    connection: sqlite3.Connection, workout_id: int, exercise_id: int, variation_id: int,
+    equipment: str, manufacturer: str = "", label: str = "",
+) -> dict[str, Any]:
+    """Replace the Variation of an Active Workout's Workout Exercise.
+
+    The note and set slots stay. When Tracking Type or Assisted changes, weight, result and
+    effort are cleared on every set. Completed sets are marked incomplete because the schema
+    requires a result when completed; side and set type stay. Finished workouts cannot be
+    replaced.
+    """
+    with connection:
+        connection.execute("BEGIN IMMEDIATE")
+        entry = connection.execute(
+            """SELECT we.gym_profile_id, we.tracking_type_snapshot AS tracking_type,
+                      v.assisted AS assisted
+               FROM workout_exercises we
+               JOIN workouts w ON w.id = we.workout_id
+               JOIN exercise_variations v ON v.id = we.variation_id
+               WHERE we.id = ? AND we.workout_id = ? AND w.completed_at IS NULL""",
+            (exercise_id, workout_id),
+        ).fetchone()
+        if not entry:
+            raise LookupError("Active workout exercise not found.")
+        workout = connection.execute(
+            "SELECT gym_id FROM workouts WHERE id = ?", (workout_id,),
+        ).fetchone()
+        variation = connection.execute(
+            """SELECT v.id, v.tracking_type, v.assisted, v.name AS variation_name,
+                      e.name AS exercise_name, v.archived_at
+               FROM exercise_variations v JOIN exercises e ON e.id = v.exercise_id
+               WHERE v.id = ?""",
+            (variation_id,),
+        ).fetchone()
+        if not variation:
+            raise LookupError("Exercise variation not found.")
+        name = f"{variation['exercise_name']} {variation['variation_name']}"
+        _require_unarchived_variation(name, variation["archived_at"], "replace with it")
+        profile = _choose_configuration(
+            connection, workout["gym_id"], variation_id, equipment, manufacturer, label,
+        )
+        cleared = (
+            entry["tracking_type"] != variation["tracking_type"]
+            or bool(entry["assisted"]) != bool(variation["assisted"])
+        )
+        connection.execute(
+            """UPDATE workout_exercises SET variation_id = ?, gym_profile_id = ?,
+                      exercise_name_snapshot = ?, variation_name_snapshot = ?,
+                      equipment_snapshot = ?, manufacturer_snapshot = ?, label_snapshot = ?,
+                      tracking_type_snapshot = ?
+               WHERE id = ?""",
+            (
+                variation_id, profile["id"], variation["exercise_name"],
+                variation["variation_name"], equipment, profile["manufacturer"],
+                profile["label"], variation["tracking_type"], exercise_id,
+            ),
+        )
+        if cleared:
+            connection.execute(
+                """UPDATE workout_sets
+                   SET weight = NULL, result = NULL, effort = NULL, completed = 0
+                   WHERE workout_exercise_id = ?""",
+                (exercise_id,),
+            )
+        previous = entry["gym_profile_id"]
+        if (previous is not None and previous != profile["id"]
+                and not connection.execute(MANAGED_KINDS["configuration"].used_sql, (previous,)).fetchone()
+                and not connection.execute(
+                    "SELECT 1 FROM routine_exercises WHERE profile_id = ? LIMIT 1", (previous,)
+                ).fetchone()):
+            MANAGED_KINDS["configuration"].delete(connection, previous)
+    return {
+        "id": exercise_id,
+        "variation_id": variation_id,
+        "exercise_name": variation["exercise_name"],
+        "variation_name": variation["variation_name"],
+        "equipment": equipment,
+        "manufacturer": profile["manufacturer"],
+        "label": profile["label"],
+        "tracking_type": variation["tracking_type"],
+        "assisted": bool(variation["assisted"]),
+        "cleared": cleared,
+    }
+
+
 def complete_workout(connection: sqlite3.Connection, workout_id: int) -> None:
     cursor = connection.execute(
         """UPDATE workouts SET completed_at = CURRENT_TIMESTAMP

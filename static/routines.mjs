@@ -105,6 +105,17 @@ export function openRoutines(context, gym) {
         if (saved) occurrences.splice(to, 0, ...occurrences.splice(from, 1));
         return saved;
       },
+      onRemove: async (id) => {
+        const from = occurrences.indexOf(id);
+        if (from < 0) return false;
+        const item = current().exercises[from];
+        const name = exerciseDisplayName(item);
+        if (!await ask(`Remove ${name} from ${current().name}?`, { confirmLabel: "Remove", danger: true })) return false;
+        const exercises = current().exercises.filter((_, index) => index !== from);
+        const saved = await saveExercises(exercises, `${name} removed.`);
+        if (saved) occurrences.splice(from, 1);
+        return saved;
+      },
       onClose: () => find('[data-reorder-routine]')?.focus(),
     });
   }
