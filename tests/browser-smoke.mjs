@@ -311,11 +311,14 @@ try {
   check('Active: new picker resets Muscle Group and query', await page.locator('#muscle-group-filter').inputValue() === ''
     && await page.locator('#exercise-search').inputValue() === '');
   await page.locator('#close-picker').click();
-  const machineEdit = page.getByRole('button', { name: 'Edit manufacturer / machine for Bench Press', exact: true });
-  check('Manufacturer editing is visible without Exercise options', await machineEdit.isVisible()
-    && !await page.locator('.exercise-options').first().getAttribute('open'));
+  const machineEdit = page.getByRole('button', { name: /^Edit machine for Bench Press: / });
+  check('The machine line is the visible manufacturer editor, with no separate link', await machineEdit.isVisible()
+    && await page.getByText('Edit manufacturer / machine').count() === 0 && await page.locator('.exercise-options, [data-move-exercise]').count() === 0);
   const editBounds = await machineEdit.boundingBox();
   check('Manufacturer edit has a touch target at least 44px high', editBounds.height >= 44);
+  const moreBounds = await page.locator('[data-exercise-more]').first().boundingBox();
+  check('The ⋯ button is touch-sized and sits in the card header', moreBounds.width >= 44 && moreBounds.height >= 44
+    && Math.abs((moreBounds.y + moreBounds.height / 2) - await page.locator('.exercise-summary').first().evaluate(summary => { const box = summary.getBoundingClientRect(); return box.y + box.height / 2; })) <= 4);
   await machineEdit.click();
   check('Manufacturer editing opens the clearly named sheet', await page.locator('#picker-title').innerText() === 'Edit manufacturer / machine'
     && await page.getByText('Manufacturer', { exact: false }).count() > 0);
@@ -424,8 +427,13 @@ try {
   await page.setViewportSize({ width: 390, height: 844 });
   const benchCard = page.locator('.workout-exercise-card').first();
   const sideOf = async index => (await read('/api/bootstrap')).workout_exercises[0].sets[index].side;
-  await benchCard.locator('.exercise-options > summary').click();
-  await benchCard.locator('[data-record-sides]').click();
+  const toggleSides = async () => {
+    await benchCard.locator('[data-exercise-more]').click();
+    await page.locator('#picker .sheet').evaluate(sheet => Promise.all(sheet.getAnimations().map(animation => animation.finished)));
+    await page.locator('#picker [data-record-sides]').click();
+    await page.locator('#close-picker').click();
+  };
+  await toggleSides();
   const marker = set.locator('[data-set-type]');
   const openMarker = async () => { await marker.click(); await page.locator('.choice-sheet').evaluate(sheet => Promise.all(sheet.getAnimations().map(animation => animation.finished))); };
   check('Record sides marks the first set R in red and saves it', await marker.locator('sup').innerText() === 'R'
@@ -457,10 +465,9 @@ try {
   await page.setViewportSize({ width: 390, height: 844 });
   await set.scrollIntoViewIfNeeded();
   await screenshot('set-marker-side');
-  await benchCard.locator('[data-record-sides]').click();
+  await toggleSides();
   check('Turning Record sides off removes the side marks and the saved sides', await marker.locator('sup').count() === 0
     && await eventually(async () => await sideOf(0) === null));
-  await benchCard.locator('.exercise-options > summary').click();
   const setTypeOf = async index => (await read('/api/bootstrap')).workout_exercises[0].sets[index].set_type;
   const setTypeButton = set.locator('[data-set-type]');
 
@@ -483,7 +490,10 @@ try {
   await page.locator('.exercise-summary').first().click();
   check('Collapsing retains set values', await set.locator('[name=weight]').inputValue() === '42.5');
   await page.evaluate(() => navigator.serviceWorker.ready.then(() => true));
-  await page.locator('.workout-exercise-card > .note summary').first().click();
+  check('An exercise without a note has no note row', await benchCard.locator('.note').count() === 0);
+  await benchCard.locator('[data-exercise-more]').click();
+  await page.getByRole('button', { name: 'Add note for Bench Press', exact: true }).click();
+  check('Add note in the ⋯ sheet opens the note with focus', await page.evaluate(() => document.activeElement?.dataset.noteTarget === 'exercise:1'));
   await page.locator('[data-note-target="exercise:1"]').fill('Seat setting 3. Keep shoulders down through the whole set.');
   await page.locator('[data-note-target="exercise:1"]').blur();
   await page.waitForFunction(() => document.querySelector('#sync-status')?.textContent.includes('All changes saved'));
@@ -547,14 +557,11 @@ try {
   await screenshot('workout-reorder-mobile');
   await page.locator('#close-reorder').click();
   check('Name hold leaves the Workout exercise expanded', await page.locator('.workout-exercise').first().evaluate(card => card.open));
-  await page.locator('.exercise-options > summary').first().click();
-  await page.locator('.exercise-options > summary').nth(1).click();
-  await page.getByRole('button', { name: 'Move Long Custom Duration Exercise For Browser Testing up', exact: true }).click();
-  await page.waitForFunction(() => document.querySelector('.exercise-summary h3')?.textContent.startsWith('Long Custom'));
-  check('Reordering retains focus in visible exercise options', await page.evaluate(() => document.activeElement.matches('[data-move-exercise]') && document.activeElement.getClientRects().length > 0));
-  await page.getByRole('button', { name: 'Move Long Custom Duration Exercise For Browser Testing down', exact: true }).click();
-  await page.waitForFunction(() => document.querySelector('.exercise-summary h3')?.textContent === 'Bench Press');
-  await page.getByRole('button', { name: 'Edit manufacturer / machine for Bench Press', exact: true }).click();
+  await page.locator('[data-exercise-more]').first().click();
+  await page.locator('#picker').getByRole('button', { name: 'Reorder exercises', exact: true }).click();
+  check('Reorder exercises in the ⋯ sheet opens the reorder list', await page.locator('#exercise-reorder').isVisible() && await page.locator('#picker').count() === 0);
+  await page.locator('#close-reorder').click();
+  await page.getByRole('button', { name: /^Edit machine for Bench Press: / }).click();
   await page.getByRole('button', { name: 'Machine', exact: true }).click();
   await page.locator('#configuration-form button[type=submit]').click();
   await page.waitForFunction(() => document.querySelector('.exercise-body .meta')?.textContent.startsWith('Machine'));
@@ -714,10 +721,14 @@ try {
   await page.locator('[data-repeat-workout]').click();
   await page.locator('.set-form').first().waitFor();
   check('Last workout shows the Effort', (await page.locator('.set-form').first().locator('.previous-set').innerText()) === 'Last workout: 45.5 kg × 8 reps · Failure');
+  check('Last workout is one line', await page.locator('.set-form').first().locator('.previous-set').evaluate(line => line.getBoundingClientRect().height <= 44));
   check('A repeated Workout starts without Effort', await effortButton(page.locator('.set-form').first()).innerText() === 'RIR');
   await page.locator('.set-form').first().locator('.previous-set').click();
   check('Fill from Last workout copies only weight and result', await eventually(async () => (await read('/api/bootstrap')).workout_exercises[0].sets[0].result === 8)
     && await setEffortOf(0) === null);
+  const savedStatus = page.locator('.set-form').first().locator('.set-status');
+  check('A saved set says so briefly', await eventually(async () => await savedStatus.innerText() === 'Saved to server'));
+  check('The saved message then goes away', await eventually(async () => await savedStatus.innerText() === ''));
   await page.evaluate(() => scrollTo(0, 0));
   await screenshot('effort-last-workout');
   const repeatedSet = page.locator('.set-form').first();

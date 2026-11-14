@@ -176,7 +176,9 @@ test('assisted variations label the weight Assist kg and save it as negative', a
   assert.match(html, /data-assisted="true"/);
   assert.match(html, /Assist kg <input name="weight"[^>]*aria-label="Assisted Pull-up, set 1 assistance in kilograms"/);
   assert.match(html, /Last workout: 25 kg assistance × 8 reps/);
-  assert.match(html, /Assist kg is the counterweight/);
+  assert.doesNotMatch(html, /Assist kg is the counterweight/, 'the tracking hint lives in the ⋯ sheet');
+  assert.match((await openExerciseMenu(app, 3)).html, /Repetitions\. Assist kg is the counterweight and is optional\./);
+  app.env.document.querySelector('#close-picker')?.events.click?.();
   assert.doesNotMatch(html, /name="assistance"|Select Assistance/);
   const bodies = [];
   app.env.fetch = async (path, options) => { bodies.push(JSON.parse(options.body)); return response({ id: 2, position: 1, weight: -20, result: 8, completed: true }); };
@@ -852,11 +854,12 @@ const legPressEntry = { id: 3, variation_id: 17, exercise_name: 'Leg Press', var
 
 test('Edit manufacturer / machine saves set drafts, then switches the exercise to the machine chosen in its sheet', async () => {
   const app = await harness(storage(), { workout_exercises: [legPressEntry] });
-  assert.match(app.nodes['#app'].innerHTML, /<p class="meta">Machine · Cybex<\/p>[\s\S]*data-change-machine="3" aria-label="Edit manufacturer \/ machine for Single Leg Leg Press">Edit manufacturer \/ machine<\/button>/);
+  assert.match(app.nodes['#app'].innerHTML, /<button type="button" class="machine-line" data-change-machine="3" aria-label="Edit machine for Single Leg Leg Press: Machine · Cybex"><span class="meta">Machine · Cybex<\/span><\/button>/,
+    'the machine line itself opens the editor');
   const html = app.nodes['#app'].innerHTML;
   assert.equal((html.match(/data-change-machine="3"/g) ?? []).length, 1);
+  assert.doesNotMatch(html, /Edit manufacturer \/ machine/, 'no separate link on the card');
   assert.ok(html.indexOf('data-change-machine="3"') < html.indexOf('class="sets-list"'));
-  assert.ok(html.indexOf('data-change-machine="3"') < html.indexOf('class="exercise-options"'));
   const { sheet } = pickerSheet(app);
   const changed = { ...structuredClone(legPressEntry), equipment: 'Sled', manufacturer: 'Technogym', label: 'Upstairs',
     note: 'Seat 5', previous_sets: [{ position: 1, weight: 70, result: 12 }],
@@ -905,7 +908,7 @@ test('Edit manufacturer / machine saves set drafts, then switches the exercise t
     ['PUT /api/workouts/1/exercises/3/configuration', { equipment: 'Sled', manufacturer: 'Technogym', label: 'Upstairs' }],
     ['GET /api/bootstrap', undefined]]);
   assert.equal(app.nodes['#picker'], undefined, 'the sheet closes');
-  assert.match(app.nodes['#app'].innerHTML, /<p class="meta">Sled · Technogym · Upstairs<\/p>/);
+  assert.match(app.nodes['#app'].innerHTML, /<span class="meta">Sled · Technogym · Upstairs<\/span>/);
   assert.match(app.nodes['#app'].innerHTML, /data-set-id="2"/);
   assert.equal(app.noteField('exercise:3').value, 'Seat 5');
   assert.match(app.nodes['#app'].innerHTML, /data-previous-weight="70" data-previous-result="12"/);
@@ -914,7 +917,10 @@ test('Edit manufacturer / machine saves set drafts, then switches the exercise t
 
 test('Replace exercise in an Active Workout saves drafts, picks another Variation and keeps the card', async () => {
   const app = await harness(storage(), { workout_exercises: [legPressEntry] });
-  assert.match(app.nodes['#app'].innerHTML, /data-replace-exercise="3" aria-label="Replace Single Leg Leg Press">Replace exercise<\/button>/);
+  assert.doesNotMatch(app.nodes['#app'].innerHTML, /data-replace-exercise/, 'Replace exercise lives in the ⋯ sheet');
+  const menu = await openExerciseMenu(app, 3);
+  assert.match(menu.html, /data-replace-exercise="3" aria-label="Replace Single Leg Leg Press">Replace exercise<\/button>/);
+  app.nodes['#picker'].close();
   const { sheet } = pickerSheet(app);
   const replaced = { ...structuredClone(legPressEntry), variation_id: 30, exercise_name: 'Plank', variation_name: 'Front Plank',
     equipment: 'Bodyweight', manufacturer: '', tracking_type: 'duration',
@@ -1172,11 +1178,15 @@ test('a blocked set offers Retry, which saves it again', async () => {
   app.form.events.submit({ preventDefault() {} });
   await settle();
   assert.match(app.form.querySelector('.set-status').textContent, /Set not found\. Review the set, then tap Retry\./);
+  assert.equal([...app.timers.values()].filter((task) => task.delay === 1500).length, 0, 'a blocked save keeps its message');
   assert.equal(app.form.querySelector('.set-retry').hidden, false);
   app.form.querySelector('.set-retry').events.click();
   await settle();
   assert.deepEqual(puts, ['/api/sets/2', '/api/sets/2']);
   assert.equal(app.form.querySelector('.set-status').textContent, 'Saved to server');
+  const statusTimers = () => [...app.timers].filter(([, task]) => task.delay === 1500 || task.delay === 400);
+  for (let i = 0; i < 2; i += 1) for (const [id, task] of statusTimers()) { app.timers.delete(id); task.callback(); }
+  assert.equal(app.form.querySelector('.set-status').textContent, '', 'a save that reached the server fades');
   assert.equal(app.form.querySelector('.set-retry').hidden, true);
   assert.equal(app.form.dataset.dirty, undefined);
 });
@@ -1255,7 +1265,8 @@ test('tapping Last workout fills the set and saves it without completing it', as
     assert.deepEqual(bodies, [{ weight: saved, result: previous.result, completed: false }]);
   }
   const none = await harness();
-  assert.match(none.nodes['#app'].innerHTML, /<p class="previous-set">Last workout: No completed set<\/p>/);
+  assert.match(none.nodes['#app'].innerHTML, /<div class="set-top"><\/div>/, 'nothing to show without a completed set last time');
+  assert.doesNotMatch(none.nodes['#app'].innerHTML, /Last workout|No completed set/);
 });
 
 test('Add set waits when the set above cannot reach the server', async () => {
@@ -1359,15 +1370,59 @@ function clickIn(app, selector, dataset) {
   return app.nodes['#app'].events.click({ target: { closest: (wanted) => wanted === selector ? button : null } });
 }
 
-test('each exercise offers move up and move down with the ends disabled, and removal in its options', async () => {
-  const app = await harness(storage(), { workout_exercises: [pressEntry, plankEntry] });
+// Opens a Workout Exercise's ⋯ sheet. choose() taps one of its items, like a browser click
+// whose target sits inside the item with these data attributes.
+async function openExerciseMenu(app, entryId) {
+  const opened = pickerSheet(app);
+  opened.sheetNodes['[data-record-sides]'] = node();
+  await clickIn(app, '[data-exercise-more]', { exerciseMore: String(entryId) });
+  const html = app.nodes['#picker']?.innerHTML ?? '';
+  const choose = (attribute, dataset) => opened.sheet.events.click({ target: {
+    closest: (wanted) => wanted.split(', ').includes(attribute) ? Object.assign(node(), { dataset }) : null } });
+  return { ...opened, html, choose };
+}
+
+test('each exercise card has a ⋯ sheet with its tracking, sides, progress, replace, reorder, note and removal', async () => {
+  const app = await harness(storage(), { workout_exercises: [pressEntry, { ...plankEntry, note: 'Elbows under shoulders' }] });
   const html = app.nodes['#app'].innerHTML;
-  assert.match(html, /data-move-exercise="3" data-move-to="0" aria-label="Move Bench Press up" disabled>Move up/);
-  assert.match(html, /data-move-exercise="3" data-move-to="2" aria-label="Move Bench Press down" >Move down/);
-  assert.match(html, /data-move-exercise="4" data-move-to="1" aria-label="Move Front Plank up" >Move up/);
-  assert.match(html, /data-move-exercise="4" data-move-to="3" aria-label="Move Front Plank down" disabled>Move down/);
-  assert.match(html, /<summary class="exercise-summary"><h3 data-reorder-name="4">Front Plank<\/h3>[\s\S]*?<details class="exercise-options"[^>]*><summary>Exercise options<\/summary>[\s\S]*?data-replace-exercise="4" aria-label="Replace Front Plank">Replace exercise<\/button>[\s\S]*?data-remove-exercise="4" aria-label="Remove Front Plank">Remove exercise<\/button>/);
-  assert.doesNotMatch(html, />Remove</, 'removal has a specific exercise label');
+  assert.doesNotMatch(html, /data-move-exercise|Move up|Move down|Exercise options|data-remove-exercise|data-record-sides/,
+    'the card keeps to its sets');
+  assert.match(html, /<summary class="exercise-summary"><h3 data-reorder-name="4">Front Plank<\/h3><span data-exercise-count="4">1\/2 done<\/span><\/summary>[\s\S]*?<button type="button" class="exercise-more" data-exercise-more="4" aria-label="More for Front Plank" aria-haspopup="dialog">/);
+  const press = await openExerciseMenu(app, 3);
+  assert.match(press.html, /<h2 id="picker-title">Bench Press<\/h2>/);
+  const items = [...press.html.matchAll(/class="exercise-menu-item[^"]*"[^>]*>([^<]+)</g)].map((match) => match[1]);
+  assert.deepEqual(items, ['View progress', 'Replace exercise', 'Reorder exercises', 'Add note', 'Remove exercise']);
+  assert.match(press.html, /Repetitions\. Weight is optional\.[\s\S]*?data-record-sides="3" aria-label="Record sides for Bench Press"/);
+  assert.match(press.html, /class="exercise-menu-item danger" data-remove-exercise="3" aria-label="Remove Bench Press">Remove exercise/);
+  app.nodes['#picker'].close();
+  const plank = await openExerciseMenu(app, 4);
+  assert.match(plank.html, /Duration in seconds\./);
+  assert.doesNotMatch(plank.html, /Add note/, 'a note already shows on the card');
+  app.nodes['#picker'].close();
+  const alone = await harness(storage(), { workout_exercises: [pressEntry] });
+  assert.match((await openExerciseMenu(alone, 3)).html, /data-reorder-exercises="3" disabled>Reorder exercises/);
+});
+
+test('Remove exercise in the ⋯ sheet closes the sheet and asks before removing', async () => {
+  const app = await harness(storage(), { workout_exercises: [pressEntry, plankEntry] });
+  const questions = [];
+  app.env.ask = async (question) => { questions.push(question); return false; };
+  const menu = await openExerciseMenu(app, 4);
+  await menu.choose('[data-remove-exercise]', { removeExercise: '4' });
+  assert.equal(app.nodes['#picker'], undefined, 'the sheet closes first');
+  assert.deepEqual(questions, ['Remove Front Plank and its 2 sets from this workout? This cannot be undone.']);
+  assert.match(app.nodes['#app'].innerHTML, /Front Plank/);
+});
+
+test('Add note in the ⋯ sheet opens an empty note on the card, which an empty render drops again', async () => {
+  const app = await harness(storage(), { workout_exercises: [pressEntry] });
+  assert.doesNotMatch(app.nodes['#app'].innerHTML, /data-note-target="exercise:3"|Add note/, 'no note row on the card');
+  const menu = await openExerciseMenu(app, 3);
+  await menu.choose('[data-add-note]', { addNote: '3' });
+  assert.equal(app.nodes['#picker'], undefined);
+  assert.match(app.nodes['#app'].innerHTML, /<details class="note" open>[\s\S]*?<textarea data-note-target="exercise:3"[^>]*aria-label="Note for Bench Press"/);
+  await app.app.load();
+  assert.doesNotMatch(app.nodes['#app'].innerHTML, /data-note-target="exercise:3"/, 'left empty, it goes away');
 });
 
 test('removing an exercise asks first, then drops it and its drafts from the workout', async () => {
@@ -1391,24 +1446,6 @@ test('removing an exercise asks first, then drops it and its drafts from the wor
   assert.equal(app.nodes['#toast'].textContent, 'Front Plank removed.');
   assert.equal(new DraftStore(() => disk).get(1, 6), null);
   assert.deepEqual(new DraftStore(() => disk).cachedWorkout().workout_exercises.map((entry) => entry.id), [3]);
-});
-
-test('moving an exercise saves set drafts first and re-renders in the new order', async () => {
-  const app = await harness(storage(), { workout_exercises: [pressEntry, plankEntry] });
-  const requests = [];
-  app.env.fetch = async (url, options) => {
-    requests.push([`${options.method} ${url}`, JSON.parse(options.body)]);
-    if (url === '/api/sets/2') return response({ id: 2, position: 1, weight: null, result: 8, completed: false });
-    return response({ workout_exercises: [{ id: 4, position: 1 }, { id: 3, position: 2 }] });
-  };
-  app.form.elements.result.value = '8';
-  app.form.events.input();
-  await clickIn(app, '[data-move-exercise]', { moveExercise: '4', moveTo: '1' });
-  assert.deepEqual(requests, [['PUT /api/sets/2', { weight: null, result: 8, completed: false }],
-    ['PUT /api/workout-exercises/4', { position: 1 }]]);
-  const html = app.nodes['#app'].innerHTML;
-  assert.ok(html.indexOf('data-entry-id="4"') < html.indexOf('data-entry-id="3"'));
-  assert.match(html, /data-move-exercise="4" data-move-to="0" aria-label="Move Front Plank up" disabled>/);
 });
 
 test('the workout header shows elapsed time and ticks without re-rendering the set forms', async () => {
@@ -1508,14 +1545,14 @@ test('declining the finish question leaves the workout without a warning', async
 
 test('workout and exercise notes stay collapsed, keep drafts on the phone, and autosave after a typing pause', async () => {
   const noted = { active_workout: { id: 1, gym_id: 1, gym_name: 'Home', started_at: '2026-09-22 10:00:00', note: 'Slept <5h' },
-    workout_exercises: [{ ...pressEntry, note: '' }] };
+    workout_exercises: [{ ...pressEntry, note: 'Grip' }] };
   const app = await harness(storage(), noted);
   const html = app.nodes['#app'].innerHTML;
   assert.match(html, /<details class="note"[^>]*>\s*<summary[^>]*>[\s\S]*?Workout note[\s\S]*?<textarea data-note-target="workout"[^>]*maxlength="1000"[^>]*>Slept &lt;5h<\/textarea>/);
-  assert.match(html, /Add note[\s\S]*?<textarea data-note-target="exercise:3"[^>]*aria-label="Note for Bench Press"[^>]*><\/textarea>/);
+  assert.match(html, /<span class="note-label" data-note-summary="exercise:3" data-label="Note">Note<\/span>[\s\S]*?<textarea data-note-target="exercise:3"[^>]*aria-label="Note for Bench Press"[^>]*>Grip<\/textarea>/);
   assert.doesNotMatch(html, /<details class="note"[^>]*\bopen\b/, 'notes are collapsed so the recording path stays short');
   const order = ['id="workout-elapsed"', 'data-note-target="workout"', 'class="rest-timer"', 'data-note-target="exercise:3"',
-    'class="exercise-summary"', '<p class="meta">', 'class="sets-list"', 'data-add-set="3"', 'class="exercise-tools"', 'id="open-picker"', 'data-finish-workout'].map((marker) => html.indexOf(marker));
+    'class="exercise-summary"', 'class="machine-line"', 'class="sets-list"', 'data-add-set="3"', 'data-exercise-more="3"', 'id="open-picker"', 'data-finish-workout'].map((marker) => html.indexOf(marker));
   assert.ok(order.every((index, i) => index >= 0 && (i === 0 || index > order[i - 1])), `unexpected order ${order}`);
 
   const requests = [];
@@ -2454,7 +2491,7 @@ function reorderDOM(app) {
 }
 
 test('the compact Active Workout reorder list saves Sets and Notes before moving and preserves both Tracking Types', async () => {
-  const app = await harness(storage(), { workout_exercises: [pressEntry, plankEntry] });
+  const app = await harness(storage(), { workout_exercises: [{ ...pressEntry, note: 'Seat 2' }, plankEntry] });
   const requests = [];
   app.env.fetch = async (url, options) => {
     const body = JSON.parse(options.body);

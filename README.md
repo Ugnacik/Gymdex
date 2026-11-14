@@ -304,15 +304,18 @@ not completed; Gymdex saves any edit to the set above first. The × in a set's
 corner deletes it after confirmation, and the remaining sets are renumbered, as
 in history. Sets can be edited while the workout is active.
 
-Hold an exercise name or choose **Reorder exercises** in Exercise options to
+Each exercise's **⋯** button, beside its done count, opens a sheet with the
+tracking hint, **Record sides**, **View progress**, **Replace exercise**,
+**Reorder exercises**, **Add note** (while the exercise has none) and, last,
+**Remove exercise**. Hold an exercise name or choose **Reorder exercises** to
 open a compact list. Drag the handles or use the arrows; each move saves
-immediately. **Move up** and **Move down** also change its place in the workout.
-The × in the exercise's top-right corner deletes the exercise with
-all its sets after confirmation. Both actions first save outstanding set edits to the server;
+immediately, and swiping a row left removes that exercise. **Remove exercise**
+deletes the exercise with all its sets after confirmation. Both actions first save outstanding set edits to the server;
 removing an exercise also discards any unsaved drafts for its sets and note on
 this phone.
 
-**Edit manufacturer / machine**, beside an exercise's equipment and machine details, fixes
+Tapping an exercise's equipment and machine line, under its name, opens
+**Edit manufacturer / machine**, which fixes
 them without adding the exercise again, for example when you picked the wrong
 manufacturer. It opens the same equipment, Manufacturer and Machine label
 choices as adding an exercise, starting from the current ones; **Save** switches
@@ -325,8 +328,9 @@ under Recent. Edit manufacturer / machine is only on the active workout, not in 
 
 Notes are optional free text, up to 1,000 characters, for anything the numbers
 don't capture. They stay collapsed so they never get in the way of logging sets:
-tap **Add note** under an exercise's name and equipment, above its sets, or **Add workout note** under the
-workout's gym and start time, to open a text box. A collapsed note shows its first words. Notes save
+choose **Add note** in an exercise's ⋯ sheet, or tap **Add workout note** under the
+workout's gym and start time, to open a text box. An exercise note shows above
+the exercise's name once it has text. A collapsed note shows its first words. Notes save
 like sets: automatically after a short typing pause or when you leave the box,
 with a draft kept on this phone until the server has it, so a note typed without
 signal is not lost. A note still waiting to save opens when the page reloads.
@@ -382,7 +386,8 @@ the choice, so reopening the app does not ask again.
 Last workout values come from the most recent completed workout with the same
 gym, exercise variation, equipment, manufacturer, and machine label. If that
 combination occurred more than once, its last occurrence supplies the reference.
-Only completed sets are shown, in order. Tap a set's "Last workout" line to
+Only completed sets are shown, in order, as one quiet line at the top of each
+set; a set with nothing from last time shows no line. Tap a set's "Last workout" line to
 copy those values into the set and save them like any other edit; this does not
 mark the set completed.
 
@@ -404,7 +409,7 @@ Effort.
 
 ## Sides for single-limb exercises
 
-For one-arm or one-leg work, open **Exercise options** on the exercise and turn
+For one-arm or one-leg work, open the exercise's **⋯** sheet and turn
 on **Record sides**. Each set's number gets a small **R** (red) or **L** (purple),
 alternating from R. Tap the number to switch the side, and **Add set** takes the
 other side of the set above. The next workout with that Exercise Configuration starts its
@@ -425,11 +430,11 @@ completed workouts, **Edit set** can change a set's type.
 ## Compact workout view and finish summary
 
 Tap an exercise heading to collapse or expand its sets. Completion counts stay
-visible, and collapsing keeps input values and drafts. **Exercise options**
-holds notes, View progress, reordering, and removal. Manufacturer and machine
-edits are available beside the visible configuration details. Options
-stay open when changing a machine or reordering. A pending note opens its
-options after an offline reload, and a draft blocking Finish expands so it
+visible, and collapsing keeps input values and drafts. The **⋯** sheet holds
+the less frequent actions, and the machine line opens the manufacturer and
+machine editor. A set's "Saved to server" shows for a moment after each save
+and then fades; waiting, failed and blocked saves keep their message. A pending
+note opens after an offline reload, and a draft blocking Finish expands so it
 can be corrected.
 
 The rest timer keeps its clock and Start/Pause controls compact. Open **Timer

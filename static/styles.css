@@ -529,7 +529,8 @@ textarea {
 .note-preview { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-weight: 420; }
 .note[open] .note-preview { display: none; }
 .note textarea { margin-top: 4px; }
-.note-status { margin: 6px 0 0; font-size: 0.76rem; color: var(--muted); }
+.note-status { margin: 6px 0 0; font-size: 0.76rem; color: var(--muted); transition: opacity 400ms var(--ease-out); }
+.note-status.is-faded { opacity: 0; }
 .note-status:empty { display: none; }
 .note-status.error { color: var(--danger); }
 .note-text { margin: 8px 0 0; color: var(--ink-2); white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -659,7 +660,7 @@ textarea {
   -webkit-tap-highlight-color: transparent;
 }
 .rest-settings > summary::-webkit-details-marker { display: none; }
-.rest-settings > summary::after, .exercise-options > summary::after, .exercise-summary::after, .manage-section > summary::after, .manage-archived > summary::after {
+.rest-settings > summary::after, .exercise-summary::after, .manage-section > summary::after, .manage-archived > summary::after {
   content: "";
   flex-shrink: 0;
   width: 16px;
@@ -670,7 +671,7 @@ textarea {
   transform: rotate(90deg);
   transition: transform 360ms var(--ease);
 }
-.rest-settings[open] > summary::after, .exercise-options[open] > summary::after, .workout-exercise[open] > .exercise-summary::after,
+.rest-settings[open] > summary::after, .workout-exercise[open] > .exercise-summary::after,
 .manage-section[open] > summary::after, .manage-archived[open] > summary::after { transform: rotate(-90deg); }
 .rest-settings .rest-duration { margin: 4px 6px 4px 12px; }
 .rest-settings #rest-stop { min-height: 48px; margin: 0 0 6px; padding: 0 12px; }
@@ -744,37 +745,29 @@ textarea {
   transition: background-color 200ms var(--ease-out), color 200ms var(--ease-out);
 }
 .remove-set:active { background: var(--surface-3); color: var(--ink); }
-.previous-set { display: block; margin: 0 44px 8px 0; padding-top: 13px; color: var(--muted); font-size: 0.8rem; line-height: 1.35; }
-/* Last workout values as a tappable chip beside the set number. */
-.fill-previous {
-  display: inline-flex;
-  align-items: center;
+/* The set's top line: Last workout values (tap to fill) beside the remove-set button. */
+.set-top { display: flex; align-items: center; min-height: 36px; margin: 0 44px 0 0; }
+.previous-set {
+  display: block;
+  min-width: 0;
   max-width: 100%;
   min-height: 44px;
-  margin: 0 44px 2px 0;
-  padding: 0 12px;
+  margin: -4px 0;
+  padding: 0 2px;
   border: 0;
-  border-radius: 999px;
   background: transparent;
-  color: var(--accent);
-  font-size: 0.8rem;
-  font-weight: 600;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 520;
+  line-height: 1.3;
   text-align: left;
-  overflow-wrap: anywhere;
-  position: relative;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.fill-previous::before {
-  content: "";
-  position: absolute;
-  inset: 6px 0;
-  z-index: -1;
-  border-radius: 999px;
-  background: var(--accent-soft);
-  box-shadow: inset 0 0 0 1px rgba(255, 122, 61, 0.22);
-}
-/* Above the Effort button's tap area, which reaches up beside it, so the chip keeps its own taps. */
-.fill-previous { z-index: 1; }
-.fill-previous:active { transform: scale(0.97); }
+/* Above the Effort button's tap area, which reaches up beside it, so the line keeps its own taps. */
+.fill-previous { position: relative; z-index: 1; }
+.fill-previous:active { color: var(--ink-2); }
 .set-inputs { display: grid; clear: both; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
 .set-form .set-inputs { grid-template-columns: 34px minmax(0, 1fr) minmax(0, 1fr) 56px; }
 /* The set marker leads the input row at the inputs' height; its tap area reaches into the gaps to 44px. */
@@ -881,35 +874,17 @@ textarea {
 .set-inputs .set-complete input:not(:checked)::before { opacity: 0.32; transform: none; background: var(--muted); }
 .set-inputs .set-complete input:checked::before { -webkit-mask-size: 26px; mask-size: 26px; }
 
-.set-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 0 8px; min-height: 30px; margin-top: 2px; }
+.set-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 0 8px; min-height: 20px; margin-top: 2px; }
 .set-actions .text-button { padding: 0 8px; min-height: 44px; font-size: 0.85rem; }
-.set-status { margin-left: auto; font-size: 0.74rem; color: var(--muted); }
+.set-status { margin-left: auto; font-size: 0.74rem; color: var(--muted); transition: opacity 400ms var(--ease-out); }
+.set-status.is-faded { opacity: 0; }
 .set-actions .set-status { margin-left: 2px; }
 .set-status.error { width: 100%; color: var(--danger); }
 .set-form.is-complete .set-actions .set-status { color: var(--accent); }
 .set-hint { font-size: 0.8rem; margin: 14px 0; }
 .add-set { width: 100%; min-height: 50px; margin-top: 10px; background: transparent; color: var(--accent); box-shadow: inset 0 0 0 1.5px var(--hairline-strong); }
 
-.exercise-options { margin-top: 6px; }
-.exercise-options > summary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 46px;
-  padding: 0 4px;
-  cursor: pointer;
-  list-style: none;
-  color: var(--ink-2);
-  font-size: 0.86rem;
-  font-weight: 560;
-  -webkit-tap-highlight-color: transparent;
-}
-.exercise-options > summary::-webkit-details-marker { display: none; }
-.exercise-options[open] { padding-bottom: 4px; }
-.exercise-options .set-hint { margin: 2px 4px 8px; }
-.exercise-options .note { margin: 0 4px; }
 .exercise-tools { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-.exercise-options .exercise-tools { margin-top: 6px; }
 .exercise-tools .text-button {
   min-height: 44px;
   padding: 0 15px;
@@ -922,12 +897,62 @@ textarea {
 .exercise-tools .text-button.manage-remove { color: var(--danger); }
 .exercise-tools .text-button:disabled { cursor: default; opacity: 0.35; }
 
+/* The ⋯ sheet of a Workout Exercise. */
+.exercise-menu-hint { margin: 0 4px 12px; }
+.exercise-menu { display: grid; margin-top: 12px; border-radius: var(--radius-well); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--hairline); overflow: hidden; }
+.exercise-menu-item {
+  min-height: 52px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 0.98rem;
+  font-weight: 560;
+  text-align: left;
+}
+.exercise-menu-item + .exercise-menu-item { box-shadow: inset 0 1px 0 var(--hairline); }
+.exercise-menu-item:active { background: var(--surface-3); }
+.exercise-menu-item:disabled { cursor: default; opacity: 0.4; }
+.exercise-menu-item.danger { color: var(--danger); }
+
 .add-exercise { width: 100%; min-height: 60px; margin-top: 18px; font-size: 1.04rem; }
 .workout-actions { display: grid; gap: 8px; margin-top: 10px; }
 .cancel-workout { color: var(--danger); }
-.machine-line { margin: -6px 0 8px 2px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.machine-line .meta { min-width: 0; margin: 0; }
-.machine-line .text-button { min-height: 44px; margin-right: -8px; padding: 0 10px; font-size: 0.85rem; }
+/* The Exercise Configuration line opens Edit manufacturer / machine. */
+.machine-line {
+  display: flex;
+  align-items: center;
+  max-width: 100%;
+  min-height: 44px;
+  margin: -12px 0 2px 0;
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+.machine-line .meta { margin: 0; }
+.machine-line:active .meta { color: var(--ink-2); }
+/* The ⋯ button sits in the card header between the done count and the collapse chevron. */
+.exercise-frame { position: relative; }
+.exercise-summary > span[data-exercise-count] { margin-right: 36px; }
+.exercise-more {
+  position: absolute;
+  top: 4px;
+  right: 18px;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 1.3rem;
+  line-height: 1;
+}
+.exercise-more:active { background: var(--surface-3); }
 
 /* Finish summary on the start screen. */
 .finish-summary {
@@ -1417,7 +1442,9 @@ textarea {
   .text-button:not(:disabled):hover { background: var(--accent-soft); }
   .app-header nav .text-button:not(:disabled):hover { background: var(--surface-3); color: var(--ink); }
   .sheet-header .text-button:hover { background: #30343c; }
-  .remove-set:hover, .remove-exercise:hover { background: var(--surface-3); color: var(--ink); }
+  .remove-set:hover, .remove-exercise:hover, .exercise-more:hover { background: var(--surface-3); color: var(--ink); }
+  .exercise-menu-item:not(:disabled):hover { background: var(--surface-3); }
+  .machine-line:hover .meta, .fill-previous:hover { color: var(--ink-2); }
   .equipment-option:hover { box-shadow: inset 0 0 0 1px var(--hairline-strong); }
   .exercise-tools .text-button:not(:disabled):hover { background: var(--surface-3); }
 }

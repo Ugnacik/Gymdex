@@ -62,7 +62,8 @@ const state = {
   pickerMuscleGroup: "",
   summary: null,
   collapsedExercises: new Set(),
-  exerciseOptions: new Set(),
+  // A Workout Exercise whose empty note was just opened from its ⋯ sheet; the next render shows it once.
+  addingNote: null,
   selectedExercise: null,
   selectedEquipment: null,
   unavailable: !navigator.onLine,
@@ -325,7 +326,6 @@ async function startWorkout() {
 async function showStartedWorkout({ skipped = 0, ...started }, notice) {
   state.summary = null;
   state.collapsedExercises.clear();
-  state.exerciseOptions.clear();
   state.data.active_workout = started;
   state.data.workout_exercises = [];
   state.selectedGymId = started.gym_id;
@@ -371,29 +371,20 @@ function renderWorkout() {
       ${renderRestTimer()}
       <div class="section-title"><h2>Exercises</h2><span>${entries.length}</span></div>
       <section class="exercise-list">
-        ${entries.length ? entries.map((entry, index) => `
+        ${entries.length ? entries.map((entry) => `
           <article class="exercise-entry workout-exercise-card">
-            ${renderNote(`exercise:${entry.id}`, "Note", `Note for ${exerciseDisplayName(entry)}`)}
+            ${renderExerciseNote(entry)}
+            <div class="exercise-frame">
             <details class="workout-exercise" data-entry-id="${entry.id}" ${state.collapsedExercises.has(entry.id) ? "" : "open"}>
               <summary class="exercise-summary"><h3 data-reorder-name="${entry.id}">${escapeHtml(exerciseDisplayName(entry))}</h3><span data-exercise-count="${entry.id}">${entry.sets.filter(set => set.completed).length}/${entry.sets.length} done</span></summary>
               <div class="exercise-body">
-                <div class="machine-line"><p class="meta">${escapeHtml(configurationLabel(entry))}</p>
-                  <button type="button" class="text-button" data-change-machine="${entry.id}" aria-label="Edit manufacturer / machine for ${escapeHtml(exerciseDisplayName(entry))}">Edit manufacturer / machine</button></div>
+                ${renderMachineLine(entry)}
                 <div class="sets-list">${entry.sets.map((set, index) => renderSet(entry, set, index)).join("")}</div>
                 <button class="secondary add-set" data-add-set="${entry.id}">Add set</button>
-                <details class="exercise-options" data-options-id="${entry.id}" ${state.exerciseOptions.has(entry.id) ? "open" : ""}><summary>Exercise options</summary>
-                  <p class="set-hint">${entry.tracking_type === "duration" ? "Duration in seconds" : "Repetitions"}. ${entry.assisted ? "Assist kg is the counterweight and is optional." : "Weight is optional."}</p>
-                  <label class="sides-option"><span>Record sides<small>Tag each set R or L</small></span>
-                    <span class="rest-switch"><input type="checkbox" role="switch" data-record-sides="${entry.id}" aria-label="Record sides for ${escapeHtml(exerciseDisplayName(entry))}" ${recordsSides(entry) ? "checked" : ""} ${entry.sets.length ? "" : "disabled"} /></span></label>
-                  <div class="exercise-tools">
-                    <button type="button" class="text-button" data-active-progress="${entry.variation_id}" data-progress-equipment="${escapeHtml(entry.equipment)}" data-progress-manufacturer="${escapeHtml(entry.manufacturer || "")}" data-progress-label="${escapeHtml(entry.label || "")}">View progress</button>
-                    <button type="button" class="text-button" data-replace-exercise="${entry.id}" aria-label="Replace ${escapeHtml(exerciseDisplayName(entry))}">Replace exercise</button>
-                    <button type="button" class="text-button manage-remove" data-remove-exercise="${entry.id}" aria-label="Remove ${escapeHtml(exerciseDisplayName(entry))}">Remove exercise</button>
-                  </div>
-                  ${renderExerciseTools(entry, index, entries.length)}
-                </details>
               </div>
             </details>
+            <button type="button" class="exercise-more" data-exercise-more="${entry.id}" aria-label="More for ${escapeHtml(exerciseDisplayName(entry))}" aria-haspopup="dialog"><span aria-hidden="true">⋯</span></button>
+            </div>
           </article>`).join("") : `<div class="empty"><h3>No exercises yet</h3><p>Add a recent choice in one tap, or search the catalog.</p></div>`}
       </section>
       <button class="primary accent add-exercise" id="open-picker">Add exercise</button>
@@ -413,23 +404,10 @@ function renderWorkout() {
     if (card.open) state.collapsedExercises.delete(id);
     else state.collapsedExercises.add(id);
   }));
-  document.querySelectorAll("[data-options-id]").forEach((options) => options.addEventListener("toggle", () => {
-    const id = Number(options.dataset.optionsId);
-    if (options.open) state.exerciseOptions.add(id);
-    else state.exerciseOptions.delete(id);
-  }));
   document.querySelectorAll(".set-form").forEach(bindSet);
   document.querySelectorAll("details.note").forEach(bindNoteToggle);
   document.querySelectorAll("[data-note-target]").forEach(bindNote);
   document.querySelectorAll("[data-add-set]").forEach((button) => button.addEventListener("click", () => addSet(button)));
-  document.querySelectorAll("[data-record-sides]").forEach((input) => input.addEventListener("change", () => recordSides(input)));
-  document.querySelectorAll("[data-active-progress]").forEach((button) => button.addEventListener("click", () => openProgress(
-    Number(button.dataset.activeProgress), workout.gym_id, {
-      equipment: button.dataset.progressEquipment,
-      manufacturer: button.dataset.progressManufacturer,
-      label: button.dataset.progressLabel,
-    },
-  )));
   if (stale) {
     document.querySelector("#stale-keep").addEventListener("click", () => {
       dismissStaleWorkout(workout.id);
@@ -475,10 +453,10 @@ function stopWorkoutElapsed() {
 // Notes are collapsed so they never lengthen the set recording path. A note still
 // waiting to reach the server opens so its draft is visible. An open note shows a minus
 // icon and is named "Collapse …", so it does not read as deleting the note.
-function renderNote(target, label, accessibleName = label) {
+function renderNote(target, label, accessibleName = label, { forceOpen = false } = {}) {
   const status = state.editor?.noteStatus(target);
   const note = status?.note ?? "";
-  const open = Boolean(status?.dirty);
+  const open = Boolean(status?.dirty) || forceOpen;
   const collapse = escapeHtml(`Collapse ${accessibleName[0].toLowerCase()}${accessibleName.slice(1)}`);
   return `<details class="note" ${open ? "open" : ""}>
     <summary data-collapse-label="${collapse}"${open ? ` aria-label="${collapse}"` : ""}><span class="note-label" data-note-summary="${target}" data-label="${label}">${noteLabel(label, note)}</span><span class="note-preview" data-note-preview="${target}">${escapeHtml(note)}</span></summary>
@@ -518,14 +496,82 @@ function bindNote(field) {
   });
 }
 
-function renderExerciseTools(entry, index, count) {
+// An exercise note shows on its card once it has text or a draft. An empty one stays out of the
+// way: Add note in the card's ⋯ sheet opens it.
+function renderExerciseNote(entry) {
+  const target = `exercise:${entry.id}`;
+  const status = state.editor?.noteStatus(target);
+  const adding = state.addingNote === target;
+  if (!adding && !status?.note && !status?.dirty) return "";
+  return renderNote(target, "Note", `Note for ${exerciseDisplayName(entry)}`, { forceOpen: adding });
+}
+
+// The Exercise Configuration as one quiet line that opens Edit manufacturer / machine.
+function renderMachineLine(entry) {
+  const name = exerciseDisplayName(entry);
+  const label = configurationLabel(entry);
+  return `<button type="button" class="machine-line" data-change-machine="${entry.id}" aria-label="Edit machine for ${escapeHtml(name)}: ${escapeHtml(label)}"><span class="meta">${escapeHtml(label)}</span></button>`;
+}
+
+function trackingHint(entry) {
+  return `${entry.tracking_type === "duration" ? "Duration in seconds" : "Repetitions"}. ${entry.assisted ? "Assist kg is the counterweight and is optional." : "Weight is optional."}`;
+}
+
+// The ⋯ sheet holds what a Workout Exercise needs now and then, so the card keeps to the sets.
+function openExerciseMenu(entryId) {
+  const entry = state.data.workout_exercises.find((item) => item.id === entryId);
+  if (!entry || !state.editor || state.editor.busy || document.querySelector("#picker")) return;
   const name = escapeHtml(exerciseDisplayName(entry));
-  // data-move-to is the 1-based target position; the ends keep their disabled button for a stable layout.
-  return `<div class="exercise-tools">
-    <button type="button" class="text-button" data-reorder-exercises="${entry.id}" ${count < 2 ? "disabled" : ""}>Reorder exercises</button>
-    <button type="button" class="text-button" data-move-exercise="${entry.id}" data-move-to="${index}" aria-label="Move ${name} up" ${index === 0 ? "disabled" : ""}>Move up</button>
-    <button type="button" class="text-button" data-move-exercise="${entry.id}" data-move-to="${index + 2}" aria-label="Move ${name} down" ${index === count - 1 ? "disabled" : ""}>Move down</button>
-  </div>`;
+  const count = state.data.workout_exercises.length;
+  const noteStatus = state.editor.noteStatus(`exercise:${entry.id}`);
+  const hasNote = Boolean(noteStatus?.note || noteStatus?.dirty);
+  openSheet(`
+    <div class="sheet-handle" aria-hidden="true"></div>
+    <div class="sheet-header"><h2 id="picker-title">${name}</h2><button class="text-button" id="close-picker">Close</button></div>
+    <p class="set-hint exercise-menu-hint">${escapeHtml(trackingHint(entry))}</p>
+    <label class="sides-option"><span>Record sides<small>Tag each set R or L</small></span>
+      <span class="rest-switch"><input type="checkbox" role="switch" data-record-sides="${entry.id}" aria-label="Record sides for ${name}" ${recordsSides(entry) ? "checked" : ""} ${entry.sets.length ? "" : "disabled"} /></span></label>
+    <div class="exercise-menu">
+      ${entry.variation_id ? `<button type="button" class="exercise-menu-item" data-active-progress="${entry.variation_id}" data-progress-equipment="${escapeHtml(entry.equipment)}" data-progress-manufacturer="${escapeHtml(entry.manufacturer || "")}" data-progress-label="${escapeHtml(entry.label || "")}">View progress</button>` : ""}
+      <button type="button" class="exercise-menu-item" data-replace-exercise="${entry.id}" aria-label="Replace ${name}">Replace exercise</button>
+      <button type="button" class="exercise-menu-item" data-reorder-exercises="${entry.id}" ${count < 2 ? "disabled" : ""}>Reorder exercises</button>
+      ${hasNote ? "" : `<button type="button" class="exercise-menu-item" data-add-note="${entry.id}" aria-label="Add note for ${name}">Add note</button>`}
+      <button type="button" class="exercise-menu-item danger" data-remove-exercise="${entry.id}" aria-label="Remove ${name}">Remove exercise</button>
+    </div>`);
+  const sheet = document.querySelector("#picker .sheet");
+  const back = `[data-exercise-more="${entry.id}"]`;
+  sheet.querySelector("#close-picker").addEventListener("click", () => closePicker(back));
+  sheet.querySelector("[data-record-sides]").addEventListener("change", (event) => recordSides(event.currentTarget));
+  // Every other choice closes the sheet first; the card's ⋯ button gets focus back.
+  sheet.addEventListener("click", (event) => {
+    const action = event.target.closest?.("[data-active-progress], [data-replace-exercise], [data-reorder-exercises], [data-add-note], [data-remove-exercise]");
+    if (!action || action.disabled) return;
+    closePicker(back);
+    return exerciseAction(action);
+  });
+}
+
+// Opens an exercise note that has no text yet, from the ⋯ sheet.
+function addExerciseNote(entryId) {
+  const target = `exercise:${entryId}`;
+  state.collapsedExercises.delete(entryId);
+  state.addingNote = target;
+  render();
+  state.addingNote = null;
+  document.querySelector(`[data-note-target="${target}"]`)?.focus();
+}
+
+// The actions offered on a Workout Exercise card and in its ⋯ sheet.
+function exerciseAction(button) {
+  const data = button.dataset;
+  if (data.exerciseMore) return openExerciseMenu(Number(data.exerciseMore));
+  if (data.reorderExercises) return openWorkoutReorder(Number(data.reorderExercises));
+  if (data.removeExercise) return removeExercise(Number(data.removeExercise));
+  if (data.replaceExercise) return replaceExercise(Number(data.replaceExercise));
+  if (data.changeMachine) return changeMachine(Number(data.changeMachine));
+  if (data.addNote) return addExerciseNote(Number(data.addNote));
+  if (data.activeProgress) return openProgress(Number(data.activeProgress), state.data.active_workout.gym_id, {
+    equipment: data.progressEquipment, manufacturer: data.progressManufacturer, label: data.progressLabel });
 }
 
 function restDurationOptions(duration) {
@@ -1536,7 +1582,7 @@ function syncEditorView() {
     if (status.dirty) form.dataset.dirty = "true";
     else delete form.dataset.dirty;
     form.querySelector("fieldset").disabled = status.removing;
-    if (status.message) setStatus(form, status.message, status.error);
+    if (status.message) setStatus(form, status.message, status.error, isSettled(status));
     form.querySelector(".set-retry").hidden = !status.blocked || status.saving;
     const saved = state.data.workout_exercises.flatMap((entry) => entry.sets)
       .find((set) => set.id === Number(form.dataset.setId));
@@ -1549,10 +1595,7 @@ function syncEditorView() {
     if (status.dirty) field.dataset.dirty = "true";
     else delete field.dataset.dirty;
     const message = document.querySelector(`[data-note-status="${target}"]`);
-    if (message) {
-      message.textContent = status.message;
-      message.classList.toggle("error", status.error);
-    }
+    if (message) showStatus(message, `note:${target}`, status.message, status.error, isSettled(status));
     const summary = document.querySelector(`[data-note-summary="${target}"]`);
     if (summary) summary.textContent = noteLabel(summary.dataset.label, status.note);
     const preview = document.querySelector(`[data-note-preview="${target}"]`);
@@ -1982,7 +2025,7 @@ async function replaceExercise(entryId) {
   try {
     state.picker = await api(`/api/catalog?gym_id=${state.data.active_workout.gym_id}`);
   } catch (error) { showToast(error.message); return; }
-  state.pickerReplace = { entry, focus: `[data-replace-exercise="${entry.id}"]` };
+  state.pickerReplace = { entry, focus: `[data-exercise-more="${entry.id}"]` };
   state.selectedExercise = null;
   state.selectedEquipment = null;
   state.pickerQuery = "";
@@ -2098,7 +2141,7 @@ function renderSet(entry, set, index) {
   const label = setLabels(entry.sets.map(setTypeOf))[index];
   const previousText = previous
     ? `${previous.weight === null ? "" : `${Math.abs(previous.weight)} kg${previous.weight < 0 ? " assistance" : ""} × `}${previous.result} ${unit}${previous.effort ? ` · ${effortText(previous.effort)}` : ""}`
-    : "No completed set";
+    : "";
   return `<form class="set-form${set.completed ? " is-complete" : ""}" data-set-id="${set.id}" data-set-label="${escapeHtml(setName(entry, index, { exercise: false }))}" data-entry-id="${entry.id}" data-assisted="${assisted}">
     <fieldset>
       <legend class="visually-hidden">${escapeHtml(name)}</legend>
@@ -2106,9 +2149,9 @@ function renderSet(entry, set, index) {
       <input type="hidden" name="side" value="${side ?? ""}" />
       <input type="hidden" name="set_type" value="${setType ?? ""}" />
       <button type="button" class="remove-set" aria-label="Remove ${escapeHtml(name)}"><span aria-hidden="true">×</span></button>
-      ${previous
+      <div class="set-top">${previous
         ? `<button type="button" class="previous-set fill-previous" data-previous-weight="${previous.weight ?? ""}" data-previous-result="${previous.result}" aria-label="Fill ${escapeHtml(name)} from last workout: ${escapeHtml(previousText)}">Last workout: ${escapeHtml(previousText)}</button>`
-        : `<p class="previous-set">Last workout: ${escapeHtml(previousText)}</p>`}
+        : ""}</div>
       <div class="set-inputs">
         ${renderSetMarker(name, label, setType, recordsSides(entry) ? side : undefined)}
         <label>${assisted ? "Assist kg" : "kg"} <input name="weight" type="text" inputmode="decimal" pattern="${WEIGHT_PATTERN}" autocomplete="off" title="A number such as 62.5 or 62,5" aria-label="${escapeHtml(name)} ${assisted ? "assistance" : "weight"} in kilograms" value="${set.weight === null ? "" : Math.abs(set.weight)}" /></label>
@@ -2117,7 +2160,7 @@ function renderSet(entry, set, index) {
         <label class="set-complete">Done <input name="completed" type="checkbox" aria-label="Mark ${escapeHtml(name)} completed and save" ${set.completed ? "checked" : ""} /></label>
       </div>
       <div class="set-actions">
-        <span class="set-status" role="status">${set.completed ? "Completed" : "Saved"}</span>
+        <span class="set-status" role="status"></span>
         <button type="button" class="text-button set-retry" hidden>Retry</button>
       </div>
     </fieldset>
@@ -2191,7 +2234,8 @@ function saveSetForm(form) {
 function recordSides(input) {
   const entry = state.data.workout_exercises.find((item) => item.id === Number(input.dataset.recordSides));
   if (!entry || !state.editor || state.editor.busy) { input.checked = !input.checked; return; }
-  const list = input.closest(".exercise-body").querySelector(".sets-list");
+  const list = document.querySelector(`.workout-exercise[data-entry-id="${entry.id}"] .sets-list`);
+  if (!list) return;
   const forms = [...list.querySelectorAll(".set-form")];
   for (const [index, form] of forms.entries()) {
     form.elements.side.value = input.checked ? SIDES[index % 2] : "";
@@ -2339,10 +2383,34 @@ async function retryPendingSets() {
   updateSyncStatus();
 }
 
-function setStatus(form, message, error = false) {
-  const status = form.querySelector(".set-status");
+// A save that reached the server says so for a moment and fades; waiting, failed and blocked
+// saves keep their message. A set re-rendered later does not repeat a message already shown.
+const STATUS_FADE_MS = 1500;
+const shownStatus = new Map();
+function setStatus(form, message, error = false, transient = false) {
+  showStatus(form.querySelector(".set-status"), form.dataset.setId, message, error, transient);
+}
+
+// A set or note whose latest value reached the server.
+function isSettled(status) {
+  return !status.dirty && !status.saving && !status.blocked && !status.error;
+}
+
+function showStatus(status, id, message, error = false, transient = false) {
+  const shown = shownStatus.get(id);
+  if (transient && shown?.message === message) return;
+  clearTimeout(shown?.timer);
+  const entry = { message, timer: null };
+  shownStatus.set(id, entry);
   status.textContent = message;
   status.classList.toggle("error", error);
+  status.classList.remove("is-faded");
+  if (!transient || !message) return;
+  entry.timer = setTimeout(() => {
+    status.classList.add("is-faded");
+    // Empty once faded, so an empty note status takes no room.
+    entry.timer = setTimeout(() => { status.textContent = ""; status.classList.remove("is-faded"); }, 400);
+  }, STATUS_FADE_MS);
 }
 
 // Shows the draft that blocked an action and says why in a toast, because iOS Safari
@@ -2417,18 +2485,6 @@ async function saveExerciseMove(entryId, position) {
   return true;
 }
 
-async function moveExercise(entryId, position) {
-  if (!state.editor || state.editor.busy) return;
-  const from = state.data.workout_exercises.findIndex((item) => item.id === entryId) + 1;
-  try {
-    if (!await saveExerciseMove(entryId, position)) { showInvalidSet("Not moved yet"); return; }
-    // Keep focus on the moved exercise, preferring the button for the same direction.
-    const [preferred, other] = position < from ? [position - 1, position + 1] : [position + 1, position - 1];
-    const button = (to) => document.querySelector(`[data-move-exercise="${entryId}"][data-move-to="${to}"]:not(:disabled)`);
-    (button(preferred) || button(other))?.focus();
-  } catch (error) { showToast(error.message); }
-}
-
 async function removeExercise(entryId) {
   const entry = state.data.workout_exercises.find((item) => item.id === entryId);
   if (!entry || !state.editor || state.editor.busy) return;
@@ -2443,7 +2499,6 @@ async function removeExercise(entryId) {
       return;
     }
     state.collapsedExercises.delete(entryId);
-    state.exerciseOptions.delete(entryId);
     render();
     document.querySelector("#open-picker")?.focus();
     showToast(`${name} removed.`);
@@ -2475,16 +2530,10 @@ app.addEventListener("click", (event) => {
   const routine = event.target.closest?.("[data-start-routine]");
   if (routine) return startRoutine(routine);
   if (event.target.closest?.("#open-routines")) return openRoutinesScreen();
-  const reorder = event.target.closest?.("[data-reorder-exercises]");
-  if (reorder) return openWorkoutReorder(Number(reorder.dataset.reorderExercises));
-  const move = event.target.closest?.("[data-move-exercise]");
-  if (move) return moveExercise(Number(move.dataset.moveExercise), Number(move.dataset.moveTo));
-  const remove = event.target.closest?.("[data-remove-exercise]");
-  if (remove) return removeExercise(Number(remove.dataset.removeExercise));
-  const replace = event.target.closest?.("[data-replace-exercise]");
-  if (replace) return replaceExercise(Number(replace.dataset.replaceExercise));
-  const machine = event.target.closest?.("[data-change-machine]");
-  if (machine) return changeMachine(Number(machine.dataset.changeMachine));
+  for (const selector of ["[data-exercise-more]", "[data-reorder-exercises]", "[data-remove-exercise]", "[data-replace-exercise]", "[data-change-machine]"]) {
+    const button = event.target.closest?.(selector);
+    if (button) return exerciseAction(button);
+  }
 });
 
 window.addEventListener("beforeunload", (event) => {
