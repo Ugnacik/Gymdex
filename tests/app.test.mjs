@@ -1269,6 +1269,28 @@ test('tapping Last workout fills the set and saves it without completing it', as
   assert.doesNotMatch(none.nodes['#app'].innerHTML, /Last workout|No completed set/);
 });
 
+test('Last workout fills only empty fields, so a stray tap never overwrites typed values', async () => {
+  const data = { workout_exercises: [{ id: 3, exercise_name: 'Deadlift', variation_name: 'Romanian', equipment: 'Barbell',
+    tracking_type: 'repetitions', previous_sets: [{ weight: 130, result: 1, effort: '0' }], sets: [{ id: 2, position: 1, weight: null, result: null, completed: false }] }] };
+  const app = await harness(storage(), data);
+  const bodies = [];
+  app.env.fetch = async (path, options) => { const body = JSON.parse(options.body); bodies.push(body); return response({ id: 2, position: 1, ...body }); };
+  app.form.elements.weight.value = '130';
+  app.form.elements.result.value = '2';
+  app.form.querySelector('.fill-previous').events.click();
+  await settle();
+  assert.equal(app.form.elements.result.value, '2', 'typed reps stay');
+  assert.deepEqual(bodies, []);
+  assert.match(app.nodes['#toast'].textContent, /fills only empty fields/);
+  app.form.elements.result.value = '';
+  app.form.elements.weight.value = '125';
+  app.form.querySelector('.fill-previous').events.click();
+  await settle();
+  assert.equal(app.form.elements.weight.value, '125', 'a typed weight stays');
+  assert.equal(app.form.elements.result.value, '1', 'the empty reps are filled');
+  assert.deepEqual(bodies, [{ weight: 125, result: 1, completed: false }]);
+});
+
 test('Add set waits when the set above cannot reach the server', async () => {
   const app = await harness();
   const requests = [];
@@ -1334,6 +1356,33 @@ test('the RIR button saves an Effort without changing completion, and picking it
   assert.equal(offered[1].selected, '2');
   assert.deepEqual(bodies[1], { weight: 60, result: 8, completed: true, effort: null });
   assert.equal(app.form.querySelector('[data-set-effort]').textContent, 'RIR');
+});
+
+test('an Effort picked while the set is still saving is kept and saved', async () => {
+  const app = await harness(storage(), { workout_exercises: [{ ...pressEntry,
+    sets: [{ id: 2, position: 1, weight: null, result: null, completed: false, effort: null }] }] });
+  Object.assign(app.form.elements, { effort: { value: '' } });
+  const bodies = [];
+  app.env.fetch = async (path, options) => {
+    const body = JSON.parse(options.body);
+    bodies.push(body);
+    return response({ id: 2, position: 1, weight: body.weight, result: body.result, completed: body.completed, effort: body.effort });
+  };
+  app.form.elements.weight.value = '130';
+  app.form.elements.result.value = '6';
+  app.form.events.input();
+  // The typing pause ends while the sheet is open: the save replaces the set in the workout data.
+  app.env.choose = async () => {
+    const [id, timer] = [...app.timers].find(([, task]) => task.delay === 800);
+    app.timers.delete(id);
+    await timer.callback();
+    return '2';
+  };
+  await tapEffort(app);
+  await settle();
+  assert.deepEqual(bodies, [{ weight: 130, result: 6, completed: false, effort: null },
+    { weight: 130, result: 6, completed: false, effort: '2' }]);
+  assert.equal(app.form.querySelector('[data-set-effort]').textContent, 'RIR 2');
 });
 
 test('a Duration Set toggles Failure from its button without a sheet', async () => {

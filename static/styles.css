@@ -746,13 +746,14 @@ textarea {
 }
 .remove-set:active { background: var(--surface-3); color: var(--ink); }
 /* The set's top line: Last workout values (tap to fill) beside the remove-set button. */
-.set-top { display: flex; align-items: center; min-height: 36px; margin: 0 44px 0 0; }
+/* As tall as the Last workout line's tap target, so the line never reaches over the RIR pill below it. */
+.set-top { display: flex; align-items: center; min-height: 44px; margin: 0 44px 0 0; }
 .previous-set {
   display: block;
   min-width: 0;
   max-width: 100%;
   min-height: 44px;
-  margin: -4px 0;
+  margin: 0;
   padding: 0 2px;
   border: 0;
   background: transparent;
@@ -765,8 +766,9 @@ textarea {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* Above the Effort button's tap area, which reaches up beside it, so the line keeps its own taps. */
-.fill-previous { position: relative; z-index: 1; }
+/* Where the RIR pill's tap area reaches up beside the line, RIR wins: a stray tap there must not
+   overwrite the typed values with last time's. */
+.set-form .effort-button { z-index: 2; }
 .fill-previous:active { color: var(--ink-2); }
 .set-inputs { display: grid; clear: both; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
 .set-form .set-inputs { grid-template-columns: 34px minmax(0, 1fr) minmax(0, 1fr) 56px; }

@@ -749,11 +749,19 @@ try {
     await pickEffort('Failure');
   }
   await page.setViewportSize({ width: 390, height: 844 });
-  check('Effort leaves the Last workout chip its own taps', await repeatedSet.evaluate(form => {
-    const chip = form.querySelector('.fill-previous').getBoundingClientRect();
-    const x = Math.min(chip.right, form.querySelector('[data-set-effort]').getBoundingClientRect().right) - 4;
-    return document.elementFromPoint(x, chip.top + chip.height / 2).closest('.fill-previous') !== null;
-  }));
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    check(`The Last workout line never covers the RIR pill at ${width}px`, await repeatedSet.evaluate(form => {
+      const line = form.querySelector('.fill-previous').getBoundingClientRect();
+      const pill = form.querySelector('[data-set-effort]').getBoundingClientRect();
+      const x = pill.left + pill.width / 2;
+      const hits = [pill.top + 1, pill.top + pill.height / 2, pill.bottom - 1, pill.top - 8]
+        .map(y => document.elementFromPoint(x, y)?.closest('[data-set-effort]') !== null);
+      return line.bottom <= pill.top && hits.every(Boolean)
+        && document.elementFromPoint(line.left + 10, line.top + line.height / 2).closest('.fill-previous') !== null;
+    }));
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
   check('No unexpected JavaScript exceptions', errors.length === 0);
   await writeFile(join(artifacts, 'results.json'), JSON.stringify({ checks, errors, port }, null, 2));
   console.log(`${checks.length} browser checks passed. Artifacts: ${artifacts}`);

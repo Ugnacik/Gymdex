@@ -2299,7 +2299,9 @@ async function chooseSetEffort(form) {
   if (!set) return;
   const current = form.elements.effort.value || null;
   const duration = entry.tracking_type === "duration";
-  const picked = duration ? "failure" : await choose(`Effort for ${setName(entry, entry.sets.indexOf(set))}`, {
+  // Named before the sheet opens: a save that lands meanwhile replaces the set object in entry.sets.
+  const name = setName(entry, entry.sets.indexOf(set));
+  const picked = duration ? "failure" : await choose(`Effort for ${name}`, {
     choices: effortsFor(entry.tracking_type).map((value) => value === "failure"
       ? { value, label: "Failure", wide: true }
       : { value, label: value, name: effortText(value) }),
@@ -2309,13 +2311,13 @@ async function chooseSetEffort(form) {
   if (picked === undefined || state.editor.busy || !form.isConnected) return;
   const effort = picked === current ? null : picked;
   form.elements.effort.value = effort ?? "";
+  saveSetForm(form);
   const button = form.querySelector("[data-set-effort]");
-  const { text, label, pressed } = effortButtonState(entry, setName(entry, entry.sets.indexOf(set)), effort);
+  const { text, label, pressed } = effortButtonState(entry, name, effort);
   button.textContent = text;
   button.dataset.recorded = String(Boolean(effort));
   button.setAttribute("aria-label", label);
   if (pressed !== null) button.setAttribute("aria-pressed", pressed);
-  saveSetForm(form);
 }
 
 function bindSet(form) {
@@ -2361,8 +2363,17 @@ function bindSet(form) {
   syncEditorView();
 }
 
+// Fills only the fields still empty, so a stray tap never overwrites what was typed.
 function fillFromPrevious(form, previous) {
   if (state.editor.busy) return;
+  const fillWeight = form.elements.weight.value.trim() === "";
+  const fillResult = form.elements.result.value === "";
+  if (!fillWeight && !fillResult) {
+    showToast("Last workout fills only empty fields. Clear kg or reps first to use it.");
+    return;
+  }
+  if (fillResult) form.elements.result.value = previous.previousResult;
+  if (!fillWeight) { form.requestSubmit(); return; }
   const weight = previous.previousWeight === "" ? null : Number(previous.previousWeight);
   // Last time's assistance stays assistance, even on sets recorded before it was a variation property.
   if (weight < 0 && form.dataset.assisted !== "true") {
@@ -2373,7 +2384,6 @@ function fillFromPrevious(form, previous) {
     if (name) form.elements.weight.setAttribute("aria-label", name.replace(/ weight in kilograms$/, " assistance in kilograms"));
   }
   form.elements.weight.value = weight === null ? "" : String(Math.abs(weight));
-  form.elements.result.value = previous.previousResult;
   form.requestSubmit();
 }
 
