@@ -247,6 +247,32 @@ test('finish summary uses acknowledged set edits and survives a failed bootstrap
   assert.equal(new DraftStore(() => app.disk).cachedWorkout().active_workout, null);
 });
 
+test('Save as routine on the finish summary defaults to the trained Muscle Groups, or the Gym offline', async () => {
+  for (const [history, expected] of [[{ workout: { id: 1, gym_id: 1, gym_name: 'Home', muscle_groups: ['Hamstrings', 'Glutes'] }, workout_exercises: [] }, 'Hamstrings & Glutes'], [null, 'Home']]) {
+    const app = await harness();
+    const requests = [];
+    app.env.fetch = async (path, options) => {
+      requests.push(path);
+      if (path === '/api/sets/2') return response({ id: 2, position: 1, ...JSON.parse(options.body) });
+      if (path === '/api/workouts/1/complete') return response({ ok: true });
+      if (path === '/api/history/1' && history) return response(history);
+      throw new Error('Refresh unavailable');
+    };
+    app.nodes['#summary-routine'] = node();
+    app.form.elements.weight.value = '130';
+    app.form.elements.result.value = '6';
+    app.form.elements.completed.checked = true;
+    app.form.events.input();
+    await app.nodes['#finish'].events.click();
+    assert.match(app.nodes['#app'].innerHTML, /Workout complete/);
+    const asked = [];
+    app.env.askText = async (question, options) => { asked.push([question, options.value]); return null; };
+    await app.nodes['#summary-routine'].events.click();
+    assert.ok(requests.includes('/api/history/1'));
+    assert.deepEqual(asked, [['Save this workout as a routine at Home', expected]]);
+  }
+});
+
 test('a stalled HTTP save times out without disabling entry or discarding its draft', async () => {
   const app = await harness();
   app.form.elements.result.value = '8';

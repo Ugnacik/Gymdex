@@ -612,6 +612,10 @@ try {
   await page.evaluate(() => scrollTo(0, 0));
   await screenshot('finish-summary-mobile');
   await page.locator('#summary-routine').click();
+  const finishedGroups = (await read('/api/history')).workouts[0].muscle_groups;
+  const routineName = await page.getByRole('textbox', { name: 'Routine name' }).inputValue();
+  check('Summary routine name defaults to the trained Muscle Groups', finishedGroups.length > 0
+    && routineName === (finishedGroups.length === 1 ? finishedGroups[0] : `${finishedGroups.slice(0, -1).join(', ')} & ${finishedGroups.at(-1)}`));
   await page.getByRole('textbox', { name: 'Routine name' }).fill('Saved from summary');
   await page.getByRole('button', { name: 'Save routine', exact: true }).click();
   await page.getByRole('button', { name: 'Start Saved from summary', exact: false }).waitFor();

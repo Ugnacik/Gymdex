@@ -287,7 +287,11 @@ function renderStart() {
   document.querySelector("#dismiss-summary")?.addEventListener("click", () => { state.summary = null; renderStart(); });
   document.querySelector("#summary-history")?.addEventListener("click", () => openHistory(state.summary.workout.id));
   document.querySelector("#summary-routine")?.addEventListener("click", async () => {
-    await saveWorkoutRoutine(state.summary.workout);
+    // The finished workout's trained Muscle Groups come from its history record; the copy kept
+    // from the Active Workout has none, so without a connection the name falls back to the Gym.
+    let workout = state.summary.workout;
+    try { workout = (await api(`/api/history/${workout.id}`)).workout ?? workout; } catch { /* Gym name it is. */ }
+    await saveWorkoutRoutine(workout);
   });
   document.querySelectorAll("[data-gym-id]").forEach((button) => {
     button.addEventListener("click", () => {
