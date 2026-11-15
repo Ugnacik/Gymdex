@@ -261,3 +261,36 @@ test('a short or vertical swipe never removes an exercise', async () => {
   assert.deepEqual(removals, []);
   assert.deepEqual(h.ids(), [1, 2, 3]);
 });
+
+test('Removing shows only once the removal is confirmed, and focus stays in the sheet on the next row', async () => {
+  let answer;
+  const seen = [];
+  const h = reorderHarness(async () => true, {
+    onRemove: async (id, removing) => {
+      seen.push(h.status.textContent);
+      if (!await new Promise((done) => { answer = done; })) return false;
+      removing();
+      seen.push(h.status.textContent);
+      return true;
+    },
+  });
+  const swipeRemove = async (row) => {
+    h.list.events.pointerdown(pointer(row.name, { clientX: 180, clientY: 10 }));
+    h.list.events.pointermove(pointer(row.name, { clientX: 90, clientY: 12 }));
+    return h.list.events.pointerup(pointer(row.name, { clientX: 90, clientY: 12 }));
+  };
+  // Declined: no Removing message, and focus returns to the kept row.
+  let pending = swipeRemove(h.list.children[1]);
+  answer(false); await pending;
+  assert.deepEqual(seen, ['']);
+  assert.match(h.status.textContent, /Plank kept/);
+  assert.equal(h.list.children[1].up.focused, true);
+  // Confirmed: Removing appears after the yes, and focus moves to the row that took its place.
+  seen.length = 0;
+  pending = swipeRemove(h.list.children[1]);
+  answer(true); await pending;
+  assert.deepEqual(seen, ['', 'Removing Plank…']);
+  assert.deepEqual(h.ids(), [1, 3]);
+  assert.equal(h.list.children[1].up.focused, true, 'Dip, now in that place, has focus');
+  assert.equal(h.dialog.open, true);
+});

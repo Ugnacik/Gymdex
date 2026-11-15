@@ -974,13 +974,69 @@ test('Replace exercise in an Active Workout saves drafts, picks another Variatio
   pickVariation(app, 30);
   assert.match(sheet.innerHTML, /<button class="primary accent" type="submit">Replace exercise<\/button>/);
   equipmentButtons[0].events.click();
+  const questions = [];
+  app.env.ask = async (question, options) => { questions.push([question, options.confirmLabel]); return true; };
   await app.nodes['#configuration-form'].events.submit({ preventDefault() {}, currentTarget: app.nodes['#configuration-form'] });
+  assert.deepEqual(questions, [['Replace Single Leg Leg Press with Front Plank? It records sets differently, so weight, reps or seconds, and effort on 1 set will be cleared and done sets marked not done. This cannot be undone.', 'Replace and clear']],
+    'a Duration Variation would clear the logged weight, so it asks first');
   assert.deepEqual(requests.slice(2), [
     ['PUT /api/workouts/1/exercises/3/replace', { variation_id: 30, equipment: 'Bodyweight', manufacturer: '', label: '' }],
     ['GET /api/bootstrap', undefined]]);
   assert.equal(app.nodes['#picker'], undefined, 'the sheet closes');
   assert.match(app.nodes['#app'].innerHTML, /data-set-id="2"/, 'the set slot stays');
   assert.match(app.nodes['#toast'].textContent, /Replaced with Front Plank\. Cleared set values that no longer match\./);
+});
+
+test('Replace from Recent asks before clearing, sends once, and shows the replacement even when the refresh fails', async () => {
+  const entry = { ...structuredClone(legPressEntry), sets: [{ id: 2, position: 1, weight: 100, result: 8, effort: '2', completed: true }] };
+  const app = await harness(storage(), { workout_exercises: [entry] });
+  const catalog = { ...structuredClone(suggestionCatalog), recent: [{ profile_id: 77, variation_id: 30, exercise_name: 'Plank',
+    variation_name: 'Front Plank', equipment: 'Bodyweight', manufacturer: '', label: '' }] };
+  catalog.saved = catalog.recent;
+  const requests = [];
+  let replace = null;
+  app.env.fetch = async (url, options = {}) => {
+    requests.push(`${options.method ?? 'GET'} ${url}`);
+    if (url.startsWith('/api/catalog')) return response(structuredClone(catalog));
+    if (url.endsWith('/replace')) { await (replace = deferred()).promise; return response({ id: 3, variation_id: 30, exercise_name: 'Plank',
+      variation_name: 'Front Plank', equipment: 'Bodyweight', manufacturer: '', label: '', tracking_type: 'duration', assisted: false, cleared: true }); }
+    throw new Error('Offline');
+  };
+  pickerSheet(app);
+  const recent = Object.assign(node(), { dataset: { profileId: '77' } });
+  const missing = Object.assign(node(), { dataset: { profileId: '404' } });
+  const querySelectorAll = app.env.document.querySelectorAll;
+  app.env.document.querySelectorAll = (selector) => selector === '[data-profile-id]' ? [recent, missing] : querySelectorAll(selector);
+  await clickIn(app, '[data-replace-exercise]', { replaceExercise: '3' });
+  // A choice that is gone from the list says so instead of throwing.
+  await missing.events.click();
+  assert.match(app.nodes['#toast'].textContent, /no longer available/);
+  // Declining keeps the exercise and sends nothing.
+  const questions = [];
+  app.env.ask = async (question) => { questions.push(question); return false; };
+  await recent.events.click();
+  assert.equal(questions.length, 1);
+  assert.match(questions[0], /^Replace Single Leg Leg Press with Front Plank\?.*on 1 set will be cleared/);
+  assert.equal(requests.filter((request) => request.endsWith('/replace')).length, 0);
+  assert.ok(app.nodes['#picker'], 'the sheet stays open');
+  // Confirmed: a second tap while the first replace is in flight sends nothing more.
+  app.env.ask = async () => true;
+  const first = recent.events.click();
+  await settle();
+  await recent.events.click();
+  assert.equal(requests.filter((request) => request.endsWith('/replace')).length, 1);
+  replace.resolve();
+  await first;
+  await settle();
+  // The refresh fails, yet the card already shows the replacement and its cleared set.
+  assert.equal(requests.at(-1), 'GET /api/bootstrap');
+  const html = app.nodes['#app'].innerHTML;
+  assert.match(html, /Front Plank/);
+  assert.doesNotMatch(html, /Single Leg Leg Press/);
+  assert.match(html, /data-set-id="2"/);
+  assert.doesNotMatch(html, /is-complete|value="100"/);
+  assert.match(app.nodes['#toast'].textContent, /could not be refreshed/);
+  assert.doesNotMatch(app.nodes['#toast'].textContent, /^Replaced with Front Plank\.( Cleared|$)/);
 });
 
 test('Close in the picker and the custom exercise form returns focus to Add exercise', async () => {
@@ -1317,6 +1373,45 @@ test('Last workout fills only empty fields, so a stray tap never overwrites type
   assert.deepEqual(bodies, [{ weight: 125, result: 1, completed: false }]);
 });
 
+test('Last workout fills an untouched Add set copy completely, but not once its values are typed', async () => {
+  const data = { workout_exercises: [{ id: 3, exercise_name: 'Bench Press', variation_name: 'Standard', equipment: 'Barbell',
+    tracking_type: 'repetitions', previous_sets: [{ weight: 50, result: 10 }, { weight: 55, result: 6 }, { weight: 57.5, result: 4 }],
+    sets: [{ id: 2, position: 1, weight: null, result: null, completed: false }] }] };
+  const app = await harness(storage(), data);
+  const bodies = [];
+  let nextId = 5;
+  app.env.fetch = async (path, options) => {
+    if (options.method === 'POST') return response({ id: nextId++, position: 2, weight: 60, result: 8, completed: false }, 201);
+    const body = JSON.parse(options.body);
+    bodies.push([path, body]);
+    return response({ id: Number(path.split('/').at(-1)), position: 2, ...body });
+  };
+  app.form.elements.weight.value = '60';
+  app.form.elements.result.value = '8';
+  app.form.events.input();
+  await app.addSetButton.events.click();
+  const copy = app.forms.at(-1);
+  assert.equal(copy.elements.result.value, '8', 'Add set copied the set above');
+  bodies.length = 0;
+  copy.querySelector('.fill-previous').events.click();
+  await settle();
+  assert.equal(copy.elements.weight.value, '55');
+  assert.equal(copy.elements.result.value, '6');
+  assert.deepEqual(bodies, [['/api/sets/5', { weight: 55, result: 6, completed: false }]]);
+
+  // A copy whose reps were typed over keeps them, like any typed set.
+  await app.addSetButton.events.click();
+  const typed = app.forms.at(-1);
+  typed.elements.result.value = '2';
+  typed.events.input();
+  bodies.length = 0;
+  typed.querySelector('.fill-previous').events.click();
+  await settle();
+  assert.equal(typed.elements.result.value, '2', 'typed reps stay');
+  assert.equal(typed.elements.weight.value, '60');
+  assert.match(app.nodes['#toast'].textContent, /fills only empty fields/);
+});
+
 test('Add set waits when the set above cannot reach the server', async () => {
   const app = await harness();
   const requests = [];
@@ -1641,9 +1736,12 @@ test('workout and exercise notes stay collapsed, keep drafts on the phone, and a
   assert.match(app.nodes['#sync-status'].textContent, /1 note waiting to save/);
   const reopened = await harness(app.disk, noted);
   assert.match(reopened.nodes['#app'].innerHTML, /<details class="note" open[^>]*>[\s\S]*?<textarea data-note-target="exercise:3"[^>]*>Seat 4<\/textarea>/);
-  assert.match(reopened.nodes['#app'].innerHTML, /<details class="note" open[^>]*>\s*<summary data-collapse-label="Collapse note for Bench Press" aria-label="Collapse note for Bench Press">/,
+  // The name starts with the visible label, so Voice Control's "Tap Note" finds it, and an open note
+  // says it collapses rather than reading like a delete.
+  assert.match(reopened.nodes['#app'].innerHTML, /<details class="note" open[^>]*>\s*<summary><span class="note-label"[^>]*>Note<\/span><span class="visually-hidden"> for Bench Press<\/span><span class="note-preview"[^>]*>[^<]*<\/span><span class="visually-hidden" data-note-collapse>, collapse<\/span><\/summary>/,
     'an open note is named for collapsing, not deleting');
-  assert.match(html, /<summary data-collapse-label="Collapse workout note">/, 'a closed note keeps its visible label as its name');
+  assert.doesNotMatch(reopened.nodes['#app'].innerHTML, /<summary[^>]*aria-label/, 'no summary hides its visible label behind aria-label');
+  assert.match(html, /<summary><span class="note-label"[^>]*>Workout note<\/span><span class="note-preview"[^>]*>[^<]*<\/span><span class="visually-hidden" data-note-collapse><\/span><\/summary>/, 'a closed note keeps its visible label as its name');
   assert.deepEqual(requests, []);
   [...app.timers.values()].find((timer) => timer.delay === 800).callback();
   await settle();

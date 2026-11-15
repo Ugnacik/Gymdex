@@ -326,6 +326,14 @@ configuration's details restores it. The previous configuration is deleted when
 no workout and no routine uses it any more, so a mistaken machine does not stay
 under Recent. Edit manufacturer / machine is only on the active workout, not in history.
 
+**Replace exercise**, in the ⋯ sheet, swaps the exercise for another one, chosen
+from Recent, the catalog, or a new custom exercise, and keeps its note and set
+slots. It is only on the active workout: a finished workout's exercises cannot be
+replaced, from history or anywhere else. When the new exercise records sets
+differently (Repetitions versus Duration, or assisted versus not), its sets'
+weight, reps or seconds, and effort are cleared and done sets are marked not done;
+Gymdex asks first when any set has values to lose.
+
 Notes are optional free text, up to 1,000 characters, for anything the numbers
 don't capture. They stay collapsed so they never get in the way of logging sets:
 choose **Add note** in an exercise's ⋯ sheet, or tap **Add workout note** under the
@@ -389,7 +397,9 @@ combination occurred more than once, its last occurrence supplies the reference.
 Only completed sets are shown, in order, as one quiet line at the top of each
 set; a set with nothing from last time shows no line. Tap a set's "Last workout" line to
 copy those values into the set and save them like any other edit; this does not
-mark the set completed.
+mark the set completed. It fills only empty fields, so values you typed are never
+overwritten; the exception is a set that Add set copied from the set above and
+that you have not typed into or completed yet, which it fills completely.
 
 ## Effort
 

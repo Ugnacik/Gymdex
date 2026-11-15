@@ -54,8 +54,9 @@ const SWIPE_REMOVE_DISTANCE = 72;
 // Each drop or arrow tap saves one move immediately. Failed saves and cancelled
 // pointers restore the last acknowledged list. onMove(id, zeroBasedPosition)
 // owns persistence, so both Workouts and Routines use their existing save paths.
-// Optional onRemove(id) confirms and removes; a left swipe past the threshold asks
-// before deleting so a stray swipe does not lose logged sets.
+// Optional onRemove(id, removing) confirms and removes, and calls removing() once the removal
+// is confirmed; a left swipe past the threshold asks before deleting so a stray swipe does
+// not lose logged sets. Each row's Remove button is also a real button for Tab and screen readers.
 export function openExerciseReorder(document, { items, onMove, onRemove, onClose, escapeHtml }) {
   if (document.querySelector('#exercise-reorder')) return;
   const dialog = document.createElement('dialog');
@@ -64,7 +65,7 @@ export function openExerciseReorder(document, { items, onMove, onRemove, onClose
   dialog.setAttribute('aria-labelledby', 'reorder-title');
   const canRemove = typeof onRemove === 'function';
   dialog.innerHTML = `<div class="sheet-header"><h2 id="reorder-title">Reorder exercises</h2><button type="button" class="text-button" id="close-reorder" autofocus>Close</button></div>
-    <p class="muted">Drag a handle or use the arrows. Move near an edge to scroll. Each move saves right away.${canRemove ? " Swipe left to remove; you will be asked to confirm." : ""}</p>
+    <p class="muted">Drag a handle or use the arrows. Move near an edge to scroll. Each move saves right away.${canRemove ? ' Swipe left to remove; you will be asked to confirm.<span class="visually-hidden"> With a screen reader, use the Remove button after each exercise.</span>' : ""}</p>
     <ol class="reorder-list" id="reorder-list"></ol><p id="reorder-status" role="status"></p>`;
   document.body.append(dialog);
   const list = dialog.querySelector('#reorder-list');
@@ -76,7 +77,9 @@ export function openExerciseReorder(document, { items, onMove, onRemove, onClose
   let busy = false;
   const rowId = (row) => Number(row.dataset.reorderId);
   const rows = () => [...list.children];
-  function render(focusId = null, direction = null) {
+  // focusId puts focus on that row's arrow (direction preferred); focusIndex on the row now at
+  // that position, or the last row, so focus stays inside the sheet after a removal.
+  function render(focusId = null, direction = null, focusIndex = null) {
     list.innerHTML = order.map((item, index) => `<li class="reorder-row" data-reorder-id="${item.id}">
       <div class="reorder-swipe">
         <div class="reorder-name"><strong>${escapeHtml(item.name)}</strong>${item.detail ? `<span>${escapeHtml(item.detail)}</span>` : ''}</div>
@@ -86,6 +89,7 @@ export function openExerciseReorder(document, { items, onMove, onRemove, onClose
       </div>
       ${canRemove ? `<button type="button" class="reorder-remove" data-reorder-remove aria-label="Remove ${escapeHtml(item.name)}">Remove</button>` : ''}
     </li>`).join('');
+    if (focusIndex !== null && order.length) focusId = order[Math.min(focusIndex, order.length - 1)].id;
     if (focusId !== null) {
       const row = list.querySelector(`[data-reorder-id="${focusId}"]`);
       const preferred = row?.querySelector(`[data-reorder-step="${direction}"]:not(:disabled)`);
@@ -142,9 +146,11 @@ export function openExerciseReorder(document, { items, onMove, onRemove, onClose
     close.disabled = true;
     list.inert = true;
     status.classList.remove('error');
-    status.textContent = `Removing ${item.name}…`;
+    status.textContent = '';
+    let focusIndex = index;
     try {
-      if (await onRemove(id) === false) {
+      // Says Removing only once the question is answered yes.
+      if (await onRemove(id, () => { status.textContent = `Removing ${item.name}…`; }) === false) {
         status.textContent = `${item.name} kept.`;
         return;
       }
@@ -161,7 +167,7 @@ export function openExerciseReorder(document, { items, onMove, onRemove, onClose
       busy = false;
       close.disabled = false;
       list.inert = false;
-      if (dialog.open) render();
+      if (dialog.open) render(null, null, focusIndex);
     }
   }
   list.addEventListener('click', (event) => {

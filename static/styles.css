@@ -882,7 +882,6 @@ textarea {
 .set-status.is-faded { opacity: 0; }
 .set-actions .set-status { margin-left: 2px; }
 .set-status.error { width: 100%; color: var(--danger); }
-.set-form.is-complete .set-actions .set-status { color: var(--accent); }
 .set-hint { font-size: 0.8rem; margin: 14px 0; }
 .add-set { width: 100%; min-height: 50px; margin-top: 10px; background: transparent; color: var(--accent); box-shadow: inset 0 0 0 1.5px var(--hairline-strong); }
 
@@ -935,13 +934,17 @@ textarea {
 }
 .machine-line .meta { margin: 0; }
 .machine-line:active .meta { color: var(--ink-2); }
-/* The ⋯ button sits in the card header between the done count and the collapse chevron. */
+/* The ⋯ button sits in the card header between the done count and the collapse chevron. Both
+   are 44px targets on the header's first line, so a two-line name leaves them where they were. */
 .exercise-frame { position: relative; }
-.exercise-summary > span[data-exercise-count] { margin-right: 36px; }
+.exercise-summary { align-items: flex-start; padding: 4px 0; }
+.exercise-summary h3 { margin-top: 10px; line-height: 24px; }
+.exercise-summary > span[data-exercise-count] { margin: 10px 36px 0 0; line-height: 16px; }
+.exercise-summary::after { width: 44px; height: 44px; -webkit-mask-size: 16px; mask-size: 16px; }
 .exercise-more {
   position: absolute;
   top: 4px;
-  right: 18px;
+  right: 42px;
   display: grid;
   place-items: center;
   width: 44px;
@@ -1567,8 +1570,8 @@ textarea {
   cursor: pointer;
 }
 .reorder-row.is-revealed .reorder-remove { background: #c23b4a; }
-/* Keyboard users reach Remove by Tab; slide the row so the focused button is visible. */
-.reorder-row:has(.reorder-remove:focus-visible) .reorder-swipe { transform: translateX(-96px); }
+/* Keyboard and screen-reader users reach Remove as a button; slide the row so it shows while focused. */
+.reorder-row:has(.reorder-remove:focus) .reorder-swipe { transform: translateX(-96px); }
 #reorder-status { margin-bottom: 0; font-size: 0.88rem; }
 
 .sides-option { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 4px 4px; color: var(--ink); font-size: 0.92rem; font-weight: 580; cursor: pointer; }

@@ -766,6 +766,169 @@ try {
     }));
   }
   await page.setViewportSize({ width: 390, height: 844 });
+  // Last workout on an Add set copy: the untouched copy is filled completely; typed values stay.
+  const cardOf = name => page.locator('.workout-exercise-card', { has: page.locator('.exercise-summary h3', { hasText: name }) });
+  const confirmSheet = page.locator('.confirm-sheet');
+  const answer = async label => {
+    await confirmSheet.getByRole('button', { name: label, exact: true }).click();
+    await confirmSheet.waitFor({ state: 'detached' });
+  };
+  const sheetSettled = () => page.locator('#picker .sheet').evaluate(sheet => Promise.all(sheet.getAnimations().map(animation => animation.finished)));
+  const bench = cardOf('Bench Press');
+  const benchSets = async () => (await read('/api/bootstrap')).workout_exercises.find(entry => entry.exercise_name === 'Bench Press').sets;
+  while (await bench.locator('.set-form').count() > 1) {
+    await bench.locator('.set-form').last().locator('.remove-set').click();
+    await answer('Remove');
+  }
+  await bench.locator('.add-set').click();
+  await bench.locator('.set-form').nth(1).waitFor();
+  const copied = bench.locator('.set-form').nth(1);
+  check('Add set copies the set above', await copied.locator('[name=weight]').inputValue() === '45.5' && await copied.locator('[name=result]').inputValue() === '8');
+  await copied.locator('.fill-previous').click();
+  check('Last workout fills an untouched Add set copy completely', await eventually(async () => {
+    const sets = await benchSets(); return sets[1].weight === 50 && sets[1].result === 6;
+  }) && await copied.locator('[name=weight]').inputValue() === '50' && await copied.locator('[name=result]').inputValue() === '6');
+  await copied.locator('[name=result]').fill('7');
+  await copied.locator('.fill-previous').click();
+  check('Last workout keeps reps typed into a copy', await copied.locator('[name=result]').inputValue() === '7'
+    && (await page.locator('#toast').innerText()).includes('fills only empty fields'));
+  await copied.locator('[name=result]').blur();
+  await eventually(async () => (await benchSets())[1].result === 7);
+  await page.evaluate(() => scrollTo(0, 0));
+  await screenshot('review-add-set-copy-filled');
+
+  // Replace from Recent: same tracking keeps the values, asks nothing, and sends once on a double tap.
+  const replaceRequests = [];
+  page.on('request', request => { if (request.url().endsWith('/replace')) replaceRequests.push(request.url()); });
+  const openReplace = async card => {
+    await card.locator('[data-exercise-more]').click();
+    await sheetSettled();
+    await page.locator('#picker [data-replace-exercise]').click();
+    await page.locator('#picker-title', { hasText: 'Replace exercise' }).waitFor();
+  };
+  await openReplace(bench);
+  await screenshot('review-replace-picker');
+  const chip = page.locator('#picker [data-profile-id]', { hasText: 'Dumbbell' }).first();
+  await chip.evaluate(button => { button.click(); button.click(); });
+  await page.locator('#picker').waitFor({ state: 'detached' });
+  check('Replace from a Recent chip sends one request on a double tap, without asking', replaceRequests.length === 1
+    && await confirmSheet.count() === 0);
+  check('A matching replacement keeps the logged values', await eventually(async () => {
+    const entry = (await read('/api/bootstrap')).workout_exercises.find(item => item.exercise_name === 'Bench Press');
+    return entry.equipment === 'Dumbbell' && entry.sets[0].weight === 45.5 && entry.sets[1].result === 7;
+  }));
+
+  // Replace with a Duration Variation clears logged values, so it asks first; Keep changes nothing.
+  await openReplace(bench);
+  await page.locator('#exercise-search').fill('Plank');
+  await page.locator('#picker [data-variation-id]', { hasText: 'Front Plank' }).click();
+  await page.getByRole('button', { name: 'Replace exercise', exact: true }).click();
+  await confirmSheet.waitFor();
+  check('Replace asks before clearing logged values', (await confirmSheet.innerText()).includes('2 sets will be cleared'));
+  await screenshot('review-replace-confirm');
+  await answer('Keep');
+  check('Keep leaves the exercise and its sets alone', replaceRequests.length === 1 && await page.locator('#picker').isVisible()
+    && (await benchSets())[0].weight === 45.5);
+  await page.getByRole('button', { name: 'Replace exercise', exact: true }).click();
+  await answer('Replace and clear');
+  await page.locator('#picker').waitFor({ state: 'detached' });
+  const plankCard = cardOf('Front Plank');
+  await plankCard.waitFor();
+  const plank = (await read('/api/bootstrap')).workout_exercises.find(item => item.variation_name === 'Front Plank');
+  check('Confirmed replace clears the sets and keeps their slots', plank.sets.length === 2
+    && plank.sets.every(set => set.weight === null && set.result === null && !set.completed));
+  check('Focus returns to the replaced card\'s ⋯', await page.evaluate(() => document.activeElement?.matches('[data-exercise-more]')));
+
+  // Replace with a new custom exercise: an exercise without logged values is replaced without asking.
+  const durationCard = cardOf('Long Custom Duration');
+  await openReplace(durationCard);
+  await page.locator('#exercise-search').fill('Smoke Replacement Row');
+  await page.locator('#create-exercise').click();
+  await page.locator('#equipment-entry-toggle').click();
+  await page.locator('#equipment-entry-list').getByRole('option', { name: 'Machine', exact: true }).click();
+  await page.locator('#custom-exercise-form button[type=submit]').click();
+  await page.getByRole('button', { name: 'Replace exercise', exact: true }).click();
+  await page.locator('#picker').waitFor({ state: 'detached' });
+  check('A custom exercise created while replacing replaces the exercise', await cardOf('Smoke Replacement Row').isVisible()
+    && await confirmSheet.count() === 0 && replaceRequests.length === 3);
+
+  // The collapse chevron is its own 44px target beside ⋯, and a two-line name leaves both on its first line.
+  await page.locator('#open-picker').click();
+  await page.locator('#exercise-search').fill('Long Custom Duration');
+  await page.locator('#picker [data-variation-id]', { hasText: 'Long Custom Duration' }).click();
+  await page.locator('#configuration-form button[type=submit]').click();
+  await page.locator('#picker').waitFor({ state: 'detached' });
+  const longCard = cardOf('Long Custom Duration');
+  await longCard.waitFor();
+  const header = await longCard.evaluate(card => {
+    const summary = card.querySelector('.exercise-summary');
+    const box = summary.getBoundingClientRect();
+    const after = getComputedStyle(summary, '::after');
+    const chevron = { right: box.right, left: box.right - parseFloat(after.width), top: box.top + parseFloat(getComputedStyle(summary).paddingTop), height: parseFloat(after.height) };
+    const more = card.querySelector('[data-exercise-more]').getBoundingClientRect();
+    const title = card.querySelector('.exercise-summary h3').getBoundingClientRect();
+    const hit = document.elementFromPoint(chevron.left + 22, chevron.top + 22);
+    return { chevronWidth: chevron.right - chevron.left, chevronHeight: chevron.height, gap: chevron.left - more.right,
+      centers: Math.abs((chevron.top + chevron.height / 2) - (more.top + more.height / 2)),
+      twoLines: title.height > 40, chevronHit: hit?.closest('.exercise-summary') === summary && !hit.closest('[data-exercise-more]') };
+  });
+  check('The collapse chevron is a 44px target that ⋯ does not cover', header.chevronWidth >= 44 && header.chevronHeight >= 44 && header.gap >= -0.5 && header.chevronHit);
+  check('A two-line name keeps ⋯ and the chevron level on its first line', header.twoLines && header.centers <= 2);
+  await longCard.scrollIntoViewIfNeeded();
+  await longCard.screenshot({ path: join(artifacts, 'review-two-line-header.png') });
+  const toggled = await longCard.evaluate(card => {
+    const summary = card.querySelector('.exercise-summary');
+    const box = summary.getBoundingClientRect();
+    return { x: box.right - 22, y: box.top + parseFloat(getComputedStyle(summary).paddingTop) + 22 };
+  });
+  await page.touchscreen.tap(toggled.x, toggled.y);
+  check('Tapping the chevron collapses the exercise', await longCard.locator('.workout-exercise').evaluate(details => !details.open));
+  await page.touchscreen.tap(toggled.x, toggled.y);
+
+  // Swipe-to-remove with touch input: a confirmed removal keeps focus inside the Reorder sheet.
+  const exerciseCount = async () => (await read('/api/bootstrap')).workout_exercises.length;
+  const before = await exerciseCount();
+  await plankCard.locator('[data-exercise-more]').click();
+  await sheetSettled();
+  await page.locator('#picker [data-reorder-exercises]').click();
+  await page.locator('#exercise-reorder').waitFor();
+  await page.locator('#exercise-reorder').evaluate(dialog => Promise.all(dialog.getAnimations().map(animation => animation.finished)));
+  const cdp = await context.newCDPSession(page);
+  const swipeLeft = async row => {
+    const box = await row.locator('.reorder-name').boundingBox();
+    const y = box.y + box.height / 2;
+    const x = box.x + box.width - 10;
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+    for (let step = 1; step <= 8; step++) {
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x - step * 13, y: y + step * 0.5 }] });
+    }
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  };
+  const firstRow = page.locator('#reorder-list .reorder-row').first();
+  const firstName = await firstRow.locator('.reorder-name strong').innerText();
+  await swipeLeft(firstRow);
+  await confirmSheet.waitFor();
+  check('A touch swipe asks before removing, without claiming it is removing yet', !(await page.locator('#reorder-status').innerText()).includes('Removing'));
+  await screenshot('review-swipe-confirm');
+  await answer('Remove');
+  await page.locator('#reorder-status', { hasText: `${firstName} removed.` }).waitFor();
+  check('A confirmed touch swipe removes the exercise', await exerciseCount() === before - 1);
+  check('Focus stays in the Reorder sheet after a removal', await page.evaluate(() => !!document.activeElement?.closest('#exercise-reorder')
+    && document.activeElement.closest('.reorder-row') !== null));
+  // Screen readers and keyboards reach Remove as a button; focusing it slides the row open.
+  const removeButton = page.locator('#reorder-list .reorder-row').first().locator('[data-reorder-remove]');
+  await removeButton.focus();
+  check('A focused Remove button is shown', await page.locator('#reorder-list .reorder-row').first().locator('.reorder-swipe')
+    .evaluate(surface => getComputedStyle(surface).transform !== 'none'));
+  await page.keyboard.press('Enter');
+  await confirmSheet.waitFor();
+  await answer('Keep');
+  check('Declining from the Remove button keeps the exercise and focus in the sheet', await exerciseCount() === before - 1
+    && await page.evaluate(() => !!document.activeElement?.closest('#exercise-reorder')));
+  await page.locator('#close-reorder').click();
+  await page.locator('#exercise-reorder').waitFor({ state: 'detached' });
+  check('Closing the sheet after removing its exercise returns focus to the workout', await page.evaluate(() =>
+    !!document.activeElement?.closest('.exercise-summary, #open-picker')));
   check('No unexpected JavaScript exceptions', errors.length === 0);
   await writeFile(join(artifacts, 'results.json'), JSON.stringify({ checks, errors, port }, null, 2));
   console.log(`${checks.length} browser checks passed. Artifacts: ${artifacts}`);

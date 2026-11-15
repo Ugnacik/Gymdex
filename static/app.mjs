@@ -228,12 +228,13 @@ async function load() {
     resetEditor();
     render();
     retryPendingSets();
+    return true;
   } catch (error) {
     state.data = state.data || drafts.cachedWorkout();
     if (state.data) {
       resetEditor();
       render();
-      return;
+      return false;
     }
     app.innerHTML = `<main class="shell"><h1>Gymdex is unavailable.</h1><p class="error">${escapeHtml(error.message)}</p><button class="primary" id="retry">Try again</button></main>`;
     document.querySelector("#retry").addEventListener("click", load);
@@ -330,6 +331,7 @@ async function startWorkout() {
 async function showStartedWorkout({ skipped = 0, ...started }, notice) {
   state.summary = null;
   state.collapsedExercises.clear();
+  forgetWorkoutMarks();
   state.data.active_workout = started;
   state.data.workout_exercises = [];
   state.selectedGymId = started.gym_id;
@@ -456,14 +458,15 @@ function stopWorkoutElapsed() {
 
 // Notes are collapsed so they never lengthen the set recording path. A note still
 // waiting to reach the server opens so its draft is visible. An open note shows a minus
-// icon and is named "Collapse …", so it does not read as deleting the note.
+// icon and its name ends in ", collapse", so it does not read as deleting the note. The name
+// starts with the visible label, so Voice Control's "Tap Note" still finds it.
 function renderNote(target, label, accessibleName = label, { forceOpen = false } = {}) {
   const status = state.editor?.noteStatus(target);
   const note = status?.note ?? "";
   const open = Boolean(status?.dirty) || forceOpen;
-  const collapse = escapeHtml(`Collapse ${accessibleName[0].toLowerCase()}${accessibleName.slice(1)}`);
+  const context = accessibleName.startsWith(label) ? accessibleName.slice(label.length) : "";
   return `<details class="note" ${open ? "open" : ""}>
-    <summary data-collapse-label="${collapse}"${open ? ` aria-label="${collapse}"` : ""}><span class="note-label" data-note-summary="${target}" data-label="${label}">${noteLabel(label, note)}</span><span class="note-preview" data-note-preview="${target}">${escapeHtml(note)}</span></summary>
+    <summary><span class="note-label" data-note-summary="${target}" data-label="${label}">${noteLabel(label, note)}</span>${context ? `<span class="visually-hidden">${escapeHtml(context)}</span>` : ""}<span class="note-preview" data-note-preview="${target}">${escapeHtml(note)}</span><span class="visually-hidden" data-note-collapse>${open ? ", collapse" : ""}</span></summary>
     <textarea data-note-target="${target}" maxlength="${NOTE_MAX_LENGTH}" rows="3" aria-label="${escapeHtml(accessibleName)}" placeholder="Optional">${escapeHtml(note)}</textarea>
     <p class="note-status" data-note-status="${target}" role="status"></p>
   </details>`;
@@ -479,12 +482,9 @@ function noteTargets() {
 }
 
 function bindNoteToggle(details) {
-  const summary = details.querySelector("summary");
-  if (!summary) return;
-  const sync = () => {
-    if (details.open) summary.setAttribute("aria-label", summary.dataset.collapseLabel || "Collapse note");
-    else summary.removeAttribute("aria-label");
-  };
+  const hint = details.querySelector("[data-note-collapse]");
+  if (!hint) return;
+  const sync = () => { hint.textContent = details.open ? ", collapse" : ""; };
   sync();
   details.addEventListener("toggle", sync);
 }
@@ -558,7 +558,6 @@ function openExerciseMenu(entryId) {
 // Opens an exercise note that has no text yet, from the ⋯ sheet.
 function addExerciseNote(entryId) {
   const target = `exercise:${entryId}`;
-  state.collapsedExercises.delete(entryId);
   state.addingNote = target;
   render();
   state.addingNote = null;
@@ -1650,6 +1649,7 @@ async function endWorkout(cancel) {
       return;
     }
     state.restTimer.stop();
+    forgetWorkoutMarks();
     state.summary = summary;
     state.selectedGymId = gymId;
     await load();
@@ -1934,7 +1934,7 @@ function renderCustomExerciseForm(query = "") {
       }) });
       state.picker.catalog.push(created);
       chooseExercise(created.id);
-      showToast("Exercise created. Choose equipment to add it.");
+      showToast(state.pickerReplace ? "Exercise created. Choose equipment to replace with it." : "Exercise created. Choose equipment to add it.");
     } catch (error) { submit.disabled = false; showToast(error.message); }
   });
   nameInput.focus();
@@ -1950,12 +1950,15 @@ function closePicker(focus = "#open-picker") {
 }
 
 async function addRecent(profileId) {
+  const profile = (state.picker.saved ?? state.picker.recent).find(item => item.profile_id === profileId);
+  if (!profile) {
+    showToast("That saved exercise is no longer available. Choose it from the catalog instead.");
+    return;
+  }
   if (state.pickerContext) {
-    const profile = (state.picker.saved ?? state.picker.recent).find(item => item.profile_id === profileId);
     return saveRoutineChoice({ variation_id: profile.variation_id, equipment: profile.equipment,
       manufacturer: profile.manufacturer, label: profile.label });
   }
-  const profile = (state.picker.saved ?? state.picker.recent).find(item => item.profile_id === profileId);
   if (state.pickerReplace) {
     return saveReplacedExercise({
       variation_id: profile.variation_id, equipment: profile.equipment,
@@ -2037,26 +2040,62 @@ async function replaceExercise(entryId) {
   renderPicker();
 }
 
-async function saveReplacedExercise(choice, submit = null) {
+// One replace at a time: every choice in the sheet stays disabled until it settles. A choice that
+// would clear logged values asks first, because the cleared sets cannot be brought back.
+async function saveReplacedExercise(choice) {
   const replacing = state.pickerReplace;
-  if (!replacing || !state.data.active_workout) return;
-  if (submit) submit.disabled = true;
+  if (!replacing || replacing.saving || !state.data.active_workout) return;
+  const entry = state.data.workout_exercises.find((item) => item.id === replacing.entry.id) ?? replacing.entry;
+  replacing.saving = true;
+  let buttons = [];
+  let replaced = false;
   try {
+    const logged = entry.sets.filter((set) => set.weight !== null || set.result !== null || set.effort).length;
+    const variation = state.picker?.catalog?.find((item) => item.id === choice.variation_id);
+    // Without the Variation in the catalog it cannot be told apart, so ask as if it clears.
+    const clears = !variation || variation.tracking_type !== entry.tracking_type
+      || Boolean(variation.assisted) !== Boolean(entry.assisted);
+    if (clears && logged) {
+      const target = variation ? exerciseDisplayName(variation) : "this exercise";
+      if (!await ask(`Replace ${exerciseDisplayName(entry)} with ${target}? It records sets differently, so weight, reps or seconds, and effort on ${logged} set${logged === 1 ? "" : "s"} will be cleared and done sets marked not done. This cannot be undone.`,
+        { confirmLabel: "Replace and clear", danger: true })) return;
+    }
+    // Disabled only now, so declining the question returns focus to the tapped choice.
+    buttons = [...document.querySelectorAll("#picker button")];
+    buttons.forEach((button) => { button.disabled = true; });
     const saved = await api(
-      `/api/workouts/${state.data.active_workout.id}/exercises/${replacing.entry.id}/replace`,
+      `/api/workouts/${state.data.active_workout.id}/exercises/${entry.id}/replace`,
       { method: "PUT", body: JSON.stringify(choice) },
     );
+    replaced = true;
+    applyReplacement(entry, saved);
     const focus = replacing.focus;
     closePicker(focus);
-    await load();
+    // The replacement is already applied here, so a failed refresh only leaves Last workout out of date.
+    const refreshed = await load();
     document.querySelector(focus)?.focus();
-    showToast(saved.cleared
-      ? `Replaced with ${exerciseDisplayName(saved)}. Cleared set values that no longer match.`
-      : `Replaced with ${exerciseDisplayName(saved)}.`);
+    const name = exerciseDisplayName(saved);
+    showToast(!refreshed
+      ? `Replaced with ${name}, but the workout could not be refreshed. Reopen Gymdex when you are back online to see Last workout.`
+      : saved.cleared ? `Replaced with ${name}. Cleared set values that no longer match.` : `Replaced with ${name}.`);
   } catch (error) {
-    if (submit) submit.disabled = false;
     showToast(error.message);
+  } finally {
+    replacing.saving = false;
+    if (!replaced) buttons.forEach((button) => { if (button.isConnected) button.disabled = false; });
   }
+}
+
+// Mirrors the server's replace in the loaded workout, so the screen is right even when the
+// refresh after it fails. Last time's sets belonged to the old exercise, so they are dropped.
+function applyReplacement(entry, saved) {
+  Object.assign(entry, {
+    variation_id: saved.variation_id, exercise_name: saved.exercise_name, variation_name: saved.variation_name,
+    equipment: saved.equipment, manufacturer: saved.manufacturer, label: saved.label,
+    tracking_type: saved.tracking_type, assisted: saved.assisted, previous_sets: [],
+  });
+  if (saved.cleared) entry.sets = entry.sets.map((set) => ({ ...set, weight: null, result: null, effort: null, completed: false }));
+  drafts.snapshot(state.data);
 }
 
 // Edit manufacturer / machine on a Workout Exercise card: saves set and note drafts first, like the other
@@ -2111,7 +2150,7 @@ async function addConfiguredExercise(event, { manufacturer, label }) {
       equipment: state.selectedEquipment,
       manufacturer: manufacturer.value,
       label: label.value,
-    }, event.currentTarget.querySelector('[type="submit"]'));
+    });
   }
   const submit = event.currentTarget.querySelector('[type="submit"]');
   submit.disabled = true;
@@ -2239,7 +2278,7 @@ function recordSides(input) {
   const entry = state.data.workout_exercises.find((item) => item.id === Number(input.dataset.recordSides));
   if (!entry || !state.editor || state.editor.busy) { input.checked = !input.checked; return; }
   const list = document.querySelector(`.workout-exercise[data-entry-id="${entry.id}"] .sets-list`);
-  if (!list) return;
+  if (!list) { input.checked = !input.checked; return; }
   const forms = [...list.querySelectorAll(".set-form")];
   for (const [index, form] of forms.entries()) {
     form.elements.side.value = input.checked ? SIDES[index % 2] : "";
@@ -2333,6 +2372,8 @@ function bindSet(form) {
   }
   form.elements.result.required = form.elements.completed.checked;
   form.addEventListener("input", () => {
+    // Typed kg or reps are the lifter's own, so Last workout no longer overwrites them.
+    copiedSets.delete(Number(form.dataset.setId));
     if (state.editor.busy) return;
     form.elements.result.required = form.elements.completed.checked;
     state.editor.edit(form.dataset.setId, setValues(form), { valid: form.checkValidity() });
@@ -2367,11 +2408,19 @@ function bindSet(form) {
   syncEditorView();
 }
 
-// Fills only the fields still empty, so a stray tap never overwrites what was typed.
+// Sets that Add set copied from the set above and that nobody has typed into or completed
+// since. Last workout may overwrite their values; anything typed stays protected.
+const copiedSets = new Set();
+
+// Fills only the fields still empty, or every field of an untouched Add set copy, so a stray
+// tap never overwrites what was typed.
 function fillFromPrevious(form, previous) {
   if (state.editor.busy) return;
-  const fillWeight = form.elements.weight.value.trim() === "";
-  const fillResult = form.elements.result.value === "";
+  const id = Number(form.dataset.setId);
+  const copy = copiedSets.has(id) && !form.elements.completed.checked;
+  const fillWeight = copy || form.elements.weight.value.trim() === "";
+  const fillResult = copy || form.elements.result.value === "";
+  copiedSets.delete(id);
   if (!fillWeight && !fillResult) {
     showToast("Last workout fills only empty fields. Clear kg or reps first to use it.");
     return;
@@ -2403,6 +2452,13 @@ const STATUS_FADE_MS = 1500;
 const shownStatus = new Map();
 function setStatus(form, message, error = false, transient = false) {
   showStatus(form.querySelector(".set-status"), form.dataset.setId, message, error, transient);
+}
+
+// Ending or starting a workout drops the per-set marks of the one before.
+function forgetWorkoutMarks() {
+  for (const { timer } of shownStatus.values()) clearTimeout(timer);
+  shownStatus.clear();
+  copiedSets.clear();
 }
 
 // A set or note whose latest value reached the server.
@@ -2466,6 +2522,7 @@ async function addSet(button) {
     }
     const set = await api(`/api/workout-exercises/${entry.id}/sets`, { method: "POST", body: "{}" });
     entry.sets.push(set);
+    if (set.weight !== null || set.result !== null) copiedSets.add(set.id);
     drafts.snapshot(state.data);
     const list = button.closest(".exercise-entry").querySelector(".sets-list");
     list.insertAdjacentHTML("beforeend", renderSet(entry, set, entry.sets.length - 1));
@@ -2484,12 +2541,14 @@ function openWorkoutReorder(entryId) {
     onMove: async (id, index) => {
       if (!await saveExerciseMove(id, index + 1)) throw new Error("Close and save or correct your pending Sets and Notes, then try again.");
     },
-    onRemove: async (id) => {
+    onRemove: async (id, removing) => {
       const before = state.data.workout_exercises.length;
-      await removeExercise(id);
+      await removeExercise(id, { onConfirmed: removing });
       return state.data.workout_exercises.length < before;
     },
-    onClose: () => document.querySelector(`[data-reorder-name="${entryId}"]`)?.closest('summary')?.focus(),
+    // The exercise it was opened from may have been removed in the sheet.
+    onClose: () => (document.querySelector(`[data-reorder-name="${entryId}"]`)?.closest("summary")
+      ?? document.querySelector(".exercise-summary") ?? document.querySelector("#open-picker"))?.focus(),
   });
 }
 
@@ -2499,7 +2558,8 @@ async function saveExerciseMove(entryId, position) {
   return true;
 }
 
-async function removeExercise(entryId) {
+// onConfirmed runs once the removal is confirmed. From the Reorder sheet, focus stays in the sheet.
+async function removeExercise(entryId, { onConfirmed } = {}) {
   const entry = state.data.workout_exercises.find((item) => item.id === entryId);
   if (!entry || !state.editor || state.editor.busy) return;
   const name = exerciseDisplayName(entry);
@@ -2507,14 +2567,18 @@ async function removeExercise(entryId) {
   const question = `Remove ${name}${count ? ` and its ${count} set${count === 1 ? "" : "s"}` : ""} from this workout? This cannot be undone.`;
   let confirmed = false;
   try {
-    const confirm = async () => (confirmed = await ask(question, { confirmLabel: "Remove", danger: true }));
+    const confirm = async () => {
+      confirmed = await ask(question, { confirmLabel: "Remove", danger: true });
+      if (confirmed) onConfirmed?.();
+      return confirmed;
+    };
     if (!await state.editor.removeExercise(entryId, confirm)) {
       if (confirmed) showInvalidSet("Not removed yet");
       return;
     }
     state.collapsedExercises.delete(entryId);
     render();
-    document.querySelector("#open-picker")?.focus();
+    if (!document.querySelector("#exercise-reorder")) document.querySelector("#open-picker")?.focus();
     showToast(`${name} removed.`);
   } catch (error) { showToast(error.message); }
 }
