@@ -119,7 +119,13 @@ listed with a note, so restoring it in Manage puts it back into the routine.
 Repeat this workout is unchanged: it copies one completed workout, and set slots
 follow that workout's sets.
 
-Use **Progress** to choose an exercise and optional gym. The chart and table
+Use **Progress** to choose an exercise and optional gym. The Exercise field
+shows the chosen exercise; tap it to open a search box over every exercise in
+alphabetical order (ignoring case). Type any part of the exercise or variation
+name, such as "curl" or "incline bench", to narrow the list (case and accents
+do not matter), then tap a match to show its progress. From the keyboard, the
+arrow keys move between the search box and the matches, Enter picks the first
+match, and Escape closes the list. The chart and table
 show the best completed result and best weight for each workout. From a workout
 exercise or history detail, **View progress** starts with its exact gym,
 equipment, manufacturer, and machine label, so different machines are not
@@ -392,8 +398,13 @@ flow. **Keep going** hides the banner for that workout; this browser remembers
 the choice, so reopening the app does not ask again.
 
 Last workout values come from the most recent completed workout with the same
-gym, exercise variation, equipment, manufacturer, and machine label. If that
-combination occurred more than once, its last occurrence supplies the reference.
+gym, exercise variation, equipment, manufacturer, and machine label in which
+that exercise has at least one completed set. A later workout where the exercise
+was added but no set was completed is skipped, so it never hides the last time
+you actually did it. If that combination occurred more than once, its last
+occurrence with a completed set supplies the reference. Adding an exercise,
+repeating a workout, and starting a routine take the starting sets' sides and
+set types from the same reference.
 Only completed sets are shown, in order, as one quiet line at the top of each
 set; a set with nothing from last time shows no line. Tap a set's "Last workout" line to
 copy those values into the set and save them like any other edit; this does not
@@ -492,6 +503,8 @@ node tests/rest-timer.test.mjs
 node tests/keyboard.test.mjs
 node tests/confirm-sheet.test.mjs
 node tests/choice-field.test.mjs
+node tests/exercise-search.test.mjs
+node tests/exercise-reorder.test.mjs
 ```
 
 The optional browser regression test uses Playwright, a separate headless

@@ -1143,6 +1143,47 @@ textarea {
   overflow-wrap: anywhere;
 }
 .choice-list button:active { background: var(--surface-3); }
+
+/* Exercise progress: the chosen exercise opens a search over an alphabetical list. */
+.exercise-search .field-label { color: var(--ink-2); font-size: 0.86rem; font-weight: 580; }
+.exercise-search-current {
+  width: 100%;
+  min-height: 52px;
+  padding: 10px 42px 10px 15px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: var(--surface-2) var(--icon-select) right 14px center / 20px no-repeat;
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  color: var(--ink);
+  font-size: 1rem;
+  font-weight: 450;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.exercise-search-current[aria-expanded="true"] { background-color: var(--surface-3); box-shadow: inset 0 0 0 1.5px var(--accent-line); }
+.exercise-search-current small, .exercise-search-list small { color: var(--muted); font-weight: 450; }
+.exercise-search-panel { display: grid; gap: 6px; padding: 8px; border-radius: var(--radius-control); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--hairline-strong); }
+.exercise-search-panel[hidden] { display: none; }
+.exercise-search-panel .search { margin: 0; }
+.exercise-search-status, .history-filters .exercise-search-status { margin: 0 4px; color: var(--muted); font-size: 0.8rem; font-weight: 450; }
+.exercise-search-status:empty, .exercise-search-list:empty { display: none; }
+.exercise-search-list { max-height: min(320px, 45vh); margin: 0; padding: 0; overflow-y: auto; overscroll-behavior: contain; list-style: none; }
+.exercise-search-list button {
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 1rem;
+  font-weight: 450;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.exercise-search-list button[aria-selected="true"] { background: var(--accent-soft); color: var(--accent); font-weight: 580; }
+.exercise-search-list button:active, .exercise-search-list button:focus-visible { background: var(--surface-3); }
+@media (hover: hover) { .exercise-search-list button:hover { background: var(--surface-3); } }
 #custom-exercise-form .choice-field > label { font-size: 0.86rem; font-weight: 580; }
 .track-by { display: grid; margin: 0 0 14px; padding: 6px 14px; border: 0; border-radius: var(--radius-well); background: var(--surface); box-shadow: inset 0 0 0 1px var(--hairline); }
 .track-by legend { float: left; width: 100%; margin: 6px 0 2px; padding: 0; color: var(--ink-2); font-size: 0.86rem; font-weight: 580; }

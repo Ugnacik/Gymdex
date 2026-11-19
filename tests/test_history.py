@@ -284,6 +284,26 @@ class CompletedWorkoutSetsTests(unittest.TestCase):
         self.assertEqual(self.best_results(), [10])
         self.assertEqual(self.last_workout_results(), [(60, 8), (62.5, 10)])
 
+    def test_last_workout_skips_a_later_workout_where_the_exercise_had_no_completed_set(self):
+        done_workout, done = self.completed(6, 5, weight=65)
+        first = db.sets_for_exercise(self.connection, done['id'])[0]
+        db.correct_completed_set(self.connection, done_workout['id'], first['id'],
+                                 dict(weight=65, result=6, completed=True, set_type='warmup'))
+        empty_workout, empty = self.completed()  # Added, its slots left empty, then finished.
+        self.assertTrue(self.sets(empty) and all(not completed for *_, completed in self.sets(empty)))
+        self.assertEqual(self.last_workout_results(), [(65, 6), (65, 5)])
+        # A new Workout Exercise gets its slots and Set Types from the workout that has sets.
+        active = db.start_workout(self.connection, self.gym['id'])
+        added = db.add_workout_exercise(self.connection, active['id'], self.press['id'], 'Barbell')
+        self.assertEqual([s['set_type'] for s in db.sets_for_exercise(self.connection, added['id'])], ['warmup', None])
+        db.cancel_workout(self.connection, active['id'])
+        # Repeating the empty workout also prefills from the last time the exercise was done.
+        repeated = db.repeat_workout(self.connection, empty_workout['id'])
+        entry = db.bootstrap(self.connection)['workout_exercises'][0]
+        self.assertEqual(len(entry['sets']), 2)
+        self.assertEqual([(s['weight'], s['result']) for s in entry['previous_sets']], [(65, 6), (65, 5)])
+        db.cancel_workout(self.connection, repeated['id'])
+
     def test_sets_of_an_active_or_different_workout_cannot_be_deleted_from_history(self):
         workout, entry = self.completed(8)
         other, _ = self.completed(5)

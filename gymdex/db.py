@@ -400,7 +400,11 @@ def previous_sets(
     connection: sqlite3.Connection, gym_id: int, variation_id: int, equipment: str,
     manufacturer: str, label: str, tracking_type: str,
 ) -> list[dict[str, Any]]:
-    """Completed sets of the last matching Workout Exercise in a completed workout."""
+    """Completed sets of the last matching Workout Exercise in a completed workout.
+
+    A matching Workout Exercise without a completed set (added, then left empty) is skipped,
+    so it cannot hide the last time the exercise was actually done.
+    """
     previous = connection.execute(
         """SELECT we.id FROM workout_exercises we
            JOIN workouts w ON w.id = we.workout_id
@@ -408,6 +412,8 @@ def previous_sets(
              AND we.variation_id = ? AND we.equipment_snapshot = ?
              AND we.manufacturer_snapshot = ? AND we.label_snapshot = ?
              AND we.tracking_type_snapshot = ?
+             AND EXISTS (SELECT 1 FROM workout_sets s
+                         WHERE s.workout_exercise_id = we.id AND s.completed = 1)
            ORDER BY w.completed_at DESC, w.id DESC, we.position DESC LIMIT 1""",
         (gym_id, variation_id, equipment, manufacturer, label, tracking_type),
     ).fetchone()

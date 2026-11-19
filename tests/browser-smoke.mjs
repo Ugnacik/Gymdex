@@ -677,7 +677,37 @@ try {
   await page.locator('[data-history-id]').waitFor();
   await page.locator('#close-history').click();
   await page.locator('#open-progress').click();
-  await page.locator('#progress-exercise').selectOption({ label: 'Bench Press' });
+  // The Exercise picker: alphabetical, searchable, chosen by tapping a match.
+  const exerciseCurrent = page.locator('#progress-exercise-current');
+  const exerciseSearch = page.locator('#progress-exercise-search');
+  const exerciseOptions = page.locator('#progress-exercise-list [role=option]');
+  await exerciseCurrent.click();
+  check('Opening the Exercise picker focuses its search box', await exerciseSearch.evaluate(input => input === document.activeElement)
+    && await exerciseCurrent.getAttribute('aria-expanded') === 'true');
+  const listedNames = await exerciseOptions.evaluateAll(options => options.map(option => option.firstChild.textContent.trim()));
+  check('Exercise picker lists exercises alphabetically', listedNames.length > 3
+    && JSON.stringify(listedNames) === JSON.stringify([...listedNames].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))));
+  check('Exercise picker options are 44px tap targets', (await exerciseOptions.evaluateAll(options => options.map(option => option.getBoundingClientRect().height))).every(height => height >= 44)
+    && (await exerciseCurrent.boundingBox()).height >= 44);
+  await screenshot('progress-picker-sorted');
+  await exerciseSearch.fill('BENCH');
+  check('Exercise search ignores case', (await exerciseOptions.allInnerTexts()).every(text => /bench/i.test(text)) && await exerciseOptions.count() >= 1);
+  await screenshot('progress-picker-filtered');
+  await exerciseSearch.fill('zzzz');
+  check('Exercise search says when nothing matches', await exerciseOptions.count() === 0
+    && await page.locator('#progress-exercise-status').innerText() === 'No exercises match “zzzz”.');
+  await screenshot('progress-picker-empty');
+  await exerciseSearch.fill('bench pr');
+  await page.keyboard.press('ArrowDown');
+  check('Arrow keys move from the search box into the matches', await page.evaluate(() => document.activeElement?.getAttribute('role') === 'option'));
+  await page.keyboard.press('Escape');
+  check('Escape closes the picker and returns focus', await page.locator('#progress-exercise-panel').isHidden()
+    && await exerciseCurrent.evaluate(button => button === document.activeElement));
+  await exerciseCurrent.click();
+  await exerciseSearch.fill('bench pr');
+  await exerciseOptions.filter({ hasText: /^Bench Press$/ }).click();
+  check('Tapping a match chooses it and keeps it shown', await exerciseCurrent.innerText() === 'Bench Press'
+    && await page.locator('#progress-exercise-panel').isHidden());
   await page.locator('.progress-chart [data-progress-point]').waitFor();
   await page.locator('.progress-chart [data-progress-point]').focus();
   await page.keyboard.press('Enter');
@@ -720,10 +750,20 @@ try {
   check('Muscle Group editor has no phone overflow', await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   await screenshot('manage-muscle-groups');
   await page.locator('#close-manage').click();
+  // A later workout where Bench Press was added but no set was completed must not hide Last workout.
+  const benchEntry = (await read(`/api/history/${historyWorkoutId}`)).workout_exercises[0];
+  const post = async (path, data = {}) => (await context.request.post(base + path, { data })).json();
+  const emptyWorkout = await post('/api/workouts', { gym_id: 1 });
+  await post(`/api/workouts/${emptyWorkout.id}/exercises`, { variation_id: benchEntry.variation_id, equipment: benchEntry.equipment,
+    manufacturer: benchEntry.manufacturer ?? '', label: benchEntry.label ?? '' });
+  await post(`/api/workouts/${emptyWorkout.id}/complete`);
+  check('The empty workout is the newest completed one', (await read('/api/history')).workouts[0].completed_set_count === 0);
+  await page.reload();
   await page.locator('#open-history').click();
   await page.locator(`[data-history-id="${historyWorkoutId}"]`).click();
   await page.locator('[data-repeat-workout]').click();
   await page.locator('.set-form').first().waitFor();
+  check('Last workout skips a later workout with no completed set', (await read('/api/bootstrap')).workout_exercises[0].previous_sets.length > 0);
   check('Last workout shows the Effort', (await page.locator('.set-form').first().locator('.previous-set').innerText()) === 'Last workout: 45.5 kg × 8 reps · Failure');
   check('Last workout is one line', await page.locator('.set-form').first().locator('.previous-set').evaluate(line => line.getBoundingClientRect().height <= 44));
   check('A repeated Workout starts without Effort', await effortButton(page.locator('.set-form').first()).innerText() === 'RIR');

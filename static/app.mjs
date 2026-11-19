@@ -3,6 +3,7 @@ import { NOTE_MAX_LENGTH, WorkoutEditor } from "./workout-editor.mjs";
 import { DEFAULT_REST_DURATION_SECONDS, RestTimer } from "./rest-timer.mjs";
 import { askTextInPage, chooseInPage, confirmInPage } from "./confirm-sheet.mjs";
 import { ChoiceField } from "./choice-field.mjs";
+import { ExerciseSearch } from "./exercise-search.mjs";
 import { openRoutines, renderRoutineStarts } from "./routines.mjs";
 import { bindReorderNameHold, openExerciseReorder } from "./exercise-reorder.mjs";
 
@@ -1148,7 +1149,7 @@ async function openProgress(initialVariationId = null, initialGymId = null, init
   dialog.setAttribute("aria-labelledby", "progress-title");
   dialog.innerHTML = `<div class="sheet-header"><h2 id="progress-title">Exercise progress</h2><button class="text-button" id="close-progress" autofocus>Close</button></div>
     <form id="progress-filters" class="history-filters">
-      <label class="field">Exercise<select name="variation_id" id="progress-exercise" required></select></label>
+      <div class="field exercise-search" id="progress-exercise-field"></div>
       <label class="field">Gym<select name="gym_id"><option value="">All gyms</option>${gymOptions(initialGymId)}</select></label>
       <button type="submit" class="secondary">Show progress</button>
     </form>
@@ -1158,7 +1159,7 @@ async function openProgress(initialVariationId = null, initialGymId = null, init
   document.body.append(dialog);
   const find = (selector) => dialog.querySelector(selector);
   const form = find("#progress-filters");
-  const exercise = find("#progress-exercise");
+  let exercise = { value: "" };
   const message = find("#progress-message");
   const results = find("#progress-results");
   let config = initialConfig;
@@ -1225,7 +1226,9 @@ async function openProgress(initialVariationId = null, initialGymId = null, init
     } catch (error) { if (version === request) message.textContent = error.message; }
   }
   form.addEventListener("submit", (event) => { event.preventDefault(); loadProgress(); });
-  form.addEventListener("change", () => {
+  form.addEventListener("change", (event) => {
+    // Typing in the Exercise search only narrows its list; choosing a match reloads.
+    if (event?.target?.id === "progress-exercise-search") return;
     config = null;
     find("#progress-config").hidden = true;
     loadProgress();
@@ -1235,7 +1238,17 @@ async function openProgress(initialVariationId = null, initialGymId = null, init
     // Archived custom variations stay selectable: their recorded workouts still have progress.
     const catalog = await api(`/api/catalog?gym_id=${gyms[0].id}&include_archived=1`);
     if (!dialog.open) return;
-    exercise.innerHTML = catalog.catalog.map((item) => `<option value="${item.id}" ${item.id === initialVariationId ? "selected" : ""}>${escapeHtml(exerciseDisplayName(item))}${item.archived ? " (archived)" : ""}</option>`).join("");
+    // Alphabetical, searchable by exercise and variation name; choosing one shows its progress.
+    exercise = new ExerciseSearch(find("#progress-exercise-field"), {
+      id: "progress-exercise", label: "Exercise", selectedId: initialVariationId,
+      items: catalog.catalog.map((item) => ({ id: item.id, name: exerciseDisplayName(item),
+        texts: [exerciseDisplayName(item), item.exercise_name, item.variation_name], note: item.archived ? "(archived)" : "" })),
+      onChange: () => {
+        config = null;
+        find("#progress-config").hidden = true;
+        loadProgress();
+      },
+    });
     if (!catalog.catalog.length) {
       message.textContent = "No exercises yet. Create one from a workout.";
       return;

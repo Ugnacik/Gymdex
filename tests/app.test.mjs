@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { createApp, workoutTitle } from '../static/app.mjs';
 import { DraftStore } from '../static/drafts.mjs';
 import { choiceContainer, choose, listed, toggleList, type } from './fake-choice-field.mjs';
+import { searchContainer, shown, tapOption, typeSearch } from './fake-exercise-search.mjs';
 
 // Pin the device time zone so local-time assertions do not depend on the test machine.
 // Central European Summer Time is UTC+2 until 25 October 2026, then UTC+1.
@@ -1121,7 +1122,7 @@ test('progress shows a chart and numeric history for an exercise', async () => {
   dialog.showModal = () => { dialog.open = true; };
   dialog.remove = () => { delete app.nodes['#progress']; };
   dialog.close = () => { dialog.open = false; dialog.events.close(); };
-  nodes['#progress-exercise'] = Object.assign(node(), { value: '17' });
+  nodes['#progress-exercise-field'] = searchContainer();
   nodes['#progress-filters'] = Object.assign(node(), { elements: { gym_id: { value: '' } } });
   app.env.document.createElement = () => dialog;
   app.env.document.body = { append: () => { app.nodes['#progress'] = dialog; } };
@@ -2291,7 +2292,7 @@ test('progress keeps archived custom exercises selectable', async () => {
   const dialog = node();
   dialog.querySelector = (selector) => nodes[selector] ??= node();
   dialog.showModal = () => { dialog.open = true; };
-  nodes['#progress-exercise'] = Object.assign(node(), { value: '17' });
+  nodes['#progress-exercise-field'] = searchContainer();
   nodes['#progress-filters'] = Object.assign(node(), { elements: { gym_id: { value: '' } } });
   app.env.document.createElement = () => dialog;
   app.env.document.body = { append: () => { app.nodes['#progress'] = dialog; } };
@@ -2305,7 +2306,51 @@ test('progress keeps archived custom exercises selectable', async () => {
   };
   await app.nodes['#open-progress'].events.click();
   assert.equal(urls[0], '/api/catalog?gym_id=1&include_archived=1');
-  assert.match(nodes['#progress-exercise'].innerHTML, /<option value="17" >Heavy Sled &lt;i&gt; \(archived\)<\/option><option value="18" >Leg Press<\/option>/);
+  const field = nodes['#progress-exercise-field'];
+  assert.equal(field.querySelector('#progress-exercise-current').textContent, 'Heavy Sled <i> (archived)');
+  field.querySelector('#progress-exercise-current').events.click();
+  assert.deepEqual(shown(field, 'progress-exercise'), ['Heavy Sled <i> (archived)', 'Leg Press']);
+});
+
+test('progress lists exercises alphabetically, searches them and loads the tapped one', async () => {
+  const app = await harness(storage(), { gyms: [{ id: 1, name: 'Home' }] });
+  const nodes = {};
+  const dialog = node();
+  dialog.querySelector = (selector) => nodes[selector] ??= node();
+  dialog.showModal = () => { dialog.open = true; };
+  nodes['#progress-exercise-field'] = searchContainer();
+  nodes['#progress-filters'] = Object.assign(node(), { elements: { gym_id: { value: '' } } });
+  nodes['#progress-config'] = Object.assign(node(), { hidden: false });
+  app.env.document.createElement = () => dialog;
+  app.env.document.body = { append: () => { app.nodes['#progress'] = dialog; } };
+  const urls = [];
+  app.env.fetch = async (url) => {
+    urls.push(url);
+    if (url.startsWith('/api/catalog')) return response({ catalog: [
+      { id: 21, exercise_name: 'Bench Press', variation_name: 'Incline', equipment: ['Barbell'] },
+      { id: 22, exercise_name: 'Bench Press', variation_name: 'Standard', equipment: ['Barbell'] },
+      { id: 23, exercise_name: 'Biceps Curl', variation_name: 'Standing', equipment: ['Dumbbell'] },
+      { id: 24, exercise_name: 'Calf Press', variation_name: 'Leg Press', equipment: ['Machine'] },
+      { id: 25, exercise_name: 'Preacher Curl', variation_name: 'Standard', equipment: ['Machine'] }] });
+    return response({ variation_id: Number(new URLSearchParams(url.split('?')[1]).get('variation_id')), exercise_name: 'X', variation_name: 'Standard', tracking_type: 'repetitions', points: [] });
+  };
+  await app.nodes['#open-progress'].events.click();
+  const field = nodes['#progress-exercise-field'];
+  // With nothing preselected, the alphabetically first exercise is shown.
+  assert.equal(urls[1], '/api/progress?variation_id=22');
+  assert.equal(field.querySelector('#progress-exercise-current').textContent, 'Bench Press');
+  field.querySelector('#progress-exercise-current').events.click();
+  assert.deepEqual(shown(field, 'progress-exercise'), ['Bench Press', 'Incline Bench Press', 'Leg Press Calf Press', 'Preacher Curl', 'Standing Biceps Curl']);
+  typeSearch(field, 'progress-exercise', 'CURL');
+  assert.deepEqual(shown(field, 'progress-exercise'), ['Preacher Curl', 'Standing Biceps Curl']);
+  // Typing narrows only; a change event from the search box does not reload progress.
+  nodes['#progress-filters'].events.change({ target: field.querySelector('#progress-exercise-search') });
+  assert.equal(urls.length, 2);
+  tapOption(field, 'progress-exercise', 'Preacher Curl');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(urls[2], '/api/progress?variation_id=25');
+  assert.equal(field.querySelector('#progress-exercise-current').textContent, 'Preacher Curl');
+  assert.equal(nodes['#progress-config'].hidden, true);
 });
 
 // Routines
