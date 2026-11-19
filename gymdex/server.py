@@ -6,6 +6,8 @@ import json
 import mimetypes
 import os
 import sqlite3
+import threading
+from collections import OrderedDict
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -43,6 +45,34 @@ def id_field(payload: dict, name: str) -> int:
     if type(value) is not int or not 0 < value <= 2**63 - 1:
         raise ValueError(f"{name} must be a positive integer.")
     return value
+
+
+# Answers to recent create requests by their client request id. A phone that sends the same
+# Add exercise twice (a retry, or taps queued on a slow connection) gets the first answer back
+# instead of a second copy. In memory only: a restart forgets them, which is fine for retries.
+_ONCE_LOCK = threading.Lock()
+_ONCE_RESULTS: OrderedDict[tuple[str, str, str], object] = OrderedDict()
+_ONCE_LIMIT = 256
+
+
+def once(db_path, route: str, payload: dict, operation):
+    """operation, run at most once per payload["request_id"] for this database and route."""
+    request_id = payload.get("request_id")
+    if not isinstance(request_id, str) or not 0 < len(request_id) <= 512:
+        return operation
+
+    def run(connection):
+        key = (str(db_path), route, request_id)
+        with _ONCE_LOCK:
+            if key in _ONCE_RESULTS:
+                return _ONCE_RESULTS[key]
+            result = operation(connection)
+            _ONCE_RESULTS[key] = result
+            while len(_ONCE_RESULTS) > _ONCE_LIMIT:
+                _ONCE_RESULTS.popitem(last=False)
+            return result
+
+    return run
 
 
 class GymdexServer(ThreadingHTTPServer):
@@ -206,6 +236,7 @@ class GymdexHandler(BaseHTTPRequestHandler):
                         text_field(payload, "manufacturer"),
                         text_field(payload, "label"),
                     )
+                operation = once(self.server.db_path, parsed.path, payload, operation)
                 return self._with_db(operation, status=HTTPStatus.CREATED)
             if parts[3] == "complete":
                 return self._with_db(

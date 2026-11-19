@@ -217,6 +217,10 @@ strong { font-weight: 640; }
 .primary.danger { background: var(--danger); color: #3a0a0f; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 12px 28px -14px rgba(255, 120, 135, 0.55); }
 button:disabled, fieldset:disabled { cursor: wait; }
 button:not(.primary):not(.secondary):disabled { opacity: 0.6; }
+/* The control whose request is in flight stays fully visible and says so; the rest dim. */
+button[aria-busy="true"]:disabled, button:not(.primary):not(.secondary)[aria-busy="true"]:disabled { opacity: 1; }
+#picker .recent-card[aria-busy="true"] { background: var(--accent-soft); box-shadow: inset 0 0 0 1.5px var(--accent-line); }
+#picker .recent-card[aria-busy="true"] span { color: var(--accent); font-weight: 580; }
 
 /* ---------- Fields ---------- */
 

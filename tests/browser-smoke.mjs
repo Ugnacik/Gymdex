@@ -925,6 +925,30 @@ try {
   check('Tapping the chevron collapses the exercise', await longCard.locator('.workout-exercise').evaluate(details => !details.open));
   await page.touchscreen.tap(toggled.x, toggled.y);
 
+  // Add exercise on a slow connection: rapid repeated taps on a Recent choice add it exactly once.
+  const addedCount = async () => (await read('/api/bootstrap')).workout_exercises.length;
+  const countBeforeTaps = await addedCount();
+  let addRequests = 0;
+  const slowAdd = async route => {
+    if (route.request().method() !== 'POST') return route.continue();
+    addRequests++;
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    return route.continue();
+  };
+  await page.route('**/api/workouts/*/exercises', slowAdd);
+  await page.locator('#open-picker').click();
+  const recentChoice = page.locator('#picker .recent-card').first();
+  await recentChoice.waitFor();
+  const choiceBox = await recentChoice.boundingBox();
+  for (let tap = 0; tap < 7; tap++) await page.touchscreen.tap(choiceBox.x + choiceBox.width / 2, choiceBox.y + choiceBox.height / 2);
+  check('An Add exercise in flight shows Adding… and disables the choice', await recentChoice.isDisabled()
+    && (await recentChoice.innerText()).includes('Adding…') && await recentChoice.getAttribute('aria-busy') === 'true');
+  await screenshot('add-exercise-adding');
+  await page.locator('#picker').waitFor({ state: 'detached' });
+  await page.unroute('**/api/workouts/*/exercises', slowAdd);
+  check('Seven rapid taps on a slow connection add the exercise once', addRequests === 1
+    && await eventually(async () => await addedCount() === countBeforeTaps + 1));
+
   // Swipe-to-remove with touch input: a confirmed removal keeps focus inside the Reorder sheet.
   const exerciseCount = async () => (await read('/api/bootstrap')).workout_exercises.length;
   const before = await exerciseCount();

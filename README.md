@@ -157,6 +157,17 @@ Groups, alongside exercise names and saved machine details. Search and the
 Muscle Group choice work together; **Clear filter** keeps your search text.
 The same picker is used when adding to a Routine.
 
+Adding an exercise happens once per choice, even on a slow connection: the
+tapped choice (or the **Add exercise** button) says "Adding…" right away and the
+whole picker waits, so further taps do nothing until the server answers. The
+picker closes when the exercise is added; on an error the controls come back for
+another try. Each add also carries a request id, and the server answers a
+repeated id with the exercise the first request added (it remembers the last
+256 in memory), so a retried request never adds a second copy. **Start workout**
+says "Starting…" and **Create custom exercise** says "Creating…" the same way;
+Add set, Repeat, Start routine, Save as routine, and adding to a Routine already
+ignore taps while they save.
+
 ## Custom exercises
 
 During a workout, open Add exercise and choose **Create custom exercise**.

@@ -858,7 +858,9 @@ test('the Exercise Configuration form offers manufacturers from all Exercises an
   type(label, 'machine-label', 'Downstairs');
   await app.nodes['#configuration-form'].events.submit({ preventDefault() {}, currentTarget: app.nodes['#configuration-form'] });
   const added = requests.find(([path]) => path === '/api/workouts/1/exercises');
-  assert.deepEqual(JSON.parse(added[1].body), { variation_id: 17, equipment: 'Sled', manufacturer: 'Technogym', label: 'Downstairs' });
+  const { request_id: requestId, ...sent } = JSON.parse(added[1].body);
+  assert.deepEqual(sent, { variation_id: 17, equipment: 'Sled', manufacturer: 'Technogym', label: 'Downstairs' });
+  assert.ok(requestId.endsWith(JSON.stringify(sent)), 'the request id names this choice');
 });
 
 test('an Exercise never configured offers global manufacturers, no machine labels, and starts empty', async () => {
@@ -872,7 +874,9 @@ test('an Exercise never configured offers global manufacturers, no machine label
   assert.equal(app.nodes['#machine-label-field'].querySelector('#machine-label-toggle').hidden, true, 'no machine labels to list yet');
   await app.nodes['#configuration-form'].events.submit({ preventDefault() {}, currentTarget: app.nodes['#configuration-form'] });
   const added = requests.find(([path]) => path === '/api/workouts/1/exercises');
-  assert.deepEqual(JSON.parse(added[1].body), { variation_id: 30, equipment: 'Bodyweight', manufacturer: '', label: '' });
+  const { request_id: requestId, ...sent } = JSON.parse(added[1].body);
+  assert.deepEqual(sent, { variation_id: 30, equipment: 'Bodyweight', manufacturer: '', label: '' });
+  assert.ok(requestId.endsWith(JSON.stringify(sent)), 'the request id names this choice');
 });
 
 const legPressEntry = { id: 3, variation_id: 17, exercise_name: 'Leg Press', variation_name: 'Single Leg', equipment: 'Machine',
@@ -1038,6 +1042,81 @@ test('Replace from Recent asks before clearing, sends once, and shows the replac
   assert.doesNotMatch(html, /is-complete|value="100"/);
   assert.match(app.nodes['#toast'].textContent, /could not be refreshed/);
   assert.doesNotMatch(app.nodes['#toast'].textContent, /^Replaced with Front Plank\.( Cleared|$)/);
+});
+
+test('Add exercise is single-flight: repeat taps while adding send one request, show Adding…, and an error re-enables', async () => {
+  const app = await harness();
+  const catalog = { ...structuredClone(suggestionCatalog), recent: [{ profile_id: 77, variation_id: 30, exercise_name: 'Hammer Curl',
+    variation_name: 'Standard', equipment: 'Dumbbell', manufacturer: '', label: '' }] };
+  catalog.saved = catalog.recent;
+  const posts = [];
+  let pending = null;
+  let fail = false;
+  pickerSheet(app);
+  app.env.fetch = async (url, options = {}) => {
+    if (url.startsWith('/api/catalog')) return response(structuredClone(catalog));
+    if (url === '/api/workouts/1/exercises') {
+      posts.push(JSON.parse(options.body));
+      await (pending = deferred()).promise;
+      return fail ? response({ error: 'The gym signal dropped.' }, 503) : response({ id: 9 }, 201);
+    }
+    return response({ gyms: [{ id: 1, name: 'Home' }], active_workout: { id: 1, gym_id: 1, started_at: '2026-11-19 10:00:00' }, workout_exercises: [] });
+  };
+  await app.nodes['#open-picker'].events.click();
+  const span = Object.assign(node(), { textContent: 'Dumbbell' });
+  const recent = Object.assign(node(), { dataset: { profileId: '77' }, querySelector: (selector) => selector === 'span' ? span : null });
+  const other = node();
+  app.nodes['#picker'].querySelectorAll = () => [recent, other];
+  const querySelectorAll = app.env.document.querySelectorAll;
+  app.env.document.querySelectorAll = (selector) => selector === '[data-profile-id]' ? [recent] : querySelectorAll(selector);
+  app.nodes['#picker-results'].innerHTML = '';
+  // Re-render the results so the stand-in Recent button gets its click listener.
+  app.nodes['#exercise-search'].events.input({ target: { value: '' } });
+  fail = true;
+  const first = recent.events.click();
+  await settle();
+  assert.equal(span.textContent, 'Adding…', 'the tapped choice says Adding… at once');
+  assert.equal(recent.disabled, true);
+  assert.equal(other.disabled, true, 'every picker control waits');
+  for (let tap = 0; tap < 6; tap++) await Promise.race([recent.events.click(), settle()]);
+  assert.equal(posts.length, 1, 'seven taps, one request');
+  pending.resolve();
+  await first;
+  assert.equal(span.textContent, 'Dumbbell');
+  assert.equal(recent.disabled, false);
+  assert.equal(other.disabled, false);
+  assert.match(app.nodes['#toast'].textContent, /signal dropped/);
+  assert.ok(app.nodes['#picker'], 'the picker stays open for another try');
+  // The retry carries the same request id, so the server can answer it with the first add.
+  fail = false;
+  const retry = recent.events.click();
+  await settle();
+  assert.equal(posts.length, 2);
+  assert.equal(posts[1].request_id, posts[0].request_id);
+  assert.deepEqual({ ...posts[1], request_id: undefined }, { profile_id: 77, request_id: undefined });
+  pending.resolve();
+  await retry;
+  await settle();
+  assert.equal(app.nodes['#picker'], undefined, 'success closes the picker');
+  assert.equal(app.nodes['#toast'].textContent, 'Exercise added.');
+});
+
+test('a second tap on Add exercise while the catalog loads opens one picker', async () => {
+  const app = await harness();
+  pickerSheet(app);
+  let catalogRequests = 0;
+  let pending = null;
+  app.env.fetch = async (url) => {
+    if (url.startsWith('/api/catalog')) { catalogRequests++; await (pending = deferred()).promise; return response(structuredClone(suggestionCatalog)); }
+    throw new Error('Unexpected request');
+  };
+  const first = app.nodes['#open-picker'].events.click();
+  await settle();
+  await app.nodes['#open-picker'].events.click();
+  assert.equal(catalogRequests, 1);
+  pending.resolve();
+  await first;
+  assert.ok(app.nodes['#picker']);
 });
 
 test('Close in the picker and the custom exercise form returns focus to Add exercise', async () => {
@@ -2357,6 +2436,28 @@ test('progress lists exercises alphabetically, searches them and loads the tappe
 
 const clickApp = (app, selector, dataset) => app.nodes['#app'].events.click({
   target: { closest: (wanted) => wanted === selector ? Object.assign(node(), { dataset }) : null },
+});
+
+test('Start workout sends one request however often it is tapped, says Starting…, and re-enables on error', async () => {
+  const app = await harness(storage(), startData([home]));
+  const start = app.nodes['#start-workout'];
+  const posts = [];
+  let pending = null;
+  app.env.fetch = async (url, options = {}) => {
+    if (url === '/api/workouts') { posts.push(options.body); await (pending = deferred()).promise; return response({ error: 'Offline.' }, 503); }
+    throw new Error('Unexpected request');
+  };
+  const first = start.events.click({ currentTarget: start });
+  await settle();
+  assert.equal(start.disabled, true);
+  assert.equal(start.textContent, 'Starting…');
+  for (let tap = 0; tap < 4; tap++) await Promise.race([start.events.click({ currentTarget: start }), settle()]);
+  assert.equal(posts.length, 1);
+  pending.resolve();
+  await first;
+  assert.equal(start.disabled, false);
+  assert.equal(start.textContent, 'Start workout');
+  assert.match(app.nodes['#toast'].textContent, /Offline/);
 });
 
 test('the start screen offers the selected gym\'s routines beside plain Start, and one tap starts one', async () => {

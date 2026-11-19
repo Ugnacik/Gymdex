@@ -320,11 +320,18 @@ async function createGym(event) {
   } catch (error) { showToast(error.message); }
 }
 
-async function startWorkout() {
+async function startWorkout(event) {
+  const button = event?.currentTarget ?? document.querySelector("#start-workout");
+  if (state.startingWorkout) return;
+  state.startingWorkout = true;
+  if (button) { button.disabled = true; button.textContent = "Starting…"; }
   try {
     await api("/api/workouts", { method: "POST", body: JSON.stringify({ gym_id: state.selectedGymId }) });
     await load();
-  } catch (error) { showToast(error.message); }
+  } catch (error) {
+    if (button?.isConnected !== false) { button.disabled = false; button.textContent = "Start workout"; }
+    showToast(error.message);
+  } finally { state.startingWorkout = false; }
 }
 
 // Repeat and Start routine answer with the new Active Workout and how many exercises they
@@ -1675,9 +1682,13 @@ async function endWorkout(cancel) {
 }
 
 async function openPicker() {
-  if (!await saveAllSets()) return;
+  // A slow catalog load must not open the picker once per tap.
+  if (state.openingPicker) return;
+  state.openingPicker = true;
   try {
+    if (!await saveAllSets()) return;
     state.picker = await api(`/api/catalog?gym_id=${state.data.active_workout.gym_id}`);
+    newPickerSession();
     state.pickerReplace = null;
     state.selectedExercise = null;
     state.selectedEquipment = null;
@@ -1685,6 +1696,7 @@ async function openPicker() {
     state.pickerMuscleGroup = "";
     renderPicker();
   } catch (error) { showToast(error.message); }
+  finally { state.openingPicker = false; }
 }
 
 // Opens the bottom sheet that Add exercise and Change machine render into (#picker .sheet).
@@ -1803,7 +1815,7 @@ function renderPickerResults(query) {
         : `<div class="empty"><h3>No matches</h3><p>Try another search or Muscle Group, or create a custom exercise.</p></div>`)}</div>
       <div class="picker-create"><button class="secondary create-exercise-button" type="button" id="create-exercise">Create custom exercise</button></div>`;
   document.querySelector("#create-exercise").addEventListener("click", () => renderCustomExerciseForm(state.pickerQuery));
-  document.querySelectorAll("[data-profile-id]").forEach((button) => button.addEventListener("click", () => addRecent(Number(button.dataset.profileId))));
+  document.querySelectorAll("[data-profile-id]").forEach((button) => button.addEventListener("click", () => addRecent(Number(button.dataset.profileId), button)));
   document.querySelectorAll("[data-variation-id]").forEach((button) => button.addEventListener("click", () => chooseExercise(Number(button.dataset.variationId))));
 }
 
@@ -1923,6 +1935,8 @@ function renderCustomExerciseForm(query = "") {
   sheet.querySelector("#custom-exercise-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
+    // Enter or a second tap while the exercise is being created does nothing.
+    if (form.querySelector('[type="submit"]').disabled) return;
     const values = new FormData(form);
     const existing = state.picker.catalog.find((item) =>
       item.exercise_name.toLowerCase() === cleanEquipmentName(values.get("name")).toLowerCase()
@@ -1938,7 +1952,9 @@ function renderCustomExerciseForm(query = "") {
       return;
     }
     const submit = form.querySelector('[type="submit"]');
+    const submitText = submit.textContent;
     submit.disabled = true;
+    submit.textContent = "Creating…";
     try {
       const created = await api("/api/exercises", { method: "POST", body: JSON.stringify({
         name: values.get("name"), variation_name: variation.value,
@@ -1948,7 +1964,7 @@ function renderCustomExerciseForm(query = "") {
       state.picker.catalog.push(created);
       chooseExercise(created.id);
       showToast(state.pickerReplace ? "Exercise created. Choose equipment to replace with it." : "Exercise created. Choose equipment to add it.");
-    } catch (error) { submit.disabled = false; showToast(error.message); }
+    } catch (error) { submit.disabled = false; submit.textContent = submitText; showToast(error.message); }
   });
   nameInput.focus();
 }
@@ -1962,7 +1978,8 @@ function closePicker(focus = "#open-picker") {
   document.querySelector(focus)?.focus();
 }
 
-async function addRecent(profileId) {
+async function addRecent(profileId, button = null) {
+  if (state.addingExercise) return;
   const profile = (state.picker.saved ?? state.picker.recent).find(item => item.profile_id === profileId);
   if (!profile) {
     showToast("That saved exercise is no longer available. Choose it from the catalog instead.");
@@ -1978,12 +1995,44 @@ async function addRecent(profileId) {
       manufacturer: profile.manufacturer, label: profile.label,
     });
   }
+  await addWorkoutExercise({ profile_id: profileId }, button, "Exercise added.");
+}
+
+// A per-picker key the server uses to answer a repeated Add exercise request with the exercise
+// the first one added, so a retried or doubled request never adds it twice.
+function newPickerSession() {
+  state.pickerSession = globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+// Adding an exercise is single-flight: the tapped control says "Adding…" at once, and every
+// picker control stays disabled (and further taps or Enter do nothing) until the server answers.
+// The picker closes on success; an error restores the controls for another try.
+async function addWorkoutExercise(choice, control, doneMessage) {
+  if (state.addingExercise || !state.data.active_workout) return;
+  state.addingExercise = true;
+  if (!state.pickerSession) newPickerSession();
+  const picker = document.querySelector("#picker");
+  const controls = [...(picker?.querySelectorAll("button, input") ?? [])].filter((item) => !item.disabled);
+  controls.forEach((item) => { item.disabled = true; });
+  const label = control?.querySelector?.("span") ?? control;
+  const before = label?.textContent;
+  if (label) label.textContent = "Adding…";
+  control?.setAttribute("aria-busy", "true");
+  picker?.setAttribute("aria-busy", "true");
   try {
-    await api(`/api/workouts/${state.data.active_workout.id}/exercises`, { method: "POST", body: JSON.stringify({ profile_id: profileId }) });
+    await api(`/api/workouts/${state.data.active_workout.id}/exercises`, {
+      method: "POST", body: JSON.stringify({ ...choice, request_id: `${state.pickerSession}:${JSON.stringify(choice)}` }),
+    });
     closePicker();
     await load();
-    showToast("Exercise added.");
-  } catch (error) { showToast(error.message); }
+    showToast(doneMessage);
+  } catch (error) {
+    controls.forEach((item) => { if (item.isConnected !== false) item.disabled = false; });
+    if (label) label.textContent = before;
+    control?.removeAttribute("aria-busy");
+    picker?.removeAttribute("aria-busy");
+    showToast(error.message);
+  } finally { state.addingExercise = false; }
 }
 
 function chooseExercise(variationId) {
@@ -2165,22 +2214,12 @@ async function addConfiguredExercise(event, { manufacturer, label }) {
       label: label.value,
     });
   }
-  const submit = event.currentTarget.querySelector('[type="submit"]');
-  submit.disabled = true;
-  try {
-    await api(`/api/workouts/${state.data.active_workout.id}/exercises`, {
-      method: "POST",
-      body: JSON.stringify({
-        variation_id: state.selectedExercise.id,
-        equipment: state.selectedEquipment,
-        manufacturer: manufacturer.value,
-        label: label.value,
-      }),
-    });
-    closePicker();
-    await load();
-    showToast("Exercise added. It will appear under recent choices next time.");
-  } catch (error) { submit.disabled = false; showToast(error.message); }
+  await addWorkoutExercise({
+    variation_id: state.selectedExercise.id,
+    equipment: state.selectedEquipment,
+    manufacturer: manufacturer.value,
+    label: label.value,
+  }, event.currentTarget.querySelector('[type="submit"]'), "Exercise added. It will appear under recent choices next time.");
 }
 
 function renderSet(entry, set, index) {
