@@ -177,3 +177,103 @@ test('the choice sheet shows the selected value pressed and answers with the tap
   assert.equal(await answer, undefined);
   assert.equal(sheet(), undefined);
 });
+
+test('a refused name can offer a destructive alternative that asks first, saves once, and is withdrawn when the text changes', async () => {
+  const { document, all, sheet, button } = page();
+  const submitted = [];
+  const ran = [];
+  let confirms = [];
+  let finishRun;
+  const taken = Object.assign(new Error('Home already has a routine named Back & Biceps.'), { existing: 'Back & Biceps' });
+  const answer = askTextInPage(document, 'Save this workout as a routine', {
+    label: 'Routine name', value: 'back & biceps', confirmLabel: 'Save routine',
+    submit: async (text) => { submitted.push(text); throw text.toLowerCase() === 'back & biceps' ? taken : new Error('Offline.'); },
+    errorAction: (error) => error.existing ? {
+      label: 'Replace routine', busyLabel: 'Replacing…',
+      confirm: () => new Promise((resolve) => confirms.push(resolve)),
+      run: (text) => { ran.push(text); return new Promise((resolve) => { finishRun = resolve; }); },
+    } : null,
+  });
+  const dialog = sheet();
+  const input = all(dialog).find((item) => item.tagName === 'INPUT');
+  const form = all(dialog).find((item) => item.tagName === 'FORM');
+  const status = all(dialog).find((item) => item.attributes.role === 'status');
+  const replace = all(dialog).find((item) => item.className.includes('text-sheet-alternative'));
+  assert.equal(replace.hidden, true, 'nothing to replace before a name is refused');
+
+  form.dispatch('submit');
+  await settle();
+  assert.equal(status.textContent, 'Home already has a routine named Back & Biceps.', 'the message stays');
+  assert.equal(replace.hidden, false);
+  assert.equal(replace.textContent, 'Replace routine');
+  assert.match(replace.className, /\bdanger\b/);
+
+  // Declining the confirmation saves nothing and keeps the offer.
+  replace.click();
+  replace.click();
+  await settle();
+  assert.equal(confirms.length, 1, 'a second tap while asking does nothing');
+  assert.equal(button('Save routine').disabled, true);
+  confirms[0](false);
+  await settle();
+  assert.deepEqual(ran, []);
+  assert.equal(replace.disabled, false);
+  assert.equal(button('Save routine').disabled, false);
+
+  // Editing the name withdraws the offer; typing it back differently cased does not need it.
+  input.value = 'Back & Biceps 2';
+  input.dispatch('input');
+  assert.equal(replace.hidden, true);
+  assert.equal(status.textContent, '');
+  input.value = 'BACK & BICEPS';
+  form.dispatch('submit');
+  await settle();
+  assert.equal(replace.hidden, false);
+  input.value = ' back  &  biceps ';
+  input.dispatch('input');
+  assert.equal(replace.hidden, false, 'the same name with other spacing or case keeps the offer');
+
+  // Confirmed: one run, a busy label, and Enter or more taps do nothing while it saves.
+  replace.click();
+  await settle();
+  confirms[1](true);
+  await settle();
+  assert.equal(replace.textContent, 'Replacing…');
+  assert.equal(replace.attributes['aria-busy'], 'true');
+  replace.click();
+  form.dispatch('submit');
+  await settle();
+  assert.deepEqual(ran, ['BACK & BICEPS']);
+  assert.equal(confirms.length, 2);
+  assert.deepEqual(submitted, ['back & biceps', 'BACK & BICEPS']);
+  finishRun({ id: 7, name: 'Back & Biceps', replaced: true });
+  assert.deepEqual(await answer, { id: 7, name: 'Back & Biceps', replaced: true });
+  assert.equal(sheet(), undefined);
+});
+
+test('a failed replace shows its error and offers to try again', async () => {
+  const { document, all, sheet } = page();
+  let runs = 0;
+  const answer = askTextInPage(document, 'Save', {
+    label: 'Routine name', value: 'Legs', confirmLabel: 'Save routine',
+    submit: async () => { throw Object.assign(new Error('Taken.'), { taken: true }); },
+    errorAction: (error) => error.taken ? { label: 'Replace routine', confirm: async () => true,
+      run: async () => { runs++; if (runs === 1) throw new Error('Cannot reach the server.'); return { id: 1 }; } } : null,
+  });
+  const dialog = sheet();
+  const form = all(dialog).find((item) => item.tagName === 'FORM');
+  const status = all(dialog).find((item) => item.attributes.role === 'status');
+  const replace = all(dialog).find((item) => item.className.includes('text-sheet-alternative'));
+  form.dispatch('submit');
+  await settle();
+  replace.click();
+  await settle();
+  assert.equal(status.textContent, 'Cannot reach the server.');
+  assert.equal(replace.hidden, false, 'a failed replace can be tried again');
+  assert.equal(replace.textContent, 'Replace routine');
+  assert.equal(replace.disabled, false);
+  replace.click();
+  await settle();
+  assert.deepEqual(await answer, { id: 1 });
+  assert.equal(runs, 2);
+});

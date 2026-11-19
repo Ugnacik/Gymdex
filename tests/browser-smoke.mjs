@@ -626,6 +626,37 @@ try {
   await page.locator('#close-history').click();
   await page.locator('#summary-history').click();
   await page.locator('[data-repeat-workout]').waitFor();
+  // Save as routine under a name the gym already uses offers Replace routine, asks first, and replaces in place.
+  const savedRoutine = (await read('/api/routines?gym_id=1')).routines.find(routine => routine.name === 'Saved from summary');
+  await context.request.put(`${base}/api/routines/${savedRoutine.id}`, { data: { exercises: [] } });
+  const routineCount = (await read('/api/routines?gym_id=1')).routines.length;
+  await page.locator('#history-detail [data-save-routine]').click();
+  await page.getByRole('textbox', { name: 'Routine name' }).fill('saved FROM summary');
+  await page.getByRole('button', { name: 'Save routine', exact: true }).click();
+  const textSheet = page.locator('.confirm-sheet', { has: page.getByRole('textbox', { name: 'Routine name' }) });
+  const offerReplace = textSheet.getByRole('button', { name: 'Replace routine', exact: true });
+  await offerReplace.waitFor();
+  check('A taken routine name keeps its message and offers Replace routine', (await textSheet.locator('[role=status]').innerText()) === 'Browser Test Gym already has a routine named Saved from summary.'
+    && /\bdanger\b/.test(await offerReplace.getAttribute('class')) && (await offerReplace.boundingBox()).height >= 44);
+  await screenshot('routine-replace-offer');
+  const replaceQuestion = page.locator('.confirm-sheet', { hasText: 'Replace Saved from summary?' });
+  await offerReplace.click();
+  await replaceQuestion.waitFor();
+  check('Replace routine asks first', (await replaceQuestion.innerText()).includes("Its exercises will be replaced by this workout's."));
+  await screenshot('routine-replace-confirm');
+  await replaceQuestion.getByRole('button', { name: 'Keep', exact: true }).click();
+  await replaceQuestion.waitFor({ state: 'detached' });
+  check('Keeping the routine changes nothing', (await read('/api/routines?gym_id=1')).routines.find(routine => routine.id === savedRoutine.id).exercises.length === 0
+    && await offerReplace.isVisible());
+  await offerReplace.click();
+  await replaceQuestion.getByRole('button', { name: 'Replace routine', exact: true }).click();
+  await textSheet.waitFor({ state: 'detached' });
+  const afterReplace = (await read('/api/routines?gym_id=1')).routines;
+  const replacedRoutine = afterReplace.find(routine => routine.id === savedRoutine.id);
+  check('Replace keeps the routine and its name and swaps in the workout\'s exercises', afterReplace.length === routineCount
+    && replacedRoutine.name === 'Saved from summary' && replacedRoutine.exercises.length === savedRoutine.exercises.length && savedRoutine.exercises.length > 0
+    && (await page.locator('#toast').innerText()).startsWith('Routine Saved from summary replaced with'));
+  await screenshot('routine-replace-done');
   const historyNote = await page.locator('#history-detail .exercise-entry .note-text').first().boundingBox();
   const historyHeading = await page.locator('#history-detail .history-exercise-heading').first().boundingBox();
   check('Completed workout note is above its exercise heading', historyNote.y + historyNote.height <= historyHeading.y);

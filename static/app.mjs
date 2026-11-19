@@ -113,6 +113,7 @@ async function api(path, options = {}) {
     if (!response.ok) {
       const error = new Error(body.error || "Something went wrong.");
       error.status = response.status;
+      error.body = body;
       throw error;
     }
     return body;
@@ -185,19 +186,37 @@ function renderFinishSummary() {
 }
 
 async function saveWorkoutRoutine(workout) {
-  const saved = await askText(`Save this workout as a routine at ${workout.gym_name}`, {
-    label: "Routine name", confirmLabel: "Save routine",
-    // Same title history shows for this workout (trained Muscle Groups, or the Gym).
-    value: workoutTitle(workout),
-    submit: (name) => api(`/api/history/${workout.id}/routine`, { method: "POST", body: JSON.stringify({ name }) }),
-  });
+  // One sheet at a time, however often Save as routine is tapped.
+  if (state.savingRoutine) return;
+  state.savingRoutine = true;
+  let saved = null;
+  try {
+    saved = await askText(`Save this workout as a routine at ${workout.gym_name}`, {
+      label: "Routine name", confirmLabel: "Save routine",
+      // Same title history shows for this workout (trained Muscle Groups, or the Gym).
+      value: workoutTitle(workout),
+      submit: (name) => api(`/api/history/${workout.id}/routine`, { method: "POST", body: JSON.stringify({ name }) }),
+      // A name the Gym already uses can replace that Routine in place, after asking.
+      errorAction: (error) => {
+        const existing = error.body?.existing_routine;
+        if (!existing) return null;
+        return {
+          label: "Replace routine", busyLabel: "Replacing…",
+          confirm: () => ask(`Replace ${existing.name}? Its exercises will be replaced by this workout's.`,
+            { confirmLabel: "Replace routine", cancelLabel: "Keep", danger: true }),
+          run: (name) => api(`/api/history/${workout.id}/routine`, {
+            method: "POST", body: JSON.stringify({ name, replace: true }) }),
+        };
+      },
+    });
+  } finally { state.savingRoutine = false; }
   if (!saved) return;
   state.data.routines = [...(state.data.routines ?? []).filter(item => item.id !== saved.id),
     { id: saved.id, gym_id: saved.gym_id, name: saved.name, exercise_count: saved.exercises.length }]
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
   if (!state.data.active_workout) renderStart();
   const skippedNote = saved.skipped ? ` ${saved.skipped} archived exercise${saved.skipped === 1 ? "" : "s"} skipped.` : "";
-  showToast(`Routine ${saved.name} saved with ${saved.exercises.length} exercise${saved.exercises.length === 1 ? "" : "s"}.${skippedNote}`);
+  showToast(`Routine ${saved.name} ${saved.replaced ? "replaced" : "saved"} with ${saved.exercises.length} exercise${saved.exercises.length === 1 ? "" : "s"}.${skippedNote}`);
 }
 
 async function saveRoutineChoice(configuration) {

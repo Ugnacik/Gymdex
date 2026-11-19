@@ -200,6 +200,72 @@ class RoutineTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'Home is archived'):
             db.save_workout_as_routine(self.connection, workout['id'], 'Later')
 
+    def test_saving_under_a_taken_name_says_which_routine_has_it(self):
+        workout, _, _ = self.completed_workout()
+        taken = db.create_routine(self.connection, self.home['id'], 'Back & Biceps')
+        with self.assertRaises(db.RoutineNameTaken) as caught:
+            db.save_workout_as_routine(self.connection, workout['id'], 'back & BICEPS')
+        self.assertEqual(str(caught.exception), 'Home already has a routine named Back & Biceps.')
+        self.assertEqual(caught.exception.routine, {'id': taken['id'], 'name': 'Back & Biceps'})
+        status, body = self.request('POST', f"/api/history/{workout['id']}/routine", {'name': 'back & biceps'})
+        self.assertEqual((status, body), (409, {'error': 'Home already has a routine named Back & Biceps.',
+                                                'existing_routine': {'id': taken['id'], 'name': 'Back & Biceps'}}))
+
+    def test_replacing_a_routine_keeps_its_id_name_and_place_and_swaps_its_exercises(self):
+        workout, _, _ = self.completed_workout()
+        db.create_routine(self.connection, self.home['id'], 'Arms')
+        old = db.create_routine(self.connection, self.home['id'], 'Back & Biceps', [
+            {'profile_id': self.profile_id('', self.plank), 'set_count': 5}])
+        db.create_routine(self.connection, self.home['id'], 'Legs')
+        db.create_routine(self.connection, self.other['id'], 'Back & Biceps')
+        # A workout started from the old routine keeps what it had.
+        started = db.start_routine(self.connection, old['id'])
+        db.complete_workout(self.connection, started['id'])
+        before = db.completed_workout(self.connection, started['id'])['workout_exercises']
+        status, replaced = self.request('POST', f"/api/history/{workout['id']}/routine",
+                                        {'name': 'back & biceps', 'replace': True})
+        self.assertEqual(status, 200)
+        self.assertTrue(replaced['replaced'])
+        self.assertEqual((replaced['id'], replaced['name'], replaced['skipped']), (old['id'], 'Back & Biceps', 0))
+        self.assertEqual(self.summary(replaced), [('Bench Press', 'Rack 1', 2), ('Plank', '', 1)])
+        routines = db.routines_for_gym(self.connection, self.home['id'])['routines']
+        self.assertEqual([(item['id'], item['name']) for item in routines][1], (old['id'], 'Back & Biceps'))
+        self.assertEqual([item['name'] for item in routines], ['Arms', 'Back & Biceps', 'Legs'])
+        elsewhere = db.routines_for_gym(self.connection, self.other['id'])['routines']
+        self.assertEqual([len(item['exercises']) for item in elsewhere], [0])
+        self.assertEqual(db.completed_workout(self.connection, started['id'])['workout_exercises'], before)
+        # Replacing again gives the same routine, not a second one.
+        again = db.save_workout_as_routine(self.connection, workout['id'], 'Back & Biceps', replace=True)
+        self.assertEqual((again['id'], self.summary(again)), (old['id'], self.summary(replaced)))
+        self.assertEqual(len(db.routines_for_gym(self.connection, self.home['id'])['routines']), 3)
+
+    def test_replace_without_a_routine_of_that_name_creates_one_and_only_true_replaces(self):
+        workout, _, _ = self.completed_workout()
+        created = db.save_workout_as_routine(self.connection, workout['id'], 'Fresh', replace=True)
+        self.assertFalse(created['replaced'])
+        self.assertEqual(created['name'], 'Fresh')
+        status, _ = self.request('POST', f"/api/history/{workout['id']}/routine", {'name': 'fresh', 'replace': 'yes'})
+        self.assertEqual(status, 409)
+
+    def test_a_replace_that_fails_midway_leaves_the_routine_as_it_was(self):
+        workout, _, _ = self.completed_workout()
+        old = db.create_routine(self.connection, self.home['id'], 'Monday', [
+            {'profile_id': self.profile_id('', self.plank), 'set_count': 5}])
+        original = db._replace_routine_exercises
+
+        def fail_after_delete(connection, routine_id, exercises):
+            connection.execute('DELETE FROM routine_exercises WHERE routine_id = ?', (routine_id,))
+            raise sqlite3.OperationalError('disk I/O error')
+
+        db._replace_routine_exercises = fail_after_delete
+        try:
+            with self.assertRaises(sqlite3.OperationalError):
+                db.save_workout_as_routine(self.connection, workout['id'], 'Monday', replace=True)
+        finally:
+            db._replace_routine_exercises = original
+        kept = db.routines_for_gym(self.connection, self.home['id'])['routines']
+        self.assertEqual([(item['id'], self.summary(item)) for item in kept], [(old['id'], [('Plank', '', 5)])])
+
     def test_updating_a_routine_renames_it_and_replaces_its_exercises_and_set_counts(self):
         self.completed_workout()
         routine = db.create_routine(self.connection, self.home['id'], 'Push')

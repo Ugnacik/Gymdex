@@ -905,16 +905,31 @@ def clean_routine_name(name: object) -> str:
     return clean_name
 
 
-def _require_free_routine_name(connection: sqlite3.Connection, gym_id: int, name: str,
-                               routine_id: int | None = None) -> None:
-    """Routine names are unique within a Gym ignoring case; a routine may keep its own name."""
-    taken = connection.execute(
-        """SELECT r.name, g.name AS gym_name FROM routines r JOIN gyms g ON g.id = r.gym_id
+class RoutineNameTaken(RuntimeError):
+    """A Routine name already used at the Gym; routine names the Routine that has it."""
+
+    def __init__(self, message: str, routine: dict[str, Any]):
+        super().__init__(message)
+        self.routine = routine
+
+
+def _routine_named(connection: sqlite3.Connection, gym_id: int, name: str,
+                   routine_id: int | None = None) -> sqlite3.Row | None:
+    """The Gym's Routine with this name ignoring case (the column is COLLATE NOCASE), if any."""
+    return connection.execute(
+        """SELECT r.id, r.name, g.name AS gym_name FROM routines r JOIN gyms g ON g.id = r.gym_id
            WHERE r.gym_id = ? AND r.name = ? AND r.id IS NOT ?""",
         (gym_id, name, routine_id),
     ).fetchone()
+
+
+def _require_free_routine_name(connection: sqlite3.Connection, gym_id: int, name: str,
+                               routine_id: int | None = None) -> None:
+    """Routine names are unique within a Gym ignoring case; a routine may keep its own name."""
+    taken = _routine_named(connection, gym_id, name, routine_id)
     if taken:
-        raise RuntimeError(f"{taken['gym_name']} already has a routine named {taken['name']}.")
+        raise RoutineNameTaken(f"{taken['gym_name']} already has a routine named {taken['name']}.",
+                               {"id": taken["id"], "name": taken["name"]})
 
 
 def _routine_rows(connection: sqlite3.Connection, gym_id: int,
@@ -1024,11 +1039,14 @@ def create_routine(connection: sqlite3.Connection, gym_id: int, name: object,
 
 
 def save_workout_as_routine(connection: sqlite3.Connection, workout_id: int,
-                            name: object) -> dict[str, Any]:
+                            name: object, replace: bool = False) -> dict[str, Any]:
     """Save a Completed Workout's Exercise Configurations as a Routine at its Gym.
 
     Each gets its number of completed sets, at least 1 and at most ROUTINE_MAX_SETS.
     Archived Configurations and Variations are skipped and counted, as in Repeat.
+    With replace, a Routine at the Gym already named so (ignoring case) keeps its id and
+    name and gets the workout's exercises instead of its own, in one transaction; without
+    one, the Routine is created as usual. "replaced" says which happened.
     """
     clean_name = clean_routine_name(name)
     _require_completed_id(workout_id)
@@ -1044,7 +1062,9 @@ def save_workout_as_routine(connection: sqlite3.Connection, workout_id: int,
             raise LookupError("Completed workout not found.")
         if source["archived_at"]:
             raise RuntimeError(f"{source['gym_name']} is archived. Restore it in Manage to save routines there.")
-        _require_free_routine_name(connection, source["gym_id"], clean_name)
+        existing = _routine_named(connection, source["gym_id"], clean_name) if replace else None
+        if not existing:
+            _require_free_routine_name(connection, source["gym_id"], clean_name)
         # Workout Exercises recorded before configurations were remembered have none to save.
         entries = connection.execute(
             """SELECT we.gym_profile_id,
@@ -1059,11 +1079,12 @@ def save_workout_as_routine(connection: sqlite3.Connection, workout_id: int,
         ).fetchall()
         kept = [(entry["gym_profile_id"], min(max(entry["completed_sets"], 1), ROUTINE_MAX_SETS))
                 for entry in entries if not entry["archived"]]
-        routine_id = connection.execute(
+        routine_id = existing["id"] if existing else connection.execute(
             "INSERT INTO routines(gym_id, name) VALUES (?, ?)", (source["gym_id"], clean_name),
         ).lastrowid
         _replace_routine_exercises(connection, routine_id, kept)
-        return {**_describe_routine(connection, routine_id), "skipped": len(entries) - len(kept)}
+        return {**_describe_routine(connection, routine_id), "skipped": len(entries) - len(kept),
+                "replaced": bool(existing)}
 
 
 def update_routine(connection: sqlite3.Connection, routine_id: int, payload: dict) -> dict[str, Any]:

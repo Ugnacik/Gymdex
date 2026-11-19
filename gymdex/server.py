@@ -198,8 +198,10 @@ class GymdexHandler(BaseHTTPRequestHandler):
             )
         if len(parts) == 4 and parts[:2] == ["api", "history"] and parts[3] == "routine":
             return self._with_db(
-                lambda connection: db.save_workout_as_routine(connection, int(parts[2]), payload.get("name")),
-                status=HTTPStatus.CREATED,
+                lambda connection: db.save_workout_as_routine(
+                    connection, int(parts[2]), payload.get("name"), replace=payload.get("replace") is True,
+                ),
+                status=HTTPStatus.OK if payload.get("replace") is True else HTTPStatus.CREATED,
             )
         kind = manage_kind(parts, 5)
         if kind and parts[4] == "restore":
@@ -345,6 +347,9 @@ class GymdexHandler(BaseHTTPRequestHandler):
         except OverflowError:
             # An id beyond SQLite's 64-bit INTEGER range cannot name any row.
             return self._json_error("Item not found.", HTTPStatus.NOT_FOUND)
+        except db.RoutineNameTaken as error:
+            # The client can offer to replace the Routine that has the name.
+            return self._json({"error": str(error), "existing_routine": error.routine}, HTTPStatus.CONFLICT)
         except RuntimeError as error:
             return self._json_error(str(error), HTTPStatus.CONFLICT)
         except sqlite3.IntegrityError:

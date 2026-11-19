@@ -79,7 +79,19 @@ workout is active, but not for a workout at an archived gym. Name the routine
 in the sheet that opens; it suggests the gym and date. Each exercise gets as
 many sets as it had completed sets, at least 1 and at most 20. Exercises whose
 configuration or custom variation is archived are left out, and the message
-says how many.
+says how many. The **Workout complete** summary offers the same Save as routine.
+
+If the gym already has a routine with that name (ignoring capitalization), the
+sheet says so and offers **Replace routine** beside the message. It asks
+"Replace <name>? Its exercises will be replaced by this workout's." first; **Keep**
+changes nothing. Replacing updates that routine in place in one step on the
+server: it keeps its id, name and place in the list and gets this workout's
+exercises and set counts instead of its own. Past workouts are not affected.
+While it saves the button says "Replacing…" and further taps do nothing; if it
+fails the routine stays as it was and Replace routine can be tried again.
+Changing the name withdraws the offer. The API takes `"replace": true` on
+`POST /api/history/<id>/routine`; without it a taken name is refused with 409
+and the existing routine's id and name.
 
 ## Routines
 
@@ -165,7 +177,7 @@ another try. Each add also carries a request id, and the server answers a
 repeated id with the exercise the first request added (it remembers the last
 256 in memory), so a retried request never adds a second copy. **Start workout**
 says "Starting…" and **Create custom exercise** says "Creating…" the same way;
-Add set, Repeat, Start routine, Save as routine, and adding to a Routine already
+Add set, Repeat, Start routine, Save as routine (and Replace routine), and adding to a Routine already
 ignore taps while they save.
 
 ## Custom exercises

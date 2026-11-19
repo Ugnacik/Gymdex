@@ -274,6 +274,48 @@ test('Save as routine on the finish summary defaults to the trained Muscle Group
   }
 });
 
+test('Save as routine offers to replace the routine that has the name, asks first, and replaces it in place', async () => {
+  const app = await harness();
+  const posts = [];
+  app.env.fetch = async (path, options) => {
+    if (path === '/api/sets/2') return response({ id: 2, position: 1, ...JSON.parse(options.body) });
+    if (path === '/api/workouts/1/complete') return response({ ok: true });
+    if (path === '/api/history/1') return response({ workout: { id: 1, gym_id: 1, gym_name: 'Home', muscle_groups: ['Back', 'Biceps'] }, workout_exercises: [] });
+    if (path === '/api/history/1/routine') {
+      const body = JSON.parse(options.body);
+      posts.push(body);
+      if (!body.replace) return response({ error: 'Home already has a routine named Back & Biceps.', existing_routine: { id: 7, name: 'Back & Biceps' } }, 409);
+      return response({ id: 7, gym_id: 1, name: 'Back & Biceps', exercises: [{}, {}, {}], skipped: 0, replaced: true });
+    }
+    throw new Error('Refresh unavailable');
+  };
+  app.nodes['#summary-routine'] = node();
+  app.form.elements.weight.value = '130';
+  app.form.elements.result.value = '6';
+  app.form.elements.completed.checked = true;
+  app.form.events.input();
+  await app.nodes['#finish'].events.click();
+  const questions = [];
+  app.env.ask = async (question, options) => { questions.push([question, options]); return true; };
+  let opened = 0;
+  app.env.askText = async (question, { value, submit, errorAction }) => {
+    opened++;
+    const refused = await submit(value).catch((error) => error);
+    assert.equal(refused.message, 'Home already has a routine named Back & Biceps.');
+    assert.equal(errorAction(new Error('Cannot reach the server.')), null, 'other errors offer nothing');
+    const offer = errorAction(refused);
+    assert.equal(offer.label, 'Replace routine');
+    assert.equal(await offer.confirm(), true);
+    return offer.run(value);
+  };
+  await Promise.all([app.nodes['#summary-routine'].events.click(), app.nodes['#summary-routine'].events.click()]);
+  assert.equal(opened, 1, 'a second tap does not open a second sheet');
+  assert.deepEqual(questions, [["Replace Back & Biceps? Its exercises will be replaced by this workout's.",
+    { confirmLabel: 'Replace routine', cancelLabel: 'Keep', danger: true }]]);
+  assert.deepEqual(posts, [{ name: 'Back & Biceps' }, { name: 'Back & Biceps', replace: true }]);
+  assert.equal(app.nodes['#toast'].textContent, 'Routine Back & Biceps replaced with 3 exercises.');
+});
+
 test('a stalled HTTP save times out without disabling entry or discarding its draft', async () => {
   const app = await harness();
   app.form.elements.result.value = '8';
