@@ -1,4 +1,6 @@
 import { parseWeight, setPayload } from "./drafts.mjs";
+import { Outbox, tempId } from "./outbox.mjs";
+import { copiedSetValues, renameId, workoutOps } from "./workout-ops.mjs";
 
 export const NOTE_MAX_LENGTH = 1000;
 
@@ -15,8 +17,13 @@ function validValues(values) {
 // model rendered by the caller; acknowledged mutations update it and its snapshot.
 // Sets and Notes are drafted, autosaved and retried alike: set ids and note targets
 // ("workout" or "exercise:<id>") name them. Save failures return false and are exposed
-// by status() and noteStatus(). Terminal request failures throw, leaving the workout
-// editable. onChange is a synchronous rendering callback.
+// by status() and noteStatus(). onChange is a synchronous rendering callback.
+//
+// Offline first: structural changes (add or remove an exercise or set, reorder, replace,
+// change machine, finish) change data at once and go to the outbox (outbox.mjs), which sends
+// them in order in the background. Set and note drafts wait while the outbox still has
+// changes to send, so the server always sees a set created before its values, and a set
+// added offline is saved once it has its server id (see remap). Cancel still needs the server.
 export class WorkoutEditor {
   // Keyed by set id (a number) or noteKey(target) (a string).
   #items = new Map();
@@ -27,9 +34,10 @@ export class WorkoutEditor {
   #schedule;
   #clear;
   #online;
+  #outbox;
 
   constructor({ data, drafts, request, onChange = () => {},
-    schedule = setTimeout, clear = clearTimeout, online = () => true }) {
+    schedule = setTimeout, clear = clearTimeout, online = () => true, outbox = null }) {
     this.data = data;
     this.#drafts = drafts;
     this.#request = request;
@@ -37,6 +45,9 @@ export class WorkoutEditor {
     this.#schedule = schedule;
     this.#clear = clear;
     this.#online = online;
+    // Without a shared outbox (tests), one that lives as long as this editor.
+    this.#outbox = outbox ?? new Outbox({ request, kinds: workoutOps, schedule, clear, online, onIdle: () => this.retry() });
+    if (!outbox) this.#outbox.context = { data: () => this.data, remap: (type, from, to) => this.remap(type, from, to) };
     for (const entry of data.workout_exercises) {
       for (const set of entry.sets) this.#register(set.id);
     }
@@ -47,6 +58,16 @@ export class WorkoutEditor {
 
   get busy() { return this.#busy; }
   get pending() { return [...this.#items.values()].some((item) => item.draft || item.pending); }
+  get outbox() { return this.#outbox; }
+
+  // A draft can go to the server once what it belongs to exists there and no earlier
+  // structural change is still queued in front of it.
+  #ready(key) {
+    if (this.#outbox.runnable) return false;
+    if (typeof key === "number") return this.#outbox.known(key);
+    const target = key.slice("note:".length);
+    return target === "workout" || this.#outbox.known(Number(target.slice("exercise:".length)));
+  }
 
   // How a key's draft is restored, validated, sent and applied, or null when the
   // key does not belong to the active workout.
@@ -58,7 +79,7 @@ export class WorkoutEditor {
       return entry ? {
         restore: () => this.#drafts.get(workout.id, key),
         valid: validValues,
-        path: `/api/sets/${key}`,
+        path: `/api/sets/${this.#outbox.resolve(key)}`,
         body: setPayload,
         apply: (saved) => { entry.sets = entry.sets.map((item) => item.id === key ? saved : item); },
         savedMessage: (saved) => saved.completed ? "Completed · synced" : "Saved to server",
@@ -70,7 +91,7 @@ export class WorkoutEditor {
     return owner ? {
       restore: () => this.#drafts.getNote(workout.id, key),
       valid: (draft) => draft.note.length <= NOTE_MAX_LENGTH,
-      path: owner === workout ? `/api/workouts/${workout.id}/note` : `/api/workout-exercises/${owner.id}/note`,
+      path: owner === workout ? `/api/workouts/${workout.id}/note` : `/api/workout-exercises/${this.#outbox.resolve(owner.id)}/note`,
       body: (draft) => ({ note: draft.note }),
       apply: (saved) => { owner.note = saved.note; },
       current: () => owner.note ?? "",
@@ -90,8 +111,15 @@ export class WorkoutEditor {
     return this.#items.get(key);
   }
 
+  // Ids a stale screen still shows (a temporary id the server has since replaced) are followed.
+  #id(id) { return this.#outbox.resolve(Number(id)); }
+  #target(target) {
+    const [kind, id] = String(target).split(":");
+    return id === undefined ? kind : `${kind}:${this.#id(id)}`;
+  }
+
   status(id) {
-    const set = this.#register(Number(id));
+    const set = this.#register(this.#id(id));
     if (!set) return null;
     return { values: set.draft ? { ...set.draft } : null, dirty: Boolean(set.draft),
       saving: Boolean(set.pending), removing: set.removing, blocked: set.blocked,
@@ -101,7 +129,7 @@ export class WorkoutEditor {
   // target is "workout" or "exercise:<Workout Exercise id>". note is the waiting
   // draft when there is one, otherwise the saved Note.
   noteStatus(target) {
-    const key = noteKey(target);
+    const key = noteKey(this.#target(target));
     const item = this.#register(key);
     if (!item) return null;
     return { note: item.draft ? item.draft.note : this.#describe(key).current(),
@@ -110,11 +138,11 @@ export class WorkoutEditor {
   }
 
   edit(id, values, { valid = true } = {}) {
-    return this.#edit(Number(id), values, valid);
+    return this.#edit(this.#id(id), values, valid);
   }
 
   editNote(target, note) {
-    return this.#edit(noteKey(target), { note: String(note) }, true);
+    return this.#edit(noteKey(this.#target(target)), { note: String(note) }, true);
   }
 
   #edit(key, values, valid) {
@@ -143,12 +171,12 @@ export class WorkoutEditor {
 
   async save(id, { automatic = false } = {}) {
     if (this.#busy || !this.data.active_workout) return false;
-    return this.#save(Number(id), automatic);
+    return this.#save(this.#id(id), automatic);
   }
 
   async saveNote(target) {
     if (this.#busy || !this.data.active_workout) return false;
-    return this.#save(noteKey(target));
+    return this.#save(noteKey(this.#target(target)));
   }
 
   async #save(key, automatic = false) {
@@ -165,7 +193,7 @@ export class WorkoutEditor {
       this.#onChange();
       return false;
     }
-    if (!this.#online()) return false;
+    if (!this.#online() || !this.#ready(key)) return false;
     const draft = item.draft;
     const workoutId = this.data.active_workout.id;
     item.message = "Saving to server…";
@@ -227,57 +255,128 @@ export class WorkoutEditor {
     return true;
   }
 
-  // Structural changes run exclusively, like finish: automatic saves pause and
-  // drafts are saved first. Request failures throw and leave the workout editable.
-  async #exclusive(action) {
-    if (this.#busy || !this.data.active_workout) return false;
-    this.#busy = true;
-    for (const item of this.#items.values()) this.#clear(item.timer);
+  // A set as the phone shows it: its draft's values once they are valid, else the saved ones.
+  localSet(set) {
+    const item = this.#items.get(set.id);
+    if (!item?.draft || !item.valid || !validValues(item.draft)) return set;
+    return { ...set, ...setPayload(item.draft) };
+  }
+
+  // Applies a structural change here at once and queues it for the server.
+  #change(op) {
+    if (this.#busy || !this.data.active_workout) return null;
+    const queued = { ...op, workoutId: this.data.active_workout.id };
+    workoutOps[queued.kind].apply(this.data, queued, this.#outbox);
+    this.#drafts.snapshot(this.data);
+    this.#outbox.enqueue(queued);
     this.#onChange();
-    try { return await action(); }
-    finally {
-      this.#busy = false;
-      this.#onChange();
-    }
+    return queued;
+  }
+
+  // entry: what the phone shows until the server answers (exercise_name, variation_name,
+  // variation_id, equipment, manufacturer, label, tracking_type, assisted); body: the request.
+  addExercise(entry, body, { requestId } = {}) {
+    const entryId = tempId();
+    const setIds = [tempId()];
+    const op = this.#change({ kind: "addExercise", entry, body, entryId, setIds, creates: [entryId, ...setIds], uses: [],
+      ...(requestId ? { request_id: requestId } : {}) });
+    if (!op) return null;
+    for (const id of setIds) this.#register(id);
+    this.#register(noteKey(`exercise:${entryId}`));
+    return this.data.workout_exercises.find((item) => item.id === entryId);
+  }
+
+  // Adds a set that copies the set above as the phone shows it, like the server's Add set.
+  addSet(entryId) {
+    entryId = this.#id(entryId);
+    const entry = this.data.workout_exercises.find((item) => item.id === entryId);
+    if (!entry) return null;
+    const above = entry.sets.at(-1);
+    const setId = tempId();
+    const values = copiedSetValues(above && this.localSet(above));
+    if (!this.#change({ kind: "addSet", entryId, setId, values, creates: [setId], uses: [entryId] })) return null;
+    this.#register(setId);
+    return entry.sets.find((item) => item.id === setId);
+  }
+
+  async remove(id) {
+    id = this.#id(id);
+    if (this.#busy || !this.data.active_workout) return false;
+    const set = this.#register(id);
+    if (!set || set.removing) return false;
+    this.#clear(set.timer);
+    this.#drafts.remove(this.data.active_workout.id, id);
+    this.#items.delete(id);
+    return Boolean(this.#change({ kind: "removeSet", setId: id, uses: [id] }));
   }
 
   async removeExercise(entryId, confirm = () => true) {
-    entryId = Number(entryId);
+    entryId = this.#id(entryId);
     const entry = this.data.workout_exercises.find((item) => item.id === entryId);
-    // Ask before pausing autosave so declining leaves every pending save queued.
     if (this.#busy || !this.data.active_workout || !entry || !await confirm()) return false;
-    return this.#exclusive(async () => {
-      // The removed exercise's set and note drafts are discarded, so they are neither saved nor retried.
-      const removed = new Set([...entry.sets.map((set) => set.id), noteKey(`exercise:${entryId}`)]);
-      if (!await this.#flush(removed)) return false;
-      const workoutId = this.data.active_workout.id;
-      await this.#request(`/api/workout-exercises/${entryId}`, { method: "DELETE" });
-      this.data.workout_exercises = this.data.workout_exercises.filter((item) => item.id !== entryId);
-      this.data.workout_exercises.forEach((item, index) => { item.position = index + 1; });
-      for (const key of removed) {
-        this.#drafts.remove(workoutId, key);
-        this.#items.delete(key);
-      }
-      this.#drafts.snapshot(this.data);
-      return true;
-    });
+    if (!this.data.active_workout) return false;
+    // The removed exercise's set and note drafts are discarded, so they are neither saved nor retried.
+    for (const key of [...entry.sets.map((set) => set.id), noteKey(`exercise:${entryId}`)]) {
+      this.#clear(this.#items.get(key)?.timer);
+      this.#drafts.remove(this.data.active_workout.id, key);
+      this.#items.delete(key);
+    }
+    return Boolean(this.#change({ kind: "removeExercise", entryId, uses: [entryId] }));
   }
 
   async moveExercise(entryId, position) {
-    entryId = Number(entryId);
+    entryId = this.#id(entryId);
     if (!this.data.workout_exercises.some((item) => item.id === entryId)) return false;
-    return this.#exclusive(async () => {
-      if (!await this.#flush()) return false;
-      const moved = await this.#request(`/api/workout-exercises/${entryId}`, {
-        method: "PUT", body: JSON.stringify({ position }),
-      });
-      const positions = new Map(moved.workout_exercises.map((item) => [item.id, item.position]));
-      for (const item of this.data.workout_exercises) item.position = positions.get(item.id) ?? item.position;
-      this.data.workout_exercises.sort((a, b) => a.position - b.position);
-      this.#drafts.snapshot(this.data);
-      return true;
-    });
+    return Boolean(this.#change({ kind: "moveExercise", entryId, position, uses: [entryId] }));
   }
+
+  // entry as for addExercise. A different Tracking Type or Assisted clears the sets' values,
+  // so their drafts go too, like on the server.
+  replaceExercise(entryId, entry, body) {
+    entryId = this.#id(entryId);
+    const current = this.data.workout_exercises.find((item) => item.id === entryId);
+    if (!current) return false;
+    if (current.tracking_type !== entry.tracking_type || Boolean(current.assisted) !== Boolean(entry.assisted)) {
+      for (const set of current.sets) {
+        this.#clear(this.#items.get(set.id)?.timer);
+        this.#drafts.remove(this.data.active_workout.id, set.id);
+        this.#items.delete(set.id);
+      }
+    }
+    return Boolean(this.#change({ kind: "replaceExercise", entryId, entry, body, uses: [entryId] }));
+  }
+
+  changeMachine(entryId, body) {
+    entryId = this.#id(entryId);
+    return Boolean(this.#change({ kind: "changeMachine", entryId, body, uses: [entryId] }));
+  }
+
+  // A temporary id became the server's: data, waiting drafts and their statuses follow it.
+  remap(type, from, to) {
+    renameId(this.data, type, from, to);
+    const workoutId = this.data.active_workout?.id;
+    const keys = type === "set" ? [[from, to]] : [[noteKey(`exercise:${from}`), noteKey(`exercise:${to}`)]];
+    for (const [old, key] of keys) {
+      const item = this.#items.get(old);
+      if (item) {
+        this.#items.delete(old);
+        this.#items.set(key, item);
+      }
+      if (workoutId === undefined) continue;
+      const draft = typeof old === "number" ? this.#drafts.get(workoutId, old) : this.#drafts.getNote(workoutId, old);
+      if (draft) {
+        const { revision, ...values } = draft;
+        const moved = this.#drafts.put(workoutId, key, values);
+        if (item?.draft) item.draft = moved;
+        this.#drafts.remove(workoutId, old);
+      }
+    }
+    if (workoutId !== undefined) this.#drafts.snapshot(this.data);
+    this.#onChange();
+  }
+
+  // Whether a set has an unsaved draft (Last workout's Sides then do not overwrite it).
+  edited(id) { return Boolean(this.#items.get(id)?.draft); }
 
   async finish(confirm = () => true) { return this.#end(false, confirm); }
   async cancel(confirm = () => true) { return this.#end(true, confirm); }
@@ -288,16 +387,37 @@ export class WorkoutEditor {
     for (const item of this.#items.values()) this.#clear(item.timer);
     this.#onChange();
     try {
-      if (cancel) {
-        if (!await confirm()) return false;
-        await this.#settle();
-      } else {
-        if (!await this.#flush() || !await confirm()) return false;
+      if (!cancel) {
+        // Drafts go to the server after the workout is finished here, so they must be valid now.
+        for (const [key, item] of this.#items) {
+          if (!item.draft || (item.valid && this.#describe(key)?.valid(item.draft))) continue;
+          item.message = "Check the values before saving to the server.";
+          item.error = true;
+          return false;
+        }
       }
+      if (!await confirm()) return false;
+      await this.#settle();
       const workoutId = this.data.active_workout.id;
-      await this.#request(`/api/workouts/${workoutId}${cancel ? "" : "/complete"}`,
-        cancel ? { method: "DELETE" } : { method: "POST", body: "{}" });
-      // The acknowledged terminal state must survive any subsequent refresh failure.
+      if (cancel) {
+        await this.#request(`/api/workouts/${workoutId}`, { method: "DELETE" });
+        this.#outbox.dropWorkout(workoutId);
+      } else {
+        // Waiting drafts become queued saves in front of Finish, so they reach the server first.
+        for (const [key, item] of this.#items) {
+          if (!item.draft) continue;
+          const spec = this.#describe(key);
+          if (!spec) continue;
+          if (typeof key === "number") this.#outbox.enqueue({ kind: "saveSet", workoutId, setId: key, body: spec.body(item.draft), uses: [key] });
+          else {
+            const target = key.slice("note:".length);
+            this.#outbox.enqueue({ kind: "saveNote", workoutId, target, note: item.draft.note,
+              uses: target === "workout" ? [] : [Number(target.slice("exercise:".length))] });
+          }
+        }
+        this.#outbox.enqueue({ kind: "finish", workoutId });
+      }
+      // The terminal state is kept on this phone even when a refresh fails.
       this.data.active_workout = null;
       this.data.workout_exercises = [];
       this.#drafts.snapshot(this.data);
@@ -308,40 +428,5 @@ export class WorkoutEditor {
       this.#busy = false;
       this.#onChange();
     }
-  }
-
-  async remove(id) {
-    id = Number(id);
-    if (this.#busy || !this.data.active_workout) return false;
-    const set = this.#register(id);
-    if (!set || set.removing) return false;
-    set.removing = true;
-    this.#clear(set.timer);
-    const removal = (async () => {
-      await set.pending;
-      try {
-        const removed = await this.#request(`/api/sets/${id}`, { method: "DELETE" });
-        const entry = this.data.workout_exercises.find((entry) => entry.sets.some((item) => item.id === id));
-        // The server renumbers the remaining sets 1..n; drafts stay keyed by set id.
-        const positions = new Map((removed?.sets ?? []).map((item) => [item.id, item.position]));
-        entry.sets = entry.sets.filter((item) => item.id !== id)
-          .map((item) => ({ ...item, position: positions.get(item.id) ?? item.position }));
-        this.#drafts.remove(this.data.active_workout.id, id);
-        this.#drafts.snapshot(this.data);
-        this.#items.delete(id);
-        return true;
-      } catch (error) {
-        set.message = error.message;
-        set.error = true;
-        return false;
-      } finally {
-        set.removing = false;
-        set.removal = null;
-        this.#onChange();
-      }
-    })();
-    set.removal = removal;
-    this.#onChange();
-    return removal;
   }
 }

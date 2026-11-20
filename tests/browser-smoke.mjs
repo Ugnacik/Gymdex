@@ -496,7 +496,7 @@ try {
   check('Add note in the ⋯ sheet opens the note with focus', await page.evaluate(() => document.activeElement?.dataset.noteTarget === 'exercise:1'));
   await page.locator('[data-note-target="exercise:1"]').fill('Seat setting 3. Keep shoulders down through the whole set.');
   await page.locator('[data-note-target="exercise:1"]').blur();
-  await page.waitForFunction(() => document.querySelector('#sync-status')?.textContent.includes('All changes saved'));
+  await page.waitForFunction(() => document.querySelector('#sync-status')?.textContent.trim() === 'Synced');
   await page.locator('.workout-exercise-card > .note summary').first().click();
   for (const width of [320, 360, 390]) {
     await page.setViewportSize({ width, height: 844 });
@@ -548,14 +548,24 @@ try {
     && workoutAfterOrder[1].note === workoutBeforeOrder[0].note);
   await page.locator('#reorder-list').getByRole('button', { name: 'Move Bench Press up', exact: true }).click();
   await page.locator('#reorder-status').filter({ hasText: 'Bench Press moved to position 1' }).waitFor();
-  await page.route('**/api/workout-exercises/1', route => route.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"Test move rejected"}' }));
-  await page.locator('#reorder-list').getByRole('button', { name: 'Move Bench Press down', exact: true }).click();
-  await page.locator('#reorder-status').filter({ hasText: 'Order unchanged. Test move rejected' }).waitFor();
-  check('Failed Active Workout reorder keeps the saved order visible', await page.locator('#reorder-list .reorder-name strong').first().innerText() === 'Bench Press'
-    && (await read('/api/bootstrap')).workout_exercises[0].id === workoutBeforeOrder[0].id);
-  await page.unroute('**/api/workout-exercises/1');
   await screenshot('workout-reorder-mobile');
+  // A refused move stays on the phone with Retry and Discard; Discard asks, then shows the server's order.
+  await page.route('**/api/workout-exercises/1', route => route.request().method() === 'PUT'
+    ? route.fulfill({ status: 409, contentType: 'application/json', body: '{"error":"Test move rejected."}' }) : route.continue());
+  await page.locator('#reorder-list').getByRole('button', { name: 'Move Bench Press down', exact: true }).click();
+  await page.locator('#reorder-status').filter({ hasText: 'Bench Press moved to position 2' }).waitFor();
   await page.locator('#close-reorder').click();
+  await page.locator('#sync-status[data-sync="error"]').waitFor();
+  check('A refused move is shown with Retry and Discard, not dropped', (await page.locator('#sync-status').innerText()).includes('Not synced: reordering exercises was refused. Test move rejected.')
+    && await page.locator('[data-sync-retry]').isVisible() && await page.locator('[data-sync-discard]').isVisible());
+  check('The server keeps its order while the move is refused', (await read('/api/bootstrap')).workout_exercises[0].id === workoutBeforeOrder[0].id);
+  await page.evaluate(() => scrollTo(0, 0));
+  await screenshot('sync-refused');
+  await page.locator('[data-sync-discard]').click();
+  await page.locator('.confirm-sheet', { hasText: 'Discard reordering exercises?' }).getByRole('button', { name: 'Discard change' }).click();
+  await page.locator('#sync-status[data-sync="synced"]').waitFor();
+  check('Discard asks, then shows the server order again', await page.locator('.exercise-summary h3').first().innerText() === 'Bench Press');
+  await page.unroute('**/api/workout-exercises/1');
   check('Name hold leaves the Workout exercise expanded', await page.locator('.workout-exercise').first().evaluate(card => card.open));
   await page.locator('[data-exercise-more]').first().click();
   await page.locator('#picker').getByRole('button', { name: 'Reorder exercises', exact: true }).click();
@@ -565,8 +575,11 @@ try {
   await page.getByRole('button', { name: 'Machine', exact: true }).click();
   await page.locator('#configuration-form button[type=submit]').click();
   await page.waitForFunction(() => document.querySelector('.exercise-body .meta')?.textContent.startsWith('Machine'));
-  check('Machine change preserves sets and visible trigger focus', (await read('/api/bootstrap')).workout_exercises[0].sets[0].weight === 42.5
-    && await page.evaluate(() => document.activeElement.matches('[data-change-machine]') && document.activeElement.getClientRects().length > 0));
+  check('Machine change shows at once and keeps the trigger focused', await page.evaluate(() => document.activeElement.matches('[data-change-machine]') && document.activeElement.getClientRects().length > 0));
+  check('Machine change syncs and preserves sets', await eventually(async () => (await read('/api/bootstrap')).workout_exercises[0].equipment === 'Machine')
+    && (await read('/api/bootstrap')).workout_exercises[0].sets[0].weight === 42.5);
+  await page.waitForFunction(() => document.querySelector('#sync-status')?.textContent.trim() === 'Synced');
+  check('Machine change still keeps the trigger focused after it syncs', await page.evaluate(() => document.activeElement.matches('[data-change-machine]') && document.activeElement.getClientRects().length > 0));
   await page.locator('.workout-exercise-card > .note summary').first().click();
   await context.setOffline(true);
   await set.locator('[name=weight]').fill('45.5');
@@ -582,7 +595,7 @@ try {
   check('Offline note draft is visible above the restored exercise', await page.locator('[data-note-target="exercise:1"]').isVisible()
     && await page.locator('[data-note-target="exercise:1"]').inputValue() === 'Offline seat setting');
   await context.setOffline(false);
-  await page.waitForFunction(() => document.querySelector('#sync-status')?.textContent.includes('All changes saved'));
+  await page.waitForFunction(() => document.querySelector('#sync-status')?.textContent.trim() === 'Synced');
   check('Offline draft syncs', (await read('/api/bootstrap')).workout_exercises[0].sets[0].weight === 45.5);
   check('Offline Effort syncs', await eventually(async () => await setEffortOf(0) === '1'));
   await page.locator('#open-picker').click();
@@ -931,6 +944,8 @@ try {
   await page.locator('#picker').waitFor({ state: 'detached' });
   const longCard = cardOf('Long Custom Duration');
   await longCard.waitFor();
+  // The add shows at once; let its sync settle so the layout holds still for the taps below.
+  await page.waitForFunction(() => document.querySelector('#sync-status')?.textContent.trim() === 'Synced');
   const header = await longCard.evaluate(card => {
     const summary = card.querySelector('.exercise-summary');
     const box = summary.getBoundingClientRect();
@@ -954,7 +969,14 @@ try {
   });
   await page.touchscreen.tap(toggled.x, toggled.y);
   check('Tapping the chevron collapses the exercise', await longCard.locator('.workout-exercise').evaluate(details => !details.open));
-  await page.touchscreen.tap(toggled.x, toggled.y);
+  await longCard.scrollIntoViewIfNeeded();
+  const reopen = await longCard.evaluate(card => {
+    const summary = card.querySelector('.exercise-summary');
+    const box = summary.getBoundingClientRect();
+    return { x: box.right - 22, y: box.top + parseFloat(getComputedStyle(summary).paddingTop) + 22 };
+  });
+  await page.touchscreen.tap(reopen.x, reopen.y);
+  check('Tapping the chevron again expands it', await longCard.locator('.workout-exercise').evaluate(details => details.open));
 
   // Add exercise on a slow connection: rapid repeated taps on a Recent choice add it exactly once.
   const addedCount = async () => (await read('/api/bootstrap')).workout_exercises.length;
@@ -971,14 +993,22 @@ try {
   const recentChoice = page.locator('#picker .recent-card').first();
   await recentChoice.waitFor();
   const choiceBox = await recentChoice.boundingBox();
+  const cardsBefore = await page.locator('.workout-exercise-card').count();
+  const setsBefore = await page.locator('.set-form').count();
   for (let tap = 0; tap < 7; tap++) await page.touchscreen.tap(choiceBox.x + choiceBox.width / 2, choiceBox.y + choiceBox.height / 2);
-  check('An Add exercise in flight shows Adding… and disables the choice', await recentChoice.isDisabled()
-    && (await recentChoice.innerText()).includes('Adding…') && await recentChoice.getAttribute('aria-busy') === 'true');
-  await screenshot('add-exercise-adding');
   await page.locator('#picker').waitFor({ state: 'detached' });
+  check('On a slow connection the added exercise shows at once, saved on the phone', await page.locator('.workout-exercise-card').count() === cardsBefore + 1
+    && (await page.locator('#sync-status').innerText()).startsWith('Saved on phone, syncing'));
+  check('The rest of a rapid tap burst does not land on the workout underneath', await confirmSheet.count() === 0
+    && await page.locator('.set-form').count() === setsBefore + 1);
+  await page.evaluate(() => scrollTo(0, 0));
+  await screenshot('sync-saved-on-phone-syncing');
+  await page.waitForFunction(() => document.querySelector('#sync-status')?.textContent.trim() === 'Synced', null, { timeout: 10000 });
+  await screenshot('sync-synced');
   await page.unroute('**/api/workouts/*/exercises', slowAdd);
   check('Seven rapid taps on a slow connection add the exercise once', addRequests === 1
-    && await eventually(async () => await addedCount() === countBeforeTaps + 1));
+    && await eventually(async () => await addedCount() === countBeforeTaps + 1)
+    && await page.locator('.workout-exercise-card').count() === cardsBefore + 1);
 
   // Swipe-to-remove with touch input: a confirmed removal keeps focus inside the Reorder sheet.
   const exerciseCount = async () => (await read('/api/bootstrap')).workout_exercises.length;
@@ -1048,7 +1078,7 @@ try {
   await recordSet.locator('[name=completed]').check();
   await recordBadge.waitFor();
   await recordSet.locator('[name=weight]').fill('1');
-  check('Editing the set hides its record mark until it is saved', await recordBadge.isHidden());
+  check('Editing the set below the earlier best removes its record mark', await recordBadge.isHidden());
   await recordSet.locator('[name=weight]').fill('200');
   await page.locator('[data-finish-workout]').first().click();
   await confirmSheet.getByRole('button', { name: 'Finish', exact: true }).click();
@@ -1063,6 +1093,100 @@ try {
   const recordHistory = await read(`/api/history/${recordWorkout.id}`);
   check('The server computes the same records', recordHistory.workout.record_count === recordHistory.workout_exercises[0].records.length
     && recordHistory.workout_exercises[0].records.some(record => record.type === 'weight' && record.value === 200));
+
+  // Offline-first logging: log offline, reload offline mid-queue, then sync over a slow network
+  // that loses one answer, and finish offline. Nothing is lost or added twice.
+  const offlineWorkout = await post('/api/workouts', { gym_id: 1 });
+  await post(`/api/workouts/${offlineWorkout.id}/exercises`, { variation_id: benchEntry.variation_id, equipment: benchEntry.equipment,
+    manufacturer: benchEntry.manufacturer ?? '', label: benchEntry.label ?? '' });
+  await page.reload();
+  await page.locator('.set-form').first().waitFor();
+  // Opening Add exercise once online keeps its list on the phone for offline adds.
+  await page.locator('#open-picker').click();
+  await page.locator('#picker .recent-card').first().waitFor();
+  await page.locator('#close-picker').click();
+  await page.locator('#picker').waitFor({ state: 'detached' });
+  const serverWorkout = async () => (await read('/api/bootstrap')).workout_exercises;
+  await context.setOffline(true);
+  await page.locator('[data-add-set]').first().click();
+  const offlineSet = page.locator('.workout-exercise-card').first().locator('.set-form').nth(1);
+  await offlineSet.locator('[name=weight]').fill('50');
+  await offlineSet.locator('[name=result]').fill('5');
+  await offlineSet.locator('[name=completed]').check();
+  await page.locator('#open-picker').click();
+  const offlineChoice = page.locator('#picker .recent-card').first();
+  await offlineChoice.waitFor();
+  const offlineName = (await offlineChoice.locator('strong').innerText()).trim();
+  await offlineChoice.click();
+  await page.locator('#picker').waitFor({ state: 'detached' });
+  const offlineCard = page.locator('.workout-exercise-card').nth(1);
+  await offlineCard.locator('[name=weight]').first().fill('20');
+  await offlineCard.locator('[name=result]').first().fill('10');
+  await offlineCard.locator('[name=completed]').first().check();
+  await page.locator('#sync-status[data-sync="offline"]').waitFor();
+  check('Offline logging says it is saved on the phone', (await page.locator('#sync-status').innerText()).startsWith('Offline. Saved on phone; syncs when you are back online.'));
+  check('Nothing reached the server while offline', (await serverWorkout()).length === 1 && (await serverWorkout())[0].sets.length === 1);
+  await page.evaluate(() => scrollTo(0, 0));
+  await screenshot('sync-offline-saved-on-phone');
+  const queued = await page.evaluate(() => JSON.parse(localStorage.getItem('gymdex:outbox:v1')).ops.map(op => op.kind));
+  check('The outbox holds the offline changes in order', queued[0] === 'addSet' && queued.includes('addExercise'));
+  await page.reload();
+  await page.locator('.set-form').first().waitFor();
+  check('An offline reload mid-queue shows every logged set', await page.locator('.workout-exercise-card').count() === 2
+    && await page.locator('.workout-exercise-card').first().locator('.set-form').nth(1).locator('[name=weight]').inputValue() === '50'
+    && await page.locator('.workout-exercise-card').nth(1).locator('[name=result]').first().inputValue() === '10'
+    && await page.locator('.workout-exercise-card').nth(1).locator('[name=completed]').first().isChecked());
+  check('After an offline reload the Add exercise list still opens from the phone', await (async () => {
+    await page.locator('#open-picker').click();
+    const ok = await page.locator('#picker .recent-card').first().isVisible().catch(() => false) || await page.locator('#picker .recent-card').first().waitFor().then(() => true, () => false);
+    await page.locator('#close-picker').click();
+    await page.locator('#picker').waitFor({ state: 'detached' });
+    return ok;
+  })());
+  // Back online over a slow network whose first Add set answer is lost after the server saved it.
+  let lostAnswer = false;
+  const slowNetwork = async route => {
+    await new Promise(resolve => setTimeout(resolve, 600));
+    if (!lostAnswer && route.request().method() === 'POST' && /\/api\/workout-exercises\/\d+\/sets$/.test(route.request().url())) {
+      lostAnswer = true;
+      await route.fetch();
+      return route.abort('failed');
+    }
+    return route.continue();
+  };
+  await page.route('**/api/**', slowNetwork);
+  await context.setOffline(false);
+  // No "online" event follows an offline reload here, so this also covers the outbox looking again on its own.
+  await page.locator('#sync-status[data-sync="pending"]').waitFor({ timeout: 20000 });
+  check('Back online it says it is syncing', (await page.locator('#sync-status').innerText()).startsWith('Saved on phone, syncing'));
+  await page.waitForFunction(() => document.querySelector('#sync-status')?.textContent.trim() === 'Synced', null, { timeout: 30000 });
+  const synced = await serverWorkout();
+  check('A lost answer is retried without adding the set twice', lostAnswer && synced[0].sets.length === 2);
+  check('Offline sets reach the server with their values', synced[0].sets[1].weight === 50 && synced[0].sets[1].result === 5 && synced[0].sets[1].completed === 1);
+  check('The exercise added offline reaches the server once, with its set', synced.length === 2
+    && (offlineName.includes(synced[1].exercise_name) || offlineName.includes(synced[1].variation_name))
+    && synced[1].sets[0].weight === 20 && synced[1].sets[0].result === 10 && synced[1].sets[0].completed === 1);
+  check('The phone now shows the server ids', await page.locator(`[data-exercise-more="${synced[1].id}"]`).count() === 1
+    && await page.locator('.set-form[data-set-id^="-"]').count() === 0);
+  // Reload while an Add set is still on its way over the slow network: it is sent once.
+  await page.locator('[data-add-set]').first().click();
+  await page.waitForTimeout(150);
+  await page.reload();
+  await page.locator('.set-form').first().waitFor();
+  await page.waitForFunction(() => document.querySelector('#sync-status')?.textContent.trim() === 'Synced', null, { timeout: 30000 });
+  check('A reload with a change in flight sends it once', (await serverWorkout())[0].sets.length === 3
+    && await page.locator('.workout-exercise-card').first().locator('.set-form').count() === 3);
+  await page.unroute('**/api/**', slowNetwork);
+  // Finishing offline queues the finish behind everything else.
+  await context.setOffline(true);
+  await page.locator('[data-finish-workout]').first().click();
+  await confirmSheet.getByRole('button', { name: 'Finish', exact: true }).click();
+  await page.locator('#toast', { hasText: 'Workout finished on this phone' }).waitFor();
+  check('An offline finish is kept on the phone', (await read('/api/bootstrap')).active_workout?.id === offlineWorkout.id
+    && await page.evaluate(() => JSON.parse(localStorage.getItem('gymdex:outbox:v1')).ops.some(op => op.kind === 'finish')));
+  await context.setOffline(false);
+  check('The offline finish syncs once back online', await eventually(async () => (await read('/api/bootstrap')).active_workout === null)
+    && (await read(`/api/history/${offlineWorkout.id}`)).workout.completed_at);
   check('No unexpected JavaScript exceptions', errors.length === 0);
   await writeFile(join(artifacts, 'results.json'), JSON.stringify({ checks, errors, port }, null, 2));
   console.log(`${checks.length} browser checks passed. Artifacts: ${artifacts}`);

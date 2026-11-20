@@ -7,6 +7,8 @@ import { ExerciseSearch } from "./exercise-search.mjs";
 import { openRoutines, renderRoutineStarts } from "./routines.mjs";
 import { bindReorderNameHold, openExerciseReorder } from "./exercise-reorder.mjs";
 import { findRecords, recordName, recordText } from "./records.mjs";
+import { Outbox } from "./outbox.mjs";
+import { renameId, workoutOps } from "./workout-ops.mjs";
 
 // The server stores times as SQLite CURRENT_TIMESTAMP values in UTC ("YYYY-MM-DD HH:MM:SS").
 // Gymdex shows them in the device's time zone.
@@ -50,6 +52,18 @@ export function createApp({ window, document, navigator, fetch, setTimeout, clea
   choose = (question, options) => chooseInPage(document, question, options) }) {
 
 const drafts = new DraftStore(() => window.localStorage);
+// Structural Active Workout changes, saved on the phone and sent in order (see outbox.mjs).
+const outbox = new Outbox({
+  storage: () => window.localStorage, request: (path, options) => api(path, options), kinds: workoutOps,
+  schedule: setTimeout, clear: clearTimeout, online: () => navigator.onLine,
+  onChange: () => updateSyncStatus(), onIdle: () => retryPendingSets(),
+});
+outbox.context = {
+  data: () => state.data,
+  remap: (type, from, to) => remapId(type, from, to),
+  edited: (id) => Boolean(state.editor?.edited(id)),
+  changed: () => { if (state.data) drafts.snapshot(state.data); scheduleWorkoutRender(); },
+};
 const app = document.querySelector("#app");
 const toast = document.querySelector("#toast");
 const savedRest = readRestSettings();
@@ -100,9 +114,9 @@ function saveRestSettings() {
   } catch { showToast("Rest timer settings could not be saved on this phone."); }
 }
 
-async function api(path, options = {}) {
+async function api(path, { timeout: limit = 8000, ...options } = {}) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
+  const timeout = setTimeout(() => controller.abort(), limit);
   try {
     const response = await fetch(path, {
       headers: { "Content-Type": "application/json" },
@@ -130,22 +144,37 @@ async function api(path, options = {}) {
   }
 }
 
+// One quiet line under the header: "Synced", "Saved on phone, syncing…", offline, or a refused
+// change with Retry and Discard. Nothing logged on the phone is dropped without asking.
 function updateSyncStatus() {
   const status = document.querySelector("#sync-status");
   if (!status) return;
-  const count = document.querySelectorAll('.set-form[data-dirty="true"]').length;
+  const sets = document.querySelectorAll('.set-form[data-dirty="true"]').length;
   const notes = noteTargets().filter((target) => state.editor?.noteStatus(target)?.dirty).length;
-  const waiting = [count && `${count} set${count === 1 ? "" : "s"}`, notes && `${notes} note${notes === 1 ? "" : "s"}`].filter(Boolean);
+  const waiting = outbox.size > 0 || sets > 0 || notes > 0;
   const unavailable = state.unavailable || !navigator.onLine;
-  status.textContent = drafts.error
-    ? "Phone storage is unavailable. Keep this page open until your changes are saved to the server."
-    : unavailable
-      ? "Server unavailable. Set and note edits are kept on this phone and will retry automatically. Adding items and finishing require a connection."
-      : waiting.length
-        ? `${waiting.join(" and ")} waiting to save. Drafts are kept on this phone.`
-        : "All changes saved to server.";
-  if (!state.offlineReady && unavailable) status.textContent += " Offline reopening is not available yet; keep this page open.";
-  status.classList.toggle("error", drafts.error);
+  const failed = outbox.failed;
+  let text;
+  let kind = "synced";
+  if (drafts.error || outbox.storageFailed) {
+    text = "Phone storage is unavailable. Keep this page open until your changes are saved to the server.";
+    kind = "error";
+  } else if (failed) {
+    text = `Not synced: ${workoutOps[failed.kind]?.describe?.(failed) ?? "a change"} was refused. ${failed.error}`;
+    kind = "error";
+  } else if (waiting) {
+    text = unavailable ? "Offline. Saved on phone; syncs when you are back online." : "Saved on phone, syncing…";
+    kind = unavailable ? "offline" : "pending";
+  } else {
+    text = unavailable ? "Offline. Everything so far is synced." : "Synced";
+    kind = unavailable ? "offline" : "synced";
+  }
+  if (!state.offlineReady && unavailable) text += " Offline reopening is not available yet; keep this page open.";
+  status.setAttribute("data-sync", kind);
+  status.classList.toggle("error", kind === "error");
+  if (failed && kind === "error") {
+    status.innerHTML = `<span>${escapeHtml(text)}</span><span class="sync-actions"><button type="button" class="text-button" data-sync-retry>Retry</button><button type="button" class="text-button" data-sync-discard="${escapeHtml(failed.id)}">Discard change</button></span>`;
+  } else status.textContent = text;
 }
 
 function escapeHtml(value) {
@@ -175,9 +204,14 @@ function showToast(message) {
   showToast.timer = setTimeout(() => { toast.hidden = true; }, 3200);
 }
 
-// New bests of an Active Workout exercise from its saved sets (drafts count once saved).
+// An Active Workout exercise's sets as the phone shows them, with valid drafts applied.
+function localSets(entry) {
+  return state.editor ? entry.sets.map((set) => state.editor.localSet(set)) : entry.sets;
+}
+
+// New bests of an Active Workout exercise from its sets as logged on the phone.
 function liveRecords(entry) {
-  return findRecords(entry.record_bests, entry.sets, entry.tracking_type);
+  return findRecords(entry.record_bests, localSets(entry), entry.tracking_type);
 }
 
 // "New best · Weight, Est. 1RM", the set's record types in a pill like Strong's PR marker.
@@ -185,8 +219,8 @@ function recordBadgeText(records) {
   return `New best · ${records.map(recordName).join(", ")}`;
 }
 
-// Marks each Active Workout set that is a new best, and unmarks it while it is being edited
-// (an unsaved draft) or once it is no longer the best or no longer completed.
+// Marks each Active Workout set that is a new best as logged on the phone, and unmarks it once
+// an edit makes it no longer the best or it is no longer completed.
 function syncRecordBadges() {
   const found = new Map();
   for (const entry of state.data?.workout_exercises ?? []) {
@@ -195,7 +229,7 @@ function syncRecordBadges() {
   document.querySelectorAll(".set-form").forEach((form) => {
     const badge = form.querySelector("[data-set-record]");
     if (!badge) return;
-    const records = state.editor?.status(form.dataset.setId)?.dirty ? null : found.get(Number(form.dataset.setId));
+    const records = found.get(formSetId(form));
     badge.hidden = !records;
     badge.textContent = records ? recordBadgeText(records) : "";
     if (records) badge.setAttribute("aria-label", `New best: ${records.map(recordText).join(", ")}`);
@@ -288,7 +322,15 @@ async function saveRoutineChoice(configuration) {
 
 async function load() {
   try {
-    state.data = await api("/api/bootstrap");
+    // Changes still queued on this phone are applied on top of the server's copy. A change
+    // acknowledged while bootstrap was loading may or may not be in it, so load again.
+    let data;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const completed = outbox.completed;
+      data = await api("/api/bootstrap");
+      if (outbox.completed === completed) break;
+    }
+    state.data = outbox.replay(data);
     drafts.snapshot(state.data);
     // A gym archived or deleted in Manage can no longer be selected.
     if (!state.data.gyms.some((gym) => gym.id === state.selectedGymId)) state.selectedGymId = null;
@@ -297,6 +339,7 @@ async function load() {
     }
     resetEditor();
     render();
+    outbox.kick();
     retryPendingSets();
     return true;
   } catch (error) {
@@ -391,7 +434,7 @@ async function createGym(event) {
 
 async function startWorkout(event) {
   const button = event?.currentTarget ?? document.querySelector("#start-workout");
-  if (state.startingWorkout) return;
+  if (state.startingWorkout || startBlocked()) return;
   state.startingWorkout = true;
   if (button) { button.disabled = true; button.textContent = "Starting…"; }
   try {
@@ -419,6 +462,7 @@ async function showStartedWorkout({ skipped = 0, ...started }, notice) {
 }
 
 async function startRoutine(button) {
+  if (startBlocked()) return;
   button.disabled = true;
   try {
     const started = await api(`/api/routines/${Number(button.dataset.startRoutine)}/start`, { method: "POST", body: "{}" });
@@ -600,7 +644,7 @@ function trackingHint(entry) {
 
 // The ⋯ sheet holds what a Workout Exercise needs now and then, so the card keeps to the sets.
 function openExerciseMenu(entryId) {
-  const entry = state.data.workout_exercises.find((item) => item.id === entryId);
+  const entry = state.data.workout_exercises.find((item) => item.id === outbox.resolve(entryId));
   if (!entry || !state.editor || state.editor.busy || document.querySelector("#picker")) return;
   const name = escapeHtml(exerciseDisplayName(entry));
   const count = state.data.workout_exercises.length;
@@ -972,6 +1016,7 @@ function openHistory(initialWorkoutId = null) {
     const target = event.target;
     const repeat = target.closest("[data-repeat-workout]");
     if (repeat) {
+      if (startBlocked()) return;
       repeat.disabled = true;
       try {
         const repeated = await api(`/api/history/${repeat.dataset.repeatWorkout}/repeat`, { method: "POST", body: "{}" });
@@ -1661,9 +1706,92 @@ function openManage() {
 
 function resetEditor() {
   state.editor = state.data.active_workout ? new WorkoutEditor({
-    data: state.data, drafts, request: api, onChange: syncEditorView,
+    data: state.data, drafts, request: api, onChange: syncEditorView, outbox,
     schedule: setTimeout, clear: clearTimeout, online: () => navigator.onLine,
   }) : null;
+}
+
+// A temporary id became the server's (see outbox.mjs).
+function remapId(type, from, to) {
+  if (state.editor && state.data?.active_workout) state.editor.remap(type, from, to);
+  else if (state.data) { renameId(state.data, type, from, to); drafts.snapshot(state.data); }
+  if (type === "set" && copiedSets.delete(from)) copiedSets.add(to);
+  if (type === "entry" && state.collapsedExercises.delete(from)) state.collapsedExercises.add(to);
+  scheduleWorkoutRender();
+}
+
+// Synced ids and the server's Last workout show without disturbing what is being typed:
+// one re-render after the answers settle, keeping focus and the caret in the same field.
+function scheduleWorkoutRender() {
+  if (state.workoutRenderTimer) return;
+  state.workoutRenderTimer = setTimeout(() => {
+    state.workoutRenderTimer = null;
+    if (!state.data?.active_workout) return;
+    const active = document.activeElement;
+    const form = active?.closest?.(".set-form");
+    const note = active?.dataset?.noteTarget;
+    // Exercise buttons (Edit machine, Add set, ⋯) keep focus too, following a temporary id to the server's.
+    const button = ["data-change-machine", "data-add-set", "data-exercise-more"].find((name) => active?.hasAttribute?.(name));
+    const memo = { setId: form && formSetId(form), name: active?.name, note, button, entry: button && Number(active.getAttribute(button)),
+      start: active?.selectionStart, end: active?.selectionEnd };
+    render();
+    let target = null;
+    if (memo.setId) target = document.querySelector(`.set-form[data-set-id="${outbox.resolve(memo.setId)}"]`)?.elements?.[memo.name];
+    else if (memo.note) {
+      const [kind, id] = memo.note.split(":");
+      target = document.querySelector(`[data-note-target="${id ? `${kind}:${outbox.resolve(Number(id))}` : kind}"]`);
+    } else if (memo.button) target = document.querySelector(`[${memo.button}="${outbox.resolve(memo.entry)}"]`);
+    if (!target) return;
+    target.focus?.({ preventScroll: true });
+    try { if (typeof memo.start === "number") target.setSelectionRange?.(memo.start, memo.end); } catch { /* Not a text field. */ }
+  }, 0);
+}
+
+// A new workout waits until the last one's queued changes have reached the server.
+function startBlocked() {
+  if (!outbox.size) return false;
+  outbox.kick();
+  showToast("Your last workout is still syncing from this phone. Connect to the internet and wait for Synced, then start a new one.");
+  return true;
+}
+
+// Each Gym's catalog is kept on the phone, so Add exercise, Replace and machine changes work offline.
+const catalogKey = (gymId) => `gymdex:catalog:v1:${gymId}`;
+async function loadCatalog(gymId) {
+  let cached = null;
+  try { cached = JSON.parse(window.localStorage.getItem(catalogKey(gymId))); } catch { cached = null; }
+  if (cached && (state.unavailable || !navigator.onLine)) return cached;
+  try {
+    // With a copy on the phone, a slow gym connection gets three seconds before the copy is used.
+    const fresh = await api(`/api/catalog?gym_id=${gymId}`, cached ? { timeout: 3000 } : {});
+    try { window.localStorage.setItem(catalogKey(gymId), JSON.stringify(fresh)); } catch { /* Kept for this page only. */ }
+    return fresh;
+  } catch (error) {
+    if (cached && !error.status) return cached;
+    if (!error.status) throw new Error("The exercise list needs a connection the first time. Try again when you are online.");
+    throw error;
+  }
+}
+
+// What a picked choice shows in the workout until the server answers: its Variation from the
+// catalog, and the saved Exercise Configuration for a Recent or saved choice.
+function pickedEntry(choice) {
+  const picker = state.picker ?? {};
+  const profile = choice.profile_id
+    ? [...(picker.saved ?? []), ...(picker.recent ?? [])].find((item) => item.profile_id === choice.profile_id) : null;
+  const variationId = profile?.variation_id ?? choice.variation_id;
+  const variation = (picker.catalog ?? []).find((item) => item.id === variationId);
+  if (!variation && !profile) return null;
+  return {
+    variation_id: variationId,
+    exercise_name: variation?.exercise_name ?? profile.exercise_name,
+    variation_name: variation?.variation_name ?? profile.variation_name,
+    equipment: profile?.equipment ?? choice.equipment,
+    manufacturer: (profile?.manufacturer ?? choice.manufacturer ?? "").trim(),
+    label: (profile?.label ?? choice.label ?? "").trim(),
+    tracking_type: variation?.tracking_type ?? "repetitions",
+    assisted: Boolean(variation?.assisted),
+  };
 }
 
 function syncEditorView() {
@@ -1680,8 +1808,8 @@ function syncEditorView() {
     if (status.message) setStatus(form, status.message, status.error, isSettled(status));
     form.querySelector(".set-retry").hidden = !status.blocked || status.saving;
     const saved = state.data.workout_exercises.flatMap((entry) => entry.sets)
-      .find((set) => set.id === Number(form.dataset.setId));
-    if (saved && !status.dirty) form.classList.toggle("is-complete", Boolean(saved.completed));
+      .find((set) => set.id === formSetId(form));
+    if (saved) form.classList.toggle("is-complete", Boolean(state.editor.localSet(saved).completed));
   });
   syncRecordBadges();
   document.querySelectorAll("[data-note-target]").forEach((field) => {
@@ -1698,8 +1826,8 @@ function syncEditorView() {
     if (preview) preview.textContent = status.note;
   });
   document.querySelectorAll("[data-exercise-count]").forEach((label) => {
-    const entry = state.data.workout_exercises.find(item => item.id === Number(label.dataset.exerciseCount));
-    if (entry) label.textContent = `${entry.sets.filter(set => set.completed).length}/${entry.sets.length} done`;
+    const entry = state.data.workout_exercises.find(item => item.id === outbox.resolve(Number(label.dataset.exerciseCount)));
+    if (entry) label.textContent = `${localSets(entry).filter(set => set.completed).length}/${entry.sets.length} done`;
   });
   updateSyncStatus();
 }
@@ -1729,8 +1857,8 @@ async function endWorkout(cancel) {
     if (confirmed && !cancel) summary = {
       workout: { ...state.data.active_workout },
       duration: formatElapsed(elapsedMinutes(state.data.active_workout)),
-      sets: state.data.workout_exercises.reduce((count, entry) => count + entry.sets.filter(set => set.completed).length, 0),
-      exercises: state.data.workout_exercises.filter(entry => entry.sets.some(set => set.completed)).length,
+      sets: state.data.workout_exercises.reduce((count, entry) => count + localSets(entry).filter(set => set.completed).length, 0),
+      exercises: state.data.workout_exercises.filter(entry => localSets(entry).some(set => set.completed)).length,
       records: state.data.workout_exercises.flatMap((entry) => liveRecords(entry).map((record) => ({ ...record, exercise: exerciseDisplayName(entry) }))),
     };
     return confirmed;
@@ -1751,7 +1879,8 @@ async function endWorkout(cancel) {
       document.querySelector("#finish-summary-title")?.focus({ preventScroll: true });
       window.scrollTo({ top: 0, left: 0, behavior: "instant" });
     }
-    showToast(cancel ? "Workout canceled." : "Workout finished.");
+    showToast(cancel ? "Workout canceled."
+      : outbox.size && (state.unavailable || !navigator.onLine) ? "Workout finished on this phone. It syncs when you are back online." : "Workout finished.");
   } catch (error) { showToast(error.message); }
 }
 
@@ -1760,8 +1889,7 @@ async function openPicker() {
   if (state.openingPicker) return;
   state.openingPicker = true;
   try {
-    if (!await saveAllSets()) return;
-    state.picker = await api(`/api/catalog?gym_id=${state.data.active_workout.gym_id}`);
+    state.picker = await loadCatalog(state.data.active_workout.gym_id);
     newPickerSession();
     state.pickerReplace = null;
     state.selectedExercise = null;
@@ -2053,7 +2181,8 @@ function closePicker(focus = "#open-picker") {
 }
 
 async function addRecent(profileId, button = null) {
-  if (state.addingExercise) return;
+  // A tap that lands after the sheet already closed (a replace or add that was instant) does nothing.
+  if (state.addingExercise || !document.querySelector("#picker")) return;
   const profile = (state.picker.saved ?? state.picker.recent).find(item => item.profile_id === profileId);
   if (!profile) {
     showToast("That saved exercise is no longer available. Choose it from the catalog instead.");
@@ -2067,7 +2196,7 @@ async function addRecent(profileId, button = null) {
     return saveReplacedExercise({
       variation_id: profile.variation_id, equipment: profile.equipment,
       manufacturer: profile.manufacturer, label: profile.label,
-    });
+    }, button);
   }
   await addWorkoutExercise({ profile_id: profileId }, button, "Exercise added.");
 }
@@ -2078,33 +2207,26 @@ function newPickerSession() {
   state.pickerSession = globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
-// Adding an exercise is single-flight: the tapped control says "Adding…" at once, and every
-// picker control stays disabled (and further taps or Enter do nothing) until the server answers.
-// The picker closes on success; an error restores the controls for another try.
+// Adding an exercise is instant and offline first: it shows in the workout at once and the
+// server hears about it from the outbox. One picker opening adds at most one exercise, so taps
+// queued on a slow phone cannot add copies (the 7 Hammer Curls).
 async function addWorkoutExercise(choice, control, doneMessage) {
-  if (state.addingExercise || !state.data.active_workout) return;
-  state.addingExercise = true;
+  if (state.addingExercise || !state.data.active_workout || !state.editor) return;
   if (!state.pickerSession) newPickerSession();
-  const picker = document.querySelector("#picker");
-  const controls = [...(picker?.querySelectorAll("button, input") ?? [])].filter((item) => !item.disabled);
-  controls.forEach((item) => { item.disabled = true; });
-  const label = control?.querySelector?.("span") ?? control;
-  const before = label?.textContent;
-  if (label) label.textContent = "Adding…";
-  control?.setAttribute("aria-busy", "true");
-  picker?.setAttribute("aria-busy", "true");
+  if (state.pickerAdded === state.pickerSession) return;
+  state.addingExercise = true;
   try {
-    await api(`/api/workouts/${state.data.active_workout.id}/exercises`, {
-      method: "POST", body: JSON.stringify({ ...choice, request_id: `${state.pickerSession}:${JSON.stringify(choice)}` }),
-    });
+    const entry = pickedEntry(choice);
+    if (!entry) throw new Error("This exercise is not in the list on this phone. Reopen Add exercise when you are online.");
+    const added = state.editor.addExercise(entry, choice, { requestId: `${state.pickerSession}:${JSON.stringify(choice)}` });
+    if (!added) return;
+    state.pickerAdded = state.pickerSession;
+    swallowTaps(control);
     closePicker();
-    await load();
+    render();
+    document.querySelector(`[data-exercise-more="${added.id}"]`)?.closest?.(".workout-exercise-card")?.scrollIntoView?.({ block: "center" });
     showToast(doneMessage);
   } catch (error) {
-    controls.forEach((item) => { if (item.isConnected !== false) item.disabled = false; });
-    if (label) label.textContent = before;
-    control?.removeAttribute("aria-busy");
-    picker?.removeAttribute("aria-busy");
     showToast(error.message);
   } finally { state.addingExercise = false; }
 }
@@ -2162,11 +2284,10 @@ function renderConfiguration(change = null) {
 // Replace an Active Workout's Workout Exercise with another Variation while keeping its note
 // and set slots. Finished workouts are refused by the server.
 async function replaceExercise(entryId) {
-  const entry = state.data.workout_exercises.find((item) => item.id === entryId);
+  const entry = state.data.workout_exercises.find((item) => item.id === outbox.resolve(entryId));
   if (!entry || !state.editor || state.editor.busy || state.pickerContext) return;
-  if (!await saveAllSets("Cannot replace this exercise yet")) return;
   try {
-    state.picker = await api(`/api/catalog?gym_id=${state.data.active_workout.gym_id}`);
+    state.picker = await loadCatalog(state.data.active_workout.gym_id);
   } catch (error) { showToast(error.message); return; }
   state.pickerReplace = { entry, focus: `[data-exercise-more="${entry.id}"]` };
   state.selectedExercise = null;
@@ -2178,15 +2299,15 @@ async function replaceExercise(entryId) {
 
 // One replace at a time: every choice in the sheet stays disabled until it settles. A choice that
 // would clear logged values asks first, because the cleared sets cannot be brought back.
-async function saveReplacedExercise(choice) {
+async function saveReplacedExercise(choice, control = null) {
   const replacing = state.pickerReplace;
   if (!replacing || replacing.saving || !state.data.active_workout) return;
-  const entry = state.data.workout_exercises.find((item) => item.id === replacing.entry.id) ?? replacing.entry;
+  const entry = state.data.workout_exercises.find((item) => item.id === outbox.resolve(replacing.entry.id)) ?? replacing.entry;
   replacing.saving = true;
   let buttons = [];
   let replaced = false;
   try {
-    const logged = entry.sets.filter((set) => set.weight !== null || set.result !== null || set.effort).length;
+    const logged = localSets(entry).filter((set) => set.weight !== null || set.result !== null || set.effort).length;
     const variation = state.picker?.catalog?.find((item) => item.id === choice.variation_id);
     // Without the Variation in the catalog it cannot be told apart, so ask as if it clears.
     const clears = !variation || variation.tracking_type !== entry.tracking_type
@@ -2199,21 +2320,16 @@ async function saveReplacedExercise(choice) {
     // Disabled only now, so declining the question returns focus to the tapped choice.
     buttons = [...document.querySelectorAll("#picker button")];
     buttons.forEach((button) => { button.disabled = true; });
-    const saved = await api(
-      `/api/workouts/${state.data.active_workout.id}/exercises/${entry.id}/replace`,
-      { method: "PUT", body: JSON.stringify(choice) },
-    );
+    const replacement = pickedEntry(choice);
+    if (!replacement || !state.editor.replaceExercise(entry.id, replacement, choice)) throw new Error("This exercise cannot be replaced right now.");
     replaced = true;
-    applyReplacement(entry, saved);
     const focus = replacing.focus;
+    swallowTaps(control);
     closePicker(focus);
-    // The replacement is already applied here, so a failed refresh only leaves Last workout out of date.
-    const refreshed = await load();
+    render();
     document.querySelector(focus)?.focus();
-    const name = exerciseDisplayName(saved);
-    showToast(!refreshed
-      ? `Replaced with ${name}, but the workout could not be refreshed. Reopen Gymdex when you are back online to see Last workout.`
-      : saved.cleared ? `Replaced with ${name}. Cleared set values that no longer match.` : `Replaced with ${name}.`);
+    const name = exerciseDisplayName(replacement);
+    showToast(clears && logged ? `Replaced with ${name}. Cleared set values that no longer match.` : `Replaced with ${name}.`);
   } catch (error) {
     showToast(error.message);
   } finally {
@@ -2222,26 +2338,13 @@ async function saveReplacedExercise(choice) {
   }
 }
 
-// Mirrors the server's replace in the loaded workout, so the screen is right even when the
-// refresh after it fails. Last time's sets belonged to the old exercise, so they are dropped.
-function applyReplacement(entry, saved) {
-  Object.assign(entry, {
-    variation_id: saved.variation_id, exercise_name: saved.exercise_name, variation_name: saved.variation_name,
-    equipment: saved.equipment, manufacturer: saved.manufacturer, label: saved.label,
-    tracking_type: saved.tracking_type, assisted: saved.assisted, previous_sets: [], record_bests: {},
-  });
-  if (saved.cleared) entry.sets = entry.sets.map((set) => ({ ...set, weight: null, result: null, effort: null, completed: false }));
-  drafts.snapshot(state.data);
-}
-
 // Edit manufacturer / machine on a Workout Exercise card: saves set and note drafts first, like the other
 // card actions, then opens the Exercise Configuration form with the card's current values.
 async function changeMachine(entryId) {
-  const entry = state.data.workout_exercises.find((item) => item.id === entryId);
+  const entry = state.data.workout_exercises.find((item) => item.id === outbox.resolve(entryId));
   if (!entry || !state.editor || state.editor.busy) return;
-  if (!await saveAllSets("Cannot edit manufacturer or machine yet")) return;
   try {
-    state.picker = await api(`/api/catalog?gym_id=${state.data.active_workout.gym_id}`);
+    state.picker = await loadCatalog(state.data.active_workout.gym_id);
   } catch (error) { showToast(error.message); return; }
   const variation = state.picker.catalog.find((item) => item.id === entry.variation_id);
   if (!variation) {
@@ -2260,14 +2363,12 @@ async function saveMachine(event, change, { manufacturer, label }) {
   const submit = event.currentTarget?.querySelector?.('[type="submit"]');
   if (submit) submit.disabled = true;
   try {
-    const saved = await api(`/api/workouts/${state.data.active_workout.id}/exercises/${change.entry.id}/configuration`, {
-      method: "PUT",
-      body: JSON.stringify({ equipment: state.selectedEquipment, manufacturer: manufacturer.value, label: label.value }),
-    });
+    const body = { equipment: state.selectedEquipment, manufacturer: manufacturer.value.trim(), label: label.value.trim() };
+    if (!state.editor?.changeMachine(change.entry.id, body)) throw new Error("The machine cannot be changed right now.");
     closePicker(change.focus);
-    await load();
+    render();
     document.querySelector(change.focus)?.focus();
-    showToast(`Changed to ${configurationLabel(saved)}.`);
+    showToast(`Changed to ${configurationLabel(body)}.`);
   } catch (error) {
     if (submit) submit.disabled = false;
     showToast(error.message);
@@ -2368,8 +2469,8 @@ function renderSetMarker(name, label, type, side) {
 // Picking a Set Type or a Side saves at once like Effort. The sets are renumbered, since only working sets have numbers.
 async function chooseSetType(form) {
   if (!state.editor || state.editor.busy) return;
-  const entry = state.data.workout_exercises.find((item) => item.id === Number(form.dataset.entryId));
-  const set = entry?.sets.find((item) => item.id === Number(form.dataset.setId));
+  const entry = state.data.workout_exercises.find((item) => item.id === outbox.resolve(Number(form.dataset.entryId)));
+  const set = entry?.sets.find((item) => item.id === formSetId(form));
   if (!set) return;
   const current = form.elements.set_type.value || null;
   const side = form.elements.side.value || null;
@@ -2385,7 +2486,7 @@ async function chooseSetType(form) {
   saveSetForm(form);
   const list = form.closest(".sets-list");
   renderSets(entry, list);
-  [...list.querySelectorAll(".set-form")].find((item) => item.dataset.setId === String(set.id))?.querySelector("[data-set-type]")?.focus();
+  [...list.querySelectorAll(".set-form")].find((item) => formSetId(item) === set.id)?.querySelector("[data-set-type]")?.focus();
 }
 
 // Record sides is on while any set of the Workout Exercise has a Side.
@@ -2402,7 +2503,7 @@ function saveSetForm(form) {
 
 // Record sides gives the sets R, L, R, L… from the top; turning it off returns them to both sides.
 function recordSides(input) {
-  const entry = state.data.workout_exercises.find((item) => item.id === Number(input.dataset.recordSides));
+  const entry = state.data.workout_exercises.find((item) => item.id === outbox.resolve(Number(input.dataset.recordSides)));
   if (!entry || !state.editor || state.editor.busy) { input.checked = !input.checked; return; }
   const list = document.querySelector(`.workout-exercise[data-entry-id="${entry.id}"] .sets-list`);
   if (!list) { input.checked = !input.checked; return; }
@@ -2464,8 +2565,8 @@ function setValues(form) {
 // selected value again clears it. Duration Sets have only Failure, so a tap toggles it.
 async function chooseSetEffort(form) {
   if (!state.editor || state.editor.busy) return;
-  const entry = state.data.workout_exercises.find((item) => item.id === Number(form.dataset.entryId));
-  const set = entry?.sets.find((item) => item.id === Number(form.dataset.setId));
+  const entry = state.data.workout_exercises.find((item) => item.id === outbox.resolve(Number(form.dataset.entryId)));
+  const set = entry?.sets.find((item) => item.id === formSetId(form));
   if (!set) return;
   const current = form.elements.effort.value || null;
   const duration = entry.tracking_type === "duration";
@@ -2500,7 +2601,7 @@ function bindSet(form) {
   form.elements.result.required = form.elements.completed.checked;
   form.addEventListener("input", () => {
     // Typed kg or reps are the lifter's own, so Last workout no longer overwrites them.
-    copiedSets.delete(Number(form.dataset.setId));
+    copiedSets.delete(formSetId(form));
     if (state.editor.busy) return;
     form.elements.result.required = form.elements.completed.checked;
     state.editor.edit(form.dataset.setId, setValues(form), { valid: form.checkValidity() });
@@ -2535,6 +2636,11 @@ function bindSet(form) {
   syncEditorView();
 }
 
+// A set form's set id, following a temporary id the server has replaced since it was rendered.
+function formSetId(form) {
+  return outbox.resolve(Number(form.dataset.setId));
+}
+
 // Sets that Add set copied from the set above and that nobody has typed into or completed
 // since. Last workout may overwrite their values; anything typed stays protected.
 const copiedSets = new Set();
@@ -2543,7 +2649,7 @@ const copiedSets = new Set();
 // tap never overwrites what was typed.
 function fillFromPrevious(form, previous) {
   if (state.editor.busy) return;
-  const id = Number(form.dataset.setId);
+  const id = formSetId(form);
   const copy = copiedSets.has(id) && !form.elements.completed.checked;
   const fillWeight = copy || form.elements.weight.value.trim() === "";
   const fillResult = copy || form.elements.result.value === "";
@@ -2569,6 +2675,7 @@ function fillFromPrevious(form, previous) {
 
 async function retryPendingSets() {
   if (!navigator.onLine || document.visibilityState === "hidden") return;
+  outbox.kick();
   await state.editor?.retry();
   updateSyncStatus();
 }
@@ -2578,7 +2685,7 @@ async function retryPendingSets() {
 const STATUS_FADE_MS = 1500;
 const shownStatus = new Map();
 function setStatus(form, message, error = false, transient = false) {
-  showStatus(form.querySelector(".set-status"), form.dataset.setId, message, error, transient);
+  showStatus(form.querySelector(".set-status"), String(formSetId(form)), message, error, transient);
 }
 
 // Ending or starting a workout drops the per-set marks of the one before.
@@ -2629,35 +2736,18 @@ function showInvalidSet(blocked) {
     : `${blocked}: fix the highlighted ${note ? "note" : "set"}, then try again.`);
 }
 
-async function saveAllSets(blocked = "Cannot add an exercise yet") {
-  const saved = await state.editor?.flush();
-  if (!saved) showInvalidSet(blocked);
-  return Boolean(saved);
-}
-
-async function addSet(button) {
-  if (state.editor.busy) return;
-  button.disabled = true;
-  try {
-    const entry = state.data.workout_exercises.find((item) => item.id === Number(button.dataset.addSet));
-    const above = entry.sets.at(-1);
-    // The server copies the set above, so its latest edit must be saved first.
-    if (above && !await state.editor.save(above.id)) {
-      [...document.querySelectorAll(".set-form")].find((form) => form.dataset.setId === String(above.id))?.reportValidity();
-      showToast(`Set ${above.position} must reach the server before adding another set.`);
-      return;
-    }
-    const set = await api(`/api/workout-exercises/${entry.id}/sets`, { method: "POST", body: "{}" });
-    entry.sets.push(set);
-    if (set.weight !== null || set.result !== null) copiedSets.add(set.id);
-    drafts.snapshot(state.data);
-    const list = button.closest(".exercise-entry").querySelector(".sets-list");
-    list.insertAdjacentHTML("beforeend", renderSet(entry, set, entry.sets.length - 1));
-    bindSet(list.lastElementChild);
-    syncSidesSwitch(entry);
-    list.lastElementChild.elements.weight.focus();
-  } catch (error) { showToast(error.message); }
-  finally { button.disabled = false; }
+// Add set is instant: it copies the set above as shown on the phone and syncs in the background.
+function addSet(button) {
+  if (!state.editor || state.editor.busy) return;
+  const entry = state.data.workout_exercises.find((item) => item.id === outbox.resolve(Number(button.dataset.addSet)));
+  const set = entry && state.editor.addSet(entry.id);
+  if (!set) return;
+  if (set.weight !== null || set.result !== null) copiedSets.add(set.id);
+  const list = button.closest(".exercise-entry").querySelector(".sets-list");
+  list.insertAdjacentHTML("beforeend", renderSet(entry, set, entry.sets.length - 1));
+  bindSet(list.lastElementChild);
+  syncSidesSwitch(entry);
+  list.lastElementChild.elements.weight.focus();
 }
 
 function openWorkoutReorder(entryId) {
@@ -2687,7 +2777,7 @@ async function saveExerciseMove(entryId, position) {
 
 // onConfirmed runs once the removal is confirmed. From the Reorder sheet, focus stays in the sheet.
 async function removeExercise(entryId, { onConfirmed } = {}) {
-  const entry = state.data.workout_exercises.find((item) => item.id === entryId);
+  const entry = state.data.workout_exercises.find((item) => item.id === outbox.resolve(entryId));
   if (!entry || !state.editor || state.editor.busy) return;
   const name = exerciseDisplayName(entry);
   const count = entry.sets.length;
@@ -2719,7 +2809,7 @@ async function removeSet(form) {
     form.remove();
     // The server renumbered the remaining sets: re-render them so their numbers and
     // Last workout values line up.
-    const entry = state.data.workout_exercises.find((item) => item.id === Number(form.dataset.entryId));
+    const entry = state.data.workout_exercises.find((item) => item.id === outbox.resolve(Number(form.dataset.entryId)));
     const list = entryNode.querySelector(".sets-list");
     if (entry && list) renderSets(entry, list);
     addButton.focus();
@@ -2728,6 +2818,9 @@ async function removeSet(form) {
 }
 
 app.addEventListener("click", (event) => {
+  if (event.target.closest?.("[data-sync-retry]")) { outbox.retry(); return; }
+  const discard = event.target.closest?.("[data-sync-discard]");
+  if (discard) return discardChange(discard.dataset.syncDiscard);
   const effort = event.target.closest?.("[data-set-effort]");
   if (effort) return chooseSetEffort(effort.closest(".set-form"));
   const setType = event.target.closest?.("[data-set-type]");
@@ -2741,14 +2834,43 @@ app.addEventListener("click", (event) => {
   }
 });
 
+// A refused change is dropped only after asking. Things it created go with the changes that use
+// them, and the workout is rebuilt from the server and the rest of the queue.
+async function discardChange(id) {
+  const failed = outbox.ops.find((op) => op.id === id);
+  if (!failed) return;
+  const what = workoutOps[failed.kind]?.describe?.(failed) ?? "this change";
+  if (!await ask(`Discard ${what}? The server refused it: ${failed.error} It will be removed from this phone.`,
+    { confirmLabel: "Discard change", danger: true })) return;
+  outbox.discard(id);
+  if (!await load()) render();
+  showToast("Change discarded.");
+}
+
+// The picker closes the moment a choice is tapped, so the rest of a quick double or triple tap
+// would land on the workout underneath (a set's × or Done). Taps on that spot in the next moment
+// are ignored; taps elsewhere go through.
+let swallowed = null;
+function swallowTaps(control, ms = 600) {
+  const box = control?.getBoundingClientRect?.();
+  swallowed = box ? { until: Date.now() + ms, left: box.left - 24, right: box.right + 24, top: box.top - 24, bottom: box.bottom + 24 } : null;
+}
+document.addEventListener("click", (event) => {
+  if (!swallowed || Date.now() >= swallowed.until || event.target?.closest?.("dialog")) return;
+  const { clientX: x, clientY: y } = event;
+  if (!(x >= swallowed.left && x <= swallowed.right && y >= swallowed.top && y <= swallowed.bottom)) return;
+  event.preventDefault();
+  event.stopPropagation();
+}, true);
+
 window.addEventListener("beforeunload", (event) => {
-  if (drafts.error && state.editor?.pending) {
+  if ((drafts.error && state.editor?.pending) || (outbox.storageFailed && outbox.size)) {
     event.preventDefault();
     event.returnValue = "";
   }
 });
 
-window.addEventListener("online", () => { retryPendingSets(); updateSyncStatus(); });
+window.addEventListener("online", () => { state.unavailable = false; retryPendingSets(); updateSyncStatus(); });
 window.addEventListener("offline", () => { state.unavailable = true; updateSyncStatus(); });
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") {

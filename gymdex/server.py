@@ -48,11 +48,12 @@ def id_field(payload: dict, name: str) -> int:
 
 
 # Answers to recent create requests by their client request id. A phone that sends the same
-# Add exercise twice (a retry, or taps queued on a slow connection) gets the first answer back
-# instead of a second copy. In memory only: a restart forgets them, which is fine for retries.
+# Add exercise or Add set twice (an outbox retry after a lost answer, or taps queued on a slow
+# connection) gets the first answer back instead of a second copy. In memory only: a restart
+# forgets them, so a retry that straddles a restart could still add a copy (see README).
 _ONCE_LOCK = threading.Lock()
 _ONCE_RESULTS: OrderedDict[tuple[str, str, str], object] = OrderedDict()
-_ONCE_LIMIT = 256
+_ONCE_LIMIT = 1024
 
 
 def once(db_path, route: str, payload: dict, operation):
@@ -72,6 +73,15 @@ def once(db_path, route: str, payload: dict, operation):
                 _ONCE_RESULTS.popitem(last=False)
             return result
 
+    return run
+
+
+def with_entry(operation):
+    """operation, answering also with the changed Active Workout Exercise as bootstrap shows it
+    ("entry"), so a phone that queued the change offline gets its sets, Last workout and bests."""
+    def run(connection):
+        result = operation(connection)
+        return {**result, "entry": db.active_entry(connection, result["id"])}
     return run
 
 
@@ -218,7 +228,9 @@ class GymdexHandler(BaseHTTPRequestHandler):
                 status=HTTPStatus.CREATED,
             )
         if len(parts) == 4 and parts[:2] == ["api", "workout-exercises"] and parts[3] == "sets":
-            return self._with_db(lambda connection: db.add_set(connection, int(parts[2])), status=HTTPStatus.CREATED)
+            operation = once(self.server.db_path, parsed.path, payload,
+                             lambda connection: db.add_set(connection, int(parts[2]), payload))
+            return self._with_db(operation, status=HTTPStatus.CREATED)
         if len(parts) == 4 and parts[:2] == ["api", "workouts"]:
             try:
                 workout_id = int(parts[2])
@@ -238,7 +250,7 @@ class GymdexHandler(BaseHTTPRequestHandler):
                         text_field(payload, "manufacturer"),
                         text_field(payload, "label"),
                     )
-                operation = once(self.server.db_path, parsed.path, payload, operation)
+                operation = once(self.server.db_path, parsed.path, payload, with_entry(operation))
                 return self._with_db(operation, status=HTTPStatus.CREATED)
             if parts[3] == "complete":
                 return self._with_db(
@@ -274,20 +286,20 @@ class GymdexHandler(BaseHTTPRequestHandler):
                 workout_id, exercise_id = int(parts[2]), int(parts[4])
             except ValueError:
                 return self._json_error("Active workout exercise not found.", HTTPStatus.NOT_FOUND)
-            return self._with_db(lambda connection: db.change_workout_exercise_configuration(
+            return self._with_db(with_entry(lambda connection: db.change_workout_exercise_configuration(
                 connection, workout_id, exercise_id, text_field(payload, "equipment"),
                 text_field(payload, "manufacturer"), text_field(payload, "label"),
-            ))
+            )))
         if replace:
             try:
                 workout_id, exercise_id = int(parts[2]), int(parts[4])
             except ValueError:
                 return self._json_error("Active workout exercise not found.", HTTPStatus.NOT_FOUND)
-            return self._with_db(lambda connection: db.replace_workout_exercise(
+            return self._with_db(with_entry(lambda connection: db.replace_workout_exercise(
                 connection, workout_id, exercise_id, id_field(payload, "variation_id"),
                 text_field(payload, "equipment"), text_field(payload, "manufacturer"),
                 text_field(payload, "label"),
-            ))
+            )))
         if kind == "variation" and "muscle_groups" in payload:
             return self._with_db(lambda connection: db.set_variation_muscle_groups(
                 connection, int(parts[3]), payload["muscle_groups"],

@@ -76,7 +76,7 @@ async function harness(disk = storage(), initialData = {}, { now = Date.parse('2
   forms.push(form);
   const list = { insertAdjacentHTML(_, html) {
     this.html = html;
-    const [, id, position] = html.match(/data-set-id="(\d+)"[\s\S]*?data-set-type[^>]*>(\d+)/);
+    const [, id, position] = html.match(/data-set-id="(-?\d+)"[\s\S]*?data-set-type[^>]*>(\d+)/);
     const added = setForm(Number(id), Number(position));
     added.elements.weight.value = html.match(/name="weight"[^>]*value="([^"]*)"/)[1];
     added.elements.result.value = html.match(/name="result"[^>]*value="([^"]*)"/)[1];
@@ -981,7 +981,7 @@ const legPressEntry = { id: 3, variation_id: 17, exercise_name: 'Leg Press', var
   manufacturer: 'Cybex', label: '', note: 'Seat 4', tracking_type: 'repetitions', previous_sets: [],
   sets: [{ id: 2, position: 1, weight: null, result: null, completed: false }] };
 
-test('Edit manufacturer / machine saves set drafts, then switches the exercise to the machine chosen in its sheet', async () => {
+test('Edit manufacturer / machine switches the exercise at once, then syncs it before the set and note drafts', async () => {
   const app = await harness(storage(), { workout_exercises: [legPressEntry] });
   assert.match(app.nodes['#app'].innerHTML, /<button type="button" class="machine-line" data-change-machine="3" aria-label="Edit machine for Single Leg Leg Press: Machine · Cybex"><span class="meta">Machine · Cybex<\/span><\/button>/,
     'the machine line itself opens the editor');
@@ -999,7 +999,7 @@ test('Edit manufacturer / machine saves set drafts, then switches the exercise t
     if (url === '/api/sets/2') return response({ id: 2, position: 1, weight: 100, result: null, completed: false });
     if (url === '/api/workout-exercises/3/note') return response({ id: 3, note: 'Seat 5' });
     if (url.startsWith('/api/catalog')) return response(structuredClone(suggestionCatalog));
-    if (url.endsWith('/configuration')) return response({ id: 3, equipment: 'Sled', manufacturer: 'Technogym', label: 'Upstairs' });
+    if (url.endsWith('/configuration')) return response({ id: 3, equipment: 'Sled', manufacturer: 'Technogym', label: 'Upstairs', entry: changed });
     if (url === '/api/bootstrap') return response({ gyms: [], active_workout: { id: 1, gym_id: 1, gym_name: 'Home', started_at: '2026-09-22 10:00:00' }, workout_exercises: [changed] });
     throw new Error(`Unexpected ${url}`);
   };
@@ -1015,7 +1015,7 @@ test('Edit manufacturer / machine saves set drafts, then switches the exercise t
   note.events.input();
 
   await clickIn(app, '[data-change-machine]', { changeMachine: '3' });
-  assert.deepEqual(requests.map(([request]) => request), ['PUT /api/sets/2', 'PUT /api/workout-exercises/3/note', 'GET /api/catalog?gym_id=1'], 'set and note drafts are saved first');
+  assert.deepEqual(requests.map(([request]) => request), ['GET /api/catalog?gym_id=1'], 'drafts no longer have to reach the server first');
   assert.match(sheet.innerHTML, /<h2 id="picker-title">Edit manufacturer \/ machine<\/h2><button class="text-button" id="close-picker">Cancel<\/button>/);
   assert.match(sheet.innerHTML, /Single Leg Leg Press keeps its sets and note\./);
   assert.match(sheet.innerHTML, /data-equipment="Sled" aria-pressed="false"[\s\S]*data-equipment="Machine" aria-pressed="true"/);
@@ -1033,18 +1033,23 @@ test('Edit manufacturer / machine saves set drafts, then switches the exercise t
   assert.deepEqual(equipmentButtons.map((button) => button.pressed), ['true', 'false']);
 
   await app.nodes['#configuration-form'].events.submit({ preventDefault() {}, currentTarget: app.nodes['#configuration-form'] });
-  assert.deepEqual(requests.slice(3), [
-    ['PUT /api/workouts/1/exercises/3/configuration', { equipment: 'Sled', manufacturer: 'Technogym', label: 'Upstairs' }],
-    ['GET /api/bootstrap', undefined]]);
+  // Shown at once, before any answer.
   assert.equal(app.nodes['#picker'], undefined, 'the sheet closes');
   assert.match(app.nodes['#app'].innerHTML, /<span class="meta">Sled · Technogym · Upstairs<\/span>/);
   assert.match(app.nodes['#app'].innerHTML, /data-set-id="2"/);
   assert.equal(app.noteField('exercise:3').value, 'Seat 5');
-  assert.match(app.nodes['#app'].innerHTML, /data-previous-weight="70" data-previous-result="12"/);
   assert.equal(app.nodes['#toast'].textContent, 'Changed to Sled · Technogym · Upstairs.');
+  for (let i = 0; i < 10; i += 1) await settle();
+  assert.deepEqual(requests.slice(1), [
+    ['PUT /api/workouts/1/exercises/3/configuration', { equipment: 'Sled', manufacturer: 'Technogym', label: 'Upstairs' }],
+    ['PUT /api/sets/2', { weight: 100, result: null, completed: false }],
+    ['PUT /api/workout-exercises/3/note', { note: 'Seat 5' }]]);
+  // The server's Last workout for the new machine shows after its answer.
+  [...app.timers.values()].filter((timer) => timer.delay === 0).forEach((timer) => timer.callback());
+  assert.match(app.nodes['#app'].innerHTML, /data-previous-weight="70" data-previous-result="12"/);
 });
 
-test('Replace exercise in an Active Workout saves drafts, picks another Variation and keeps the card', async () => {
+test('Replace exercise in an Active Workout picks another Variation, keeps the card and clears what no longer fits', async () => {
   const app = await harness(storage(), { workout_exercises: [legPressEntry] });
   assert.doesNotMatch(app.nodes['#app'].innerHTML, /data-replace-exercise/, 'Replace exercise lives in the ⋯ sheet');
   const menu = await openExerciseMenu(app, 3);
@@ -1060,7 +1065,7 @@ test('Replace exercise in an Active Workout saves drafts, picks another Variatio
     if (url === '/api/sets/2') return response({ id: 2, position: 1, weight: 100, result: null, completed: false });
     if (url.startsWith('/api/catalog')) return response(structuredClone(suggestionCatalog));
     if (url.endsWith('/replace')) return response({ id: 3, variation_id: 30, exercise_name: 'Plank', variation_name: 'Front Plank',
-      equipment: 'Bodyweight', manufacturer: '', label: '', tracking_type: 'duration', assisted: false, cleared: true });
+      equipment: 'Bodyweight', manufacturer: '', label: '', tracking_type: 'duration', assisted: false, cleared: true, entry: replaced });
     if (url === '/api/bootstrap') return response({ gyms: [], active_workout: { id: 1, gym_id: 1, gym_name: 'Home', started_at: '2026-09-22 10:00:00' }, workout_exercises: [replaced] });
     throw new Error(`Unexpected ${url}`);
   };
@@ -1071,7 +1076,7 @@ test('Replace exercise in an Active Workout saves drafts, picks another Variatio
   app.form.events.input();
 
   await clickIn(app, '[data-replace-exercise]', { replaceExercise: '3' });
-  assert.deepEqual(requests.map(([request]) => request), ['PUT /api/sets/2', 'GET /api/catalog?gym_id=1'], 'set drafts are saved first');
+  assert.deepEqual(requests.map(([request]) => request), ['GET /api/catalog?gym_id=1']);
   assert.match(app.nodes['#picker'].innerHTML, /<h2 id="picker-title">Replace exercise<\/h2>/);
   assert.match(app.nodes['#picker'].innerHTML, /Single Leg Leg Press keeps its note and set slots\./);
   pickVariation(app, 30);
@@ -1082,15 +1087,16 @@ test('Replace exercise in an Active Workout saves drafts, picks another Variatio
   await app.nodes['#configuration-form'].events.submit({ preventDefault() {}, currentTarget: app.nodes['#configuration-form'] });
   assert.deepEqual(questions, [['Replace Single Leg Leg Press with Front Plank? It records sets differently, so weight, reps or seconds, and effort on 1 set will be cleared and done sets marked not done. This cannot be undone.', 'Replace and clear']],
     'a Duration Variation would clear the logged weight, so it asks first');
-  assert.deepEqual(requests.slice(2), [
-    ['PUT /api/workouts/1/exercises/3/replace', { variation_id: 30, equipment: 'Bodyweight', manufacturer: '', label: '' }],
-    ['GET /api/bootstrap', undefined]]);
   assert.equal(app.nodes['#picker'], undefined, 'the sheet closes');
+  for (let i = 0; i < 10; i += 1) await settle();
+  // The cleared set's draft is gone with its values, so only the replace is sent.
+  assert.deepEqual(requests.slice(1), [
+    ['PUT /api/workouts/1/exercises/3/replace', { variation_id: 30, equipment: 'Bodyweight', manufacturer: '', label: '' }]]);
   assert.match(app.nodes['#app'].innerHTML, /data-set-id="2"/, 'the set slot stays');
   assert.match(app.nodes['#toast'].textContent, /Replaced with Front Plank\. Cleared set values that no longer match\./);
 });
 
-test('Replace from Recent asks before clearing, sends once, and shows the replacement even when the refresh fails', async () => {
+test('Replace from Recent asks before clearing, shows the replacement at once and sends it once', async () => {
   const entry = { ...structuredClone(legPressEntry), sets: [{ id: 2, position: 1, weight: 100, result: 8, effort: '2', completed: true }] };
   const app = await harness(storage(), { workout_exercises: [entry] });
   const catalog = { ...structuredClone(suggestionCatalog), recent: [{ profile_id: 77, variation_id: 30, exercise_name: 'Plank',
@@ -1122,81 +1128,81 @@ test('Replace from Recent asks before clearing, sends once, and shows the replac
   assert.match(questions[0], /^Replace Single Leg Leg Press with Front Plank\?.*on 1 set will be cleared/);
   assert.equal(requests.filter((request) => request.endsWith('/replace')).length, 0);
   assert.ok(app.nodes['#picker'], 'the sheet stays open');
-  // Confirmed: a second tap while the first replace is in flight sends nothing more.
+  // Confirmed: the card shows the replacement and its cleared set at once, before any answer,
+  // and a second tap sends nothing more.
   app.env.ask = async () => true;
-  const first = recent.events.click();
-  await settle();
   await recent.events.click();
-  assert.equal(requests.filter((request) => request.endsWith('/replace')).length, 1);
-  replace.resolve();
-  await first;
-  await settle();
-  // The refresh fails, yet the card already shows the replacement and its cleared set.
-  assert.equal(requests.at(-1), 'GET /api/bootstrap');
+  await recent.events.click();
   const html = app.nodes['#app'].innerHTML;
   assert.match(html, /Front Plank/);
   assert.doesNotMatch(html, /Single Leg Leg Press/);
   assert.match(html, /data-set-id="2"/);
   assert.doesNotMatch(html, /is-complete|value="100"/);
-  assert.match(app.nodes['#toast'].textContent, /could not be refreshed/);
-  assert.doesNotMatch(app.nodes['#toast'].textContent, /^Replaced with Front Plank\.( Cleared|$)/);
+  assert.match(app.nodes['#toast'].textContent, /^Replaced with Front Plank\. Cleared set values that no longer match\./);
+  await settle();
+  assert.equal(requests.filter((request) => request.endsWith('/replace')).length, 1);
+  replace.resolve();
+  for (let i = 0; i < 10; i += 1) await settle();
+  assert.deepEqual(JSON.parse(app.disk.getItem('gymdex:outbox:v1')).ops, []);
 });
 
-test('Add exercise is single-flight: repeat taps while adding send one request, show Adding…, and an error re-enables', async () => {
+test('Add exercise is instant and happens once: repeat taps add one exercise, and a failed send retries with the same request id', async () => {
   const app = await harness();
-  const catalog = { ...structuredClone(suggestionCatalog), recent: [{ profile_id: 77, variation_id: 30, exercise_name: 'Hammer Curl',
+  const catalog = { ...structuredClone(suggestionCatalog), recent: [{ profile_id: 77, variation_id: 99, exercise_name: 'Hammer Curl',
     variation_name: 'Standard', equipment: 'Dumbbell', manufacturer: '', label: '' }] };
   catalog.saved = catalog.recent;
   const posts = [];
   let pending = null;
   let fail = false;
   pickerSheet(app);
+  const serverEntry = { id: 9, variation_id: 99, exercise_name: 'Hammer Curl', variation_name: 'Standard', equipment: 'Dumbbell',
+    manufacturer: '', label: '', tracking_type: 'repetitions', assisted: 0, previous_sets: [{ weight: 16, result: 10 }],
+    record_bests: { '': { weight: 16 } }, sets: [{ id: 11, position: 1, weight: null, result: null, completed: 0, side: null, set_type: null }] };
   app.env.fetch = async (url, options = {}) => {
     if (url.startsWith('/api/catalog')) return response(structuredClone(catalog));
     if (url === '/api/workouts/1/exercises') {
       posts.push(JSON.parse(options.body));
       await (pending = deferred()).promise;
-      return fail ? response({ error: 'The gym signal dropped.' }, 503) : response({ id: 9 }, 201);
+      return fail ? response({ error: 'The gym signal dropped.' }, 503) : response({ id: 9, entry: serverEntry }, 201);
     }
-    return response({ gyms: [{ id: 1, name: 'Home' }], active_workout: { id: 1, gym_id: 1, started_at: '2026-11-19 10:00:00' }, workout_exercises: [] });
+    throw new Error('Offline');
   };
   await app.nodes['#open-picker'].events.click();
   const span = Object.assign(node(), { textContent: 'Dumbbell' });
   const recent = Object.assign(node(), { dataset: { profileId: '77' }, querySelector: (selector) => selector === 'span' ? span : null });
-  const other = node();
-  app.nodes['#picker'].querySelectorAll = () => [recent, other];
+  app.nodes['#picker'].querySelectorAll = () => [recent];
   const querySelectorAll = app.env.document.querySelectorAll;
   app.env.document.querySelectorAll = (selector) => selector === '[data-profile-id]' ? [recent] : querySelectorAll(selector);
   app.nodes['#picker-results'].innerHTML = '';
   // Re-render the results so the stand-in Recent button gets its click listener.
   app.nodes['#exercise-search'].events.input({ target: { value: '' } });
   fail = true;
-  const first = recent.events.click();
+  await recent.events.click();
+  // Shown and the picker closed before the server answers.
+  assert.equal(app.nodes['#picker'], undefined, 'the picker closes at once');
+  assert.equal(app.nodes['#toast'].textContent, 'Exercise added.');
+  assert.match(app.nodes['#app'].innerHTML, /Hammer Curl/);
+  for (let tap = 0; tap < 6; tap++) await recent.events.click();
   await settle();
-  assert.equal(span.textContent, 'Adding…', 'the tapped choice says Adding… at once');
-  assert.equal(recent.disabled, true);
-  assert.equal(other.disabled, true, 'every picker control waits');
-  for (let tap = 0; tap < 6; tap++) await Promise.race([recent.events.click(), settle()]);
   assert.equal(posts.length, 1, 'seven taps, one request');
+  assert.equal((app.nodes['#app'].innerHTML.match(/data-exercise-more="/g) ?? []).length, 2, 'Bench Press and one Hammer Curl');
   pending.resolve();
-  await first;
-  assert.equal(span.textContent, 'Dumbbell');
-  assert.equal(recent.disabled, false);
-  assert.equal(other.disabled, false);
-  assert.match(app.nodes['#toast'].textContent, /signal dropped/);
-  assert.ok(app.nodes['#picker'], 'the picker stays open for another try');
-  // The retry carries the same request id, so the server can answer it with the first add.
+  for (let i = 0; i < 5; i += 1) await settle();
+  // A server error is retried later, and the exercise stays on the phone meanwhile.
+  assert.equal(app.nodes['#sync-status'].textContent, 'Saved on phone, syncing…');
+  assert.equal(JSON.parse(app.disk.getItem('gymdex:outbox:v1')).ops.length, 1);
   fail = false;
-  const retry = recent.events.click();
+  [...app.timers.values()].find((timer) => timer.delay >= 1000 && timer.delay < 2000).callback();
   await settle();
   assert.equal(posts.length, 2);
-  assert.equal(posts[1].request_id, posts[0].request_id);
+  assert.equal(posts[1].request_id, posts[0].request_id, 'the retry carries the same request id');
   assert.deepEqual({ ...posts[1], request_id: undefined }, { profile_id: 77, request_id: undefined });
   pending.resolve();
-  await retry;
-  await settle();
-  assert.equal(app.nodes['#picker'], undefined, 'success closes the picker');
-  assert.equal(app.nodes['#toast'].textContent, 'Exercise added.');
+  for (let i = 0; i < 5; i += 1) await settle();
+  assert.deepEqual(JSON.parse(app.disk.getItem('gymdex:outbox:v1')).ops, []);
+  // The server's ids and Last workout replace the phone's.
+  const cached = new DraftStore(() => app.disk).cachedWorkout().workout_exercises.at(-1);
+  assert.deepEqual([cached.id, cached.sets.map((set) => set.id), cached.previous_sets], [9, [11], [{ weight: 16, result: 10 }]]);
 });
 
 test('a second tap on Add exercise while the catalog loads opens one picker', async () => {
@@ -1236,7 +1242,7 @@ test('Close in the picker and the custom exercise form returns focus to Add exer
   assert.equal(app.nodes['#open-picker'].focused, true);
 });
 
-test('Edit manufacturer / machine waits for a set that cannot be saved, and Cancel changes nothing', async () => {
+test('Edit manufacturer / machine opens even with a set that cannot be saved yet, and Cancel changes nothing', async () => {
   const app = await harness(storage(), { workout_exercises: [legPressEntry] });
   pickerSheet(app);
   const requests = [];
@@ -1248,20 +1254,15 @@ test('Edit manufacturer / machine waits for a set that cannot be saved, and Canc
   app.form.elements.completed.checked = true;
   app.form.events.input();
   await clickIn(app, '[data-change-machine]', { changeMachine: '3' });
-  assert.deepEqual(requests, []);
-  assert.equal(app.nodes['#picker'], undefined);
-  assert.equal(app.nodes['#toast'].textContent, 'Cannot edit manufacturer or machine yet: fix the highlighted set, then try again.');
-
-  app.form.elements.completed.checked = false;
-  app.form.events.input();
-  await clickIn(app, '[data-change-machine]', { changeMachine: '3' });
-  assert.deepEqual(requests, ['PUT /api/sets/2', 'GET /api/catalog?gym_id=1']);
+  assert.deepEqual(requests, ['GET /api/catalog?gym_id=1'], 'the invalid draft stays on the phone');
+  assert.ok(app.nodes['#picker']);
   app.nodes['#close-picker'].events.click();
   assert.equal(app.nodes['#picker'], undefined);
-  assert.equal(requests.length, 2);
+  assert.equal(requests.length, 1);
+  assert.equal(app.form.dataset.dirty, 'true');
 });
 
-test('manufacturer editing offline preserves unsaved Sets and Notes until they can be saved', async () => {
+test('manufacturer editing offline uses the exercise list kept on the phone and keeps unsaved Sets and Notes', async () => {
   const app = await harness(storage(), { workout_exercises: [legPressEntry] });
   pickerSheet(app);
   app.env.navigator.onLine = false;
@@ -1272,11 +1273,19 @@ test('manufacturer editing offline preserves unsaved Sets and Notes until they c
   note.events.input();
   const requests = [];
   app.env.fetch = async (url) => { requests.push(url); throw new TypeError('Offline'); };
+  // Never loaded on this phone: the list needs a connection once.
   await clickIn(app, '[data-change-machine]', { changeMachine: '3' });
   assert.equal(app.nodes['#picker'], undefined);
+  assert.match(app.nodes['#toast'].textContent, /needs a connection the first time/);
   assert.equal(app.form.elements.weight.value, '85');
   assert.equal(note.value, 'Seat 6');
-  assert.ok(!requests.some(url => url.startsWith('/api/catalog') || url.endsWith('/configuration')));
+  assert.ok(!requests.some(url => url.endsWith('/configuration')));
+  // Kept from an earlier visit: it opens offline without asking the server.
+  app.disk.setItem('gymdex:catalog:v1:1', JSON.stringify(suggestionCatalog));
+  requests.length = 0;
+  await clickIn(app, '[data-change-machine]', { changeMachine: '3' });
+  assert.ok(app.nodes['#picker']);
+  assert.deepEqual(requests, []);
   const reopened = await harness(app.disk, { workout_exercises: [legPressEntry] });
   assert.equal(reopened.form.elements.weight.value, '85');
   assert.equal(reopened.noteField('exercise:3').value, 'Seat 6');
@@ -1482,25 +1491,33 @@ test('Add exercise follows the exercise list and precedes Finish and Cancel with
   }
 });
 
-test('Add set first saves the set above, then shows its copied values as an unfinished set', async () => {
+test('Add set shows the copy of the set above at once, then the server creates it before the set above is saved', async () => {
   const app = await harness();
   const requests = [];
   app.env.fetch = async (path, options) => {
-    requests.push(`${options.method} ${path}`);
+    requests.push([`${options.method} ${path}`, options.body && JSON.parse(options.body)]);
     if (path === '/api/sets/2') return response({ id: 2, position: 1, weight: 60, result: 8, completed: false });
     return response({ id: 5, position: 2, weight: 60, result: 8, completed: false }, 201);
   };
   app.form.elements.weight.value = '60';
   app.form.elements.result.value = '8';
   app.form.events.input();
-  await app.addSetButton.events.click();
-  assert.deepEqual(requests, ['PUT /api/sets/2', 'POST /api/workout-exercises/3/sets']);
+  app.addSetButton.events.click();
+  // Shown before any answer, with the values typed into the set above.
   const added = app.forms.at(-1);
-  assert.equal(added.dataset.setId, '5');
+  assert.ok(Number(added.dataset.setId) < 0, 'a temporary id until the server answers');
   assert.equal(added.elements.weight.value, '60');
   assert.equal(added.elements.result.value, '8');
   assert.doesNotMatch(app.list.html, /is-complete|checked/);
   assert.equal(added.elements.weight.focused, true);
+  for (let i = 0; i < 10; i += 1) await settle();
+  // The new set is created first (with the values the phone showed), then the waiting draft is saved.
+  assert.deepEqual(requests.map(([request]) => request), ['POST /api/workout-exercises/3/sets', 'PUT /api/sets/2']);
+  const { request_id: requestId, ...values } = requests[0][1];
+  assert.deepEqual(values, { weight: 60, result: 8, side: null, set_type: null });
+  assert.ok(requestId);
+  assert.deepEqual(JSON.parse(app.disk.getItem('gymdex:outbox:v1')).ops, []);
+  assert.equal(app.nodes['#sync-status'].textContent, 'Synced');
 });
 
 test('tapping Last workout fills the set and saves it without completing it', async () => {
@@ -1567,18 +1584,18 @@ test('Last workout fills an untouched Add set copy completely, but not once its 
   app.form.elements.weight.value = '60';
   app.form.elements.result.value = '8';
   app.form.events.input();
-  await app.addSetButton.events.click();
+  app.addSetButton.events.click();
   const copy = app.forms.at(-1);
   assert.equal(copy.elements.result.value, '8', 'Add set copied the set above');
-  bodies.length = 0;
+  // Filled before the server answered: the fill follows the set to its server id.
   copy.querySelector('.fill-previous').events.click();
-  await settle();
+  for (let i = 0; i < 10; i += 1) await settle();
   assert.equal(copy.elements.weight.value, '55');
   assert.equal(copy.elements.result.value, '6');
-  assert.deepEqual(bodies, [['/api/sets/5', { weight: 55, result: 6, completed: false }]]);
+  assert.deepEqual(bodies.find(([path]) => path === '/api/sets/5'), ['/api/sets/5', { weight: 55, result: 6, completed: false }]);
 
   // A copy whose reps were typed over keeps them, like any typed set.
-  await app.addSetButton.events.click();
+  app.addSetButton.events.click();
   const typed = app.forms.at(-1);
   typed.elements.result.value = '2';
   typed.events.input();
@@ -1586,21 +1603,39 @@ test('Last workout fills an untouched Add set copy completely, but not once its 
   typed.querySelector('.fill-previous').events.click();
   await settle();
   assert.equal(typed.elements.result.value, '2', 'typed reps stay');
-  assert.equal(typed.elements.weight.value, '60');
+  assert.equal(typed.elements.weight.value, '55');
   assert.match(app.nodes['#toast'].textContent, /fills only empty fields/);
 });
 
-test('Add set waits when the set above cannot reach the server', async () => {
+test('Add set works without signal: the copy shows at once and waits on the phone, also across a reload', async () => {
   const app = await harness();
   const requests = [];
+  app.env.navigator.onLine = false;
   app.env.fetch = async (path) => { requests.push(path); throw new Error('Offline'); };
   app.form.elements.result.value = '8';
   app.form.events.input();
-  await app.addSetButton.events.click();
-  assert.deepEqual(requests, ['/api/sets/2']);
-  assert.equal(app.forms.length, 1);
-  assert.match(app.nodes['#toast'].textContent, /Set 1 must reach the server before adding another set/);
-  assert.equal(app.addSetButton.disabled, false);
+  app.addSetButton.events.click();
+  await settle();
+  assert.deepEqual(requests, []);
+  assert.equal(app.forms.length, 2);
+  assert.equal(app.forms.at(-1).elements.result.value, '8');
+  assert.match(app.nodes['#sync-status'].textContent, /^Offline\. Saved on phone; syncs when you are back online\./);
+  const queued = JSON.parse(app.disk.getItem('gymdex:outbox:v1')).ops;
+  assert.deepEqual(queued.map((op) => [op.kind, op.entryId, op.values.result]), [['addSet', 3, 8]]);
+  // Reopened with the server reachable again: the queued set is shown on top of the server's copy, then sent.
+  const posted = [];
+  const reopened = await harness(app.disk);
+  const bootstrap = reopened.env.fetch;
+  reopened.env.fetch = async (path, options) => {
+    if (path === '/api/bootstrap') return bootstrap(path, options);
+    posted.push(`${options.method} ${path}`);
+    return response({ id: 9, position: 2, weight: null, result: 8, completed: false }, 201);
+  };
+  assert.match(reopened.nodes['#app'].innerHTML, new RegExp(`data-set-id="${queued[0].setId}"`));
+  await reopened.app.load();
+  for (let i = 0; i < 10; i += 1) await settle();
+  assert.ok(posted.includes('POST /api/workout-exercises/3/sets'));
+  assert.deepEqual(JSON.parse(reopened.disk.getItem('gymdex:outbox:v1')).ops, []);
 });
 
 test('removing a set renumbers the remaining sets and pairs them with Last workout again', async () => {
@@ -1864,12 +1899,18 @@ test('Finish it explains why a workout with an unsaved set cannot finish yet', a
   assert.equal(scrolled, true);
   assert.equal(app.nodes['#toast'].textContent, 'Not finished yet: fix the highlighted set, then try again.');
 
+  // Without signal a valid workout finishes on the phone; its sets and Finish wait in the outbox.
   app.env.navigator.onLine = false;
+  app.env.fetch = async (path, options) => { requests.push(`${options?.method ?? 'GET'} ${path}`); throw new Error('Offline'); };
   app.form.elements.result.value = '5';
   app.form.events.input();
   await app.nodes['#stale-finish'].events.click();
-  assert.deepEqual(requests, []);
-  assert.equal(app.nodes['#toast'].textContent, 'Not finished yet: cannot reach the server. Your sets are kept on this phone.');
+  assert.deepEqual(requests, ['GET /api/bootstrap']);
+  assert.match(app.nodes['#app'].innerHTML, /Workout complete/);
+  assert.equal(app.nodes['#toast'].textContent, 'Workout finished on this phone. It syncs when you are back online.');
+  assert.deepEqual(JSON.parse(app.disk.getItem('gymdex:outbox:v1')).ops.map((op) => [op.kind, op.body?.result]),
+    [['saveSet', 5], ['finish', undefined]]);
+  assert.match(app.nodes['#sync-status'].textContent, /^Offline\. Saved on phone/);
 });
 
 test('declining the finish question leaves the workout without a warning', async () => {
@@ -1911,7 +1952,7 @@ test('workout and exercise notes stay collapsed, keep drafts on the phone, and a
   const field = app.noteField('exercise:3');
   field.value = 'Seat 4';
   field.events.input();
-  assert.match(app.nodes['#sync-status'].textContent, /1 note waiting to save/);
+  assert.equal(app.nodes['#sync-status'].textContent, 'Saved on phone, syncing…');
   const reopened = await harness(app.disk, noted);
   assert.match(reopened.nodes['#app'].innerHTML, /<details class="note" open[^>]*>[\s\S]*?<textarea data-note-target="exercise:3"[^>]*>Seat 4<\/textarea>/);
   // The name starts with the visible label, so Voice Control's "Tap Note" finds it, and an open note
@@ -1924,7 +1965,7 @@ test('workout and exercise notes stay collapsed, keep drafts on the phone, and a
   [...app.timers.values()].find((timer) => timer.delay === 800).callback();
   await settle();
   assert.deepEqual(requests, [['PUT /api/workout-exercises/3/note', { note: 'Seat 4' }]]);
-  assert.equal(app.nodes['#sync-status'].textContent, 'All changes saved to server.');
+  assert.equal(app.nodes['#sync-status'].textContent, 'Synced');
   assert.equal(new DraftStore(() => app.disk).cachedWorkout().workout_exercises[0].note, 'Seat 4');
 });
 
@@ -2925,7 +2966,7 @@ function reorderDOM(app) {
   return { ...opened, step };
 }
 
-test('the compact Active Workout reorder list saves Sets and Notes before moving and preserves both Tracking Types', async () => {
+test('the compact Active Workout reorder list moves at once, syncs the move before Sets and Notes, and preserves both Tracking Types', async () => {
   const app = await harness(storage(), { workout_exercises: [{ ...pressEntry, note: 'Seat 2' }, plankEntry] });
   const requests = [];
   app.env.fetch = async (url, options) => {
@@ -2944,37 +2985,56 @@ test('the compact Active Workout reorder list saves Sets and Notes before moving
   const opened = reorderDOM(app);
   await clickIn(app, '[data-reorder-exercises]', { reorderExercises: '4' });
   await opened.step(4, -1);
-  assert.deepEqual(requests, [['/api/sets/2', { weight: 42.5, result: 8, completed: false }],
-    ['/api/workout-exercises/3/note', { note: 'Seat 3' }], ['/api/workout-exercises/4', { position: 1 }]]);
+  assert.match(opened.nodes['#reorder-status'].textContent, /Front Plank moved to position 1/);
+  for (let i = 0; i < 10; i += 1) await settle();
+  assert.deepEqual(requests, [['/api/workout-exercises/4', { position: 1 }],
+    ['/api/sets/2', { weight: 42.5, result: 8, completed: false }], ['/api/workout-exercises/3/note', { note: 'Seat 3' }]]);
   const saved = new DraftStore(() => app.disk).cachedWorkout();
   assert.deepEqual(saved.workout_exercises.map(entry => entry.id), [4, 3]);
   assert.equal(saved.workout_exercises[0].sets[0].result, 60);
   assert.equal(saved.workout_exercises[1].sets[0].weight, 42.5);
   assert.equal(saved.workout_exercises[1].note, 'Seat 3');
-  assert.match(opened.nodes['#reorder-status'].textContent, /Front Plank moved to position 1/);
 });
 
-test('a blocked draft or failed Active Workout move keeps its original order and inputs', async () => {
-  for (const invalid of [true, false]) {
-    const app = await harness(storage(), { workout_exercises: [pressEntry, plankEntry] });
-    const calls = [];
-    app.env.fetch = async (url, options) => { calls.push(url); return url === '/api/sets/2'
-      ? response({ id: 2, position: 1, weight: 42.5, result: 8, completed: false }) : response({ error: 'Move rejected' }, 500); };
-    app.form.elements.weight.value = '42.5';
-    app.form.elements.result.value = invalid ? '' : '8';
-    app.form.elements.completed.checked = invalid;
-    app.form.events.input();
-    const original = app.nodes['#app'].innerHTML;
-    const opened = reorderDOM(app);
-    await clickIn(app, '[data-reorder-exercises]', { reorderExercises: '4' });
-    await opened.step(4, -1);
-    assert.equal(app.nodes['#app'].innerHTML, original);
-    assert.equal(app.form.elements.weight.value, '42.5');
-    assert.match(opened.nodes['#reorder-list'].innerHTML, /Bench Press[\s\S]*Front Plank/);
-    assert.match(opened.nodes['#reorder-status'].textContent, invalid ? /Order unchanged.*pending Sets and Notes/ : /Order unchanged.*Move rejected/);
-    assert.equal(opened.dialog.open, true);
-    assert.deepEqual(calls, invalid ? [] : ['/api/sets/2', '/api/workout-exercises/4']);
-  }
+test('a move happens at once even with an invalid draft; a refused move shows Retry and Discard, and Discard asks before restoring the server order', async () => {
+  const app = await harness(storage(), { workout_exercises: [pressEntry, plankEntry] });
+  const calls = [];
+  const server = { gyms: [], active_workout: { id: 1, gym_id: 1, gym_name: 'Home', started_at: '2026-09-22 10:00:00' }, workout_exercises: [pressEntry, plankEntry] };
+  app.env.fetch = async (url, options) => {
+    calls.push(`${options?.method ?? 'GET'} ${url}`);
+    return url === '/api/bootstrap' ? response(structuredClone(server)) : response({ error: 'Move rejected.' }, 409);
+  };
+  app.form.elements.weight.value = '42.5';
+  app.form.elements.result.value = '';
+  app.form.elements.completed.checked = true;
+  app.form.events.input();
+  const opened = reorderDOM(app);
+  await clickIn(app, '[data-reorder-exercises]', { reorderExercises: '4' });
+  await opened.step(4, -1);
+  assert.match(opened.nodes['#reorder-list'].innerHTML, /Front Plank[\s\S]*Bench Press/);
+  for (let i = 0; i < 10; i += 1) await settle();
+  assert.deepEqual(calls, ['PUT /api/workout-exercises/4'], 'the invalid draft waits on the phone');
+  const status = app.nodes['#sync-status'].innerHTML;
+  assert.match(status, /Not synced: reordering exercises was refused\. Move rejected\./);
+  assert.match(status, /data-sync-retry>Retry<\/button>/);
+  const id = status.match(/data-sync-discard="([^"]+)"/)[1];
+  // Retry sends it again as is.
+  app.nodes['#app'].events.click({ target: { closest: (selector) => selector === '[data-sync-retry]' ? {} : null } });
+  for (let i = 0; i < 10; i += 1) await settle();
+  assert.deepEqual(calls, ['PUT /api/workout-exercises/4', 'PUT /api/workout-exercises/4']);
+  // Discard asks first; declining keeps the change.
+  const questions = [];
+  app.env.ask = async (question) => { questions.push(question); return questions.length > 1; };
+  const discard = { target: { closest: (selector) => selector === '[data-sync-discard]' ? { dataset: { syncDiscard: id } } : null } };
+  await app.nodes['#app'].events.click(discard);
+  assert.equal(JSON.parse(app.disk.getItem('gymdex:outbox:v1')).ops.length, 1);
+  await app.nodes['#app'].events.click(discard);
+  for (let i = 0; i < 10; i += 1) await settle();
+  assert.match(questions[0], /^Discard reordering exercises\? The server refused it: Move rejected\./);
+  assert.deepEqual(JSON.parse(app.disk.getItem('gymdex:outbox:v1')).ops, []);
+  assert.deepEqual(new DraftStore(() => app.disk).cachedWorkout().workout_exercises.map((entry) => entry.id), [3, 4]);
+  assert.equal(app.nodes['#toast'].textContent, 'Change discarded.');
+  assert.equal(new DraftStore(() => app.disk).get(1, 2).weight, '42.5', 'the set draft is kept');
 });
 
 test('Routine compact reorder saves the whole order and keeps Set counts; failure leaves the saved order', async () => {

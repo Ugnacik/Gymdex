@@ -362,32 +362,7 @@ def bootstrap(connection: sqlite3.Connection) -> dict[str, Any]:
     active_workout = dict(active) if active else None
     workout_exercises: list[dict[str, Any]] = []
     if active_workout:
-        workout_exercises = rows(
-            connection.execute(
-                """SELECT id, variation_id, position, tracking_type_snapshot AS tracking_type,
-                          exercise_name_snapshot AS exercise_name,
-                          variation_name_snapshot AS variation_name,
-                          equipment_snapshot AS equipment,
-                          manufacturer_snapshot AS manufacturer,
-                          label_snapshot AS label, note,
-                          (SELECT assisted FROM exercise_variations
-                           WHERE id = workout_exercises.variation_id) AS assisted
-                   FROM workout_exercises WHERE workout_id = ? ORDER BY position""",
-                (active_workout["id"],),
-            )
-        )
-    for entry in workout_exercises:
-        entry["sets"] = sets_for_exercise(connection, entry["id"])
-        entry["previous_sets"] = previous_sets(
-            connection, active_workout["gym_id"], entry["variation_id"], entry["equipment"],
-            entry["manufacturer"], entry["label"], entry["tracking_type"],
-        )
-        # The phone marks new bests as sets are completed, offline too, against these.
-        entry["record_bests"] = record_bests(
-            connection, active_workout["gym_id"], entry["variation_id"], entry["equipment"],
-            entry["manufacturer"], entry["label"], entry["tracking_type"],
-        )
-        entry["records"] = records.records(entry["record_bests"], entry["sets"], entry["tracking_type"])
+        workout_exercises = _active_entries(connection, "we.workout_id = ?", active_workout["id"])
     # The start screen offers each unarchived Gym's Routines beside plain Start.
     routines = rows(connection.execute(
         """SELECT r.id, r.gym_id, r.name,
@@ -402,6 +377,43 @@ def bootstrap(connection: sqlite3.Connection) -> dict[str, Any]:
         "workout_exercises": workout_exercises,
         "routines": routines,
     }
+
+
+def _active_entries(connection: sqlite3.Connection, where: str, value: int) -> list[dict[str, Any]]:
+    """Active Workout Exercises as the phone shows them: sets, Last workout and earlier bests."""
+    entries = rows(connection.execute(
+        f"""SELECT we.id, we.variation_id, we.position, we.tracking_type_snapshot AS tracking_type,
+                  we.exercise_name_snapshot AS exercise_name,
+                  we.variation_name_snapshot AS variation_name,
+                  we.equipment_snapshot AS equipment,
+                  we.manufacturer_snapshot AS manufacturer,
+                  we.label_snapshot AS label, we.note,
+                  (SELECT assisted FROM exercise_variations WHERE id = we.variation_id) AS assisted,
+                  w.gym_id
+           FROM workout_exercises we JOIN workouts w ON w.id = we.workout_id
+           WHERE w.completed_at IS NULL AND {where} ORDER BY we.position""",
+        (value,),
+    ))
+    for entry in entries:
+        gym_id = entry.pop("gym_id")
+        entry["sets"] = sets_for_exercise(connection, entry["id"])
+        entry["previous_sets"] = previous_sets(
+            connection, gym_id, entry["variation_id"], entry["equipment"],
+            entry["manufacturer"], entry["label"], entry["tracking_type"],
+        )
+        # The phone marks new bests as sets are completed, offline too, against these.
+        entry["record_bests"] = record_bests(
+            connection, gym_id, entry["variation_id"], entry["equipment"],
+            entry["manufacturer"], entry["label"], entry["tracking_type"],
+        )
+        entry["records"] = records.records(entry["record_bests"], entry["sets"], entry["tracking_type"])
+    return entries
+
+
+def active_entry(connection: sqlite3.Connection, exercise_id: int) -> dict[str, Any] | None:
+    """One Active Workout Exercise as bootstrap sends it, for answers to the phone's queued changes."""
+    found = _active_entries(connection, "we.id = ?", exercise_id)
+    return found[0] if found else None
 
 
 def record_bests(
@@ -1530,6 +1542,11 @@ def complete_workout(connection: sqlite3.Connection, workout_id: int) -> None:
         (workout_id,),
     )
     if not cursor.rowcount:
+        # A phone retrying a Finish whose answer it never got finds the workout already finished.
+        if connection.execute(
+            "SELECT 1 FROM workouts WHERE id = ? AND completed_at IS NOT NULL", (workout_id,),
+        ).fetchone():
+            return
         raise LookupError("Active workout not found.")
     connection.commit()
 
@@ -1696,12 +1713,30 @@ def append_set(connection: sqlite3.Connection, exercise_id: int) -> dict[str, An
     return _set_row(connection, cursor.lastrowid)
 
 
-def add_set(connection: sqlite3.Connection, exercise_id: int) -> dict[str, Any]:
-    """Append a set to an active Workout Exercise (see append_set)."""
+def add_set(connection: sqlite3.Connection, exercise_id: int, values: dict | None = None) -> dict[str, Any]:
+    """Append a set to an active Workout Exercise (see append_set).
+
+    A phone that added the set offline sends the values it showed (weight, result, side,
+    set_type), since the set above may have changed on the server since; they replace the copy.
+    """
+    values = {key: values[key] for key in ("weight", "result", "side", "set_type") if key in (values or {})}
+    if values:
+        weight, result, _ = validate_set_values(
+            {"weight": values.get("weight"), "result": values.get("result"), "completed": False})
+        values.update({key: value for key, value in (("weight", weight), ("result", result)) if key in values})
+        validate_side(values)
+        validate_set_type(values)
     with connection:
         connection.execute("BEGIN IMMEDIATE")
         require_active_exercise(connection, exercise_id)
-        return append_set(connection, exercise_id)
+        added = append_set(connection, exercise_id)
+        if values:
+            connection.execute(
+                f"UPDATE workout_sets SET {', '.join(f'{key} = ?' for key in values)} WHERE id = ?",
+                (*values.values(), added["id"]),
+            )
+            added = _set_row(connection, added["id"])
+        return added
 
 
 def validate_set_values(payload: dict) -> tuple[int | float | None, int | None, bool]:

@@ -169,16 +169,16 @@ Groups, alongside exercise names and saved machine details. Search and the
 Muscle Group choice work together; **Clear filter** keeps your search text.
 The same picker is used when adding to a Routine.
 
-Adding an exercise happens once per choice, even on a slow connection: the
-tapped choice (or the **Add exercise** button) says "Adding…" right away and the
-whole picker waits, so further taps do nothing until the server answers. The
-picker closes when the exercise is added; on an error the controls come back for
-another try. Each add also carries a request id, and the server answers a
-repeated id with the exercise the first request added (it remembers the last
-256 in memory), so a retried request never adds a second copy. **Start workout**
-says "Starting…" and **Create custom exercise** says "Creating…" the same way;
-Add set, Repeat, Start routine, Save as routine (and Replace routine), and adding to a Routine already
-ignore taps while they save.
+Adding an exercise happens once per choice, even on a slow connection or
+offline: the exercise appears in the workout at once and the picker closes, so
+further taps on the closed picker do nothing. The add is queued and sent in the
+background (see [Offline-first logging](#offline-first-logging)). Each add
+carries a request id, and the server answers a repeated id with the exercise the
+first request added (it remembers the last 1024 in memory), so a retried request
+never adds a second copy. **Start workout** says "Starting…" and **Create custom
+exercise** says "Creating…" while they wait for the server; Repeat, Start
+routine, Save as routine (and Replace routine), and adding to a Routine ignore
+taps while they save.
 
 ## Custom exercises
 
@@ -372,24 +372,70 @@ like sets: automatically after a short typing pause or when you leave the box,
 with a draft kept on this phone until the server has it, so a note typed without
 signal is not lost. A note still waiting to save opens when the page reloads.
 
-Outstanding set and note edits must reach the server before adding, moving,
-removing an exercise or changing its machine, or finishing the workout. If one cannot be saved, the page
-scrolls to it and a message says why the action waited. Every input change also saves a draft on the current
-device. Reloading restores those drafts, including unfinished entries. The page
-shows whether changes are saved to the server or waiting on the phone.
+## Offline-first logging
 
-If the server cannot be reached, keep editing existing sets and notes. Pending saves retry
-when the connection returns, when you return to the page, and every 15 seconds
-while the page is visible. Invalid values require correction; server-rejected
-sets stay on the phone and show a Retry button for a manual retry after review.
+Logging a workout never waits for the server. Adding an exercise, adding and
+removing sets, editing weight, reps or seconds, effort, side and set type,
+notes, reordering, replacing an exercise, changing its machine, completing sets
+and finishing the workout all happen on the phone first and sync in the
+background. A line under the header says where things stand:
+
+- **Synced**: the server has everything.
+- **Saved on phone, syncing…**: changes are on the phone and on their way.
+- **Offline. Saved on phone; syncs when you are back online.**
+- **Not synced: … was refused.** The server said no (for example the workout was
+  finished on another device). The change stays on the phone with **Retry** and
+  **Discard change**; Discard asks first. Nothing is dropped silently.
+
+How it works:
+
+- Set and note edits are drafts on the phone, as before. Structural changes
+  (add or remove an exercise or set, reorder, replace, change machine, finish)
+  go into an ordered outbox in the browser's storage (`gymdex:outbox:v1`). It
+  survives closing the app and reloading offline; on reload the queue is applied
+  again on top of the last loaded workout, so the screen shows what you logged.
+- The outbox sends one change at a time, in order. Things created offline get a
+  temporary negative id; when the server answers, the phone swaps in the
+  server's id everywhere (screen, drafts and later queued changes). Set and note
+  drafts for something new are sent once the server knows it.
+- Adds carry a request id, so a retry after a lost answer gets the first answer
+  instead of a copy. Deletes treat "not found" as done, finishing an already
+  finished workout succeeds, and the other changes set values, so repeating them
+  is harmless.
+- Lost connections, timeouts and server errors (5xx, 408, 429) retry with
+  backoff (1, 2, 5, 10, 20, then every 30 seconds, plus a little jitter), and at
+  once when the connection comes back or you return to the page. Any other
+  refusal stops the queue and is shown as above.
+- The server stays authoritative: every change is checked there as before, and
+  the phone takes the server's answer (its ids, Last workout, set slots and
+  bests for an exercise added offline). No schema change; the API gained only
+  additive fields: Add set accepts optional `weight`, `result`, `side` and
+  `set_type` (the values the phone showed) and a `request_id`, and Add exercise,
+  Replace and Edit machine also answer with the exercise as `entry`.
+- The exercise list for Add exercise is kept per gym on the phone after it loads
+  once, so you can add from it offline (or after 3 seconds on a very slow
+  connection).
+
+Finishing offline validates your sets on the phone, queues the finish after
+everything else, and returns to the start screen. The workout appears in
+History once it syncs. Starting another workout waits until the queue has
+synced, so two workouts never overlap.
+
+Limits: canceling a workout, starting one, creating a custom exercise, History
+and Progress, and editing finished workouts still need the server. An exercise
+added offline shows Last workout and bests after it syncs. The server remembers
+request ids in memory, so a retry that straddles a server restart could add one
+duplicate exercise or set (visible, and removable). The queue belongs to this
+browser and site address, does not sync while the app is closed, and is lost if
+browser site data is cleared. Use one device at a time when editing a workout.
+
+If a set has an invalid value (for example Done without reps), it stays on the
+phone highlighted until you fix it; finishing scrolls to it and says why.
+Server-rejected sets show a Retry button for a manual retry after review.
 
 After one online visit over HTTPS, the app caches its files and last loaded
 workout so it can reopen offline. Localhost also supports this for development;
-a plain HTTP LAN address does not support offline reopening. Creating gyms,
-starting or finishing workouts, adding, removing or reordering exercises, and
-adding or removing sets still require the server. Drafts belong to this browser and site address, do not
-sync in the background while the app is closed, and disappear if browser site
-data is cleared. Use one device at a time when editing a workout.
+a plain HTTP LAN address does not support offline reopening.
 
 If browser storage is unavailable, the page warns you to keep it open until
 changes reach the server. Local drafts are a recovery aid, not a database backup.

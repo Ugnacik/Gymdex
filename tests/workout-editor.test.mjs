@@ -6,6 +6,7 @@ import { WorkoutEditor } from '../static/workout-editor.mjs';
 const values = { weight: '12.5', result: '8', assistance: true, completed: true };
 const data = () => ({ active_workout: { id: 1, gym_id: 1 }, gyms: [],
   workout_exercises: [{ id: 3, sets: [{ id: 2, weight: null, result: null, completed: false }] }] });
+const drain = async () => { for (let i = 0; i < 20; i += 1) await new Promise((resolve) => setImmediate(resolve)); };
 function deferred() {
   let resolve;
   const promise = new Promise((done) => { resolve = done; });
@@ -173,15 +174,31 @@ test('finish waits for the latest revision and freezes edits, retries and duplic
   assert.equal(editor.busy, false);
 });
 
-test('declined or failed terminal requests leave the workout editable', async () => {
+test('declined or canceled-offline workouts stay editable, and finishing offline queues on the phone', async () => {
   for (const operation of ['finish', 'cancel']) {
-    const { editor, env } = fixture();
+    const { editor, env, requests } = fixture();
     assert.equal(await editor[operation](async () => false), false);
+    env.online = false;
     env.request = async () => { throw new Error('Offline'); };
-    await assert.rejects(editor[operation](), /Offline/);
+    if (operation === 'cancel') {
+      // Cancel discards the workout on the server, so it still needs a connection.
+      await assert.rejects(editor.cancel(), /Offline/);
+      assert.equal(editor.data.active_workout.id, 1);
+      assert.equal(editor.edit(2, values), true);
+    } else {
+      editor.edit(2, values);
+      assert.equal(await editor.finish(), true);
+      assert.equal(editor.data.active_workout, null);
+      assert.deepEqual(editor.outbox.ops.map((op) => op.kind), ['saveSet', 'finish']);
+      assert.deepEqual(requests, []);
+      env.online = true;
+      env.request = async (path, options) => options.method === 'PUT' ? { id: 2, ...JSON.parse(options.body) } : { ok: true };
+      editor.outbox.kick();
+      await drain();
+      assert.deepEqual(requests.map(({ method, path }) => `${method} ${path}`), ['PUT /api/sets/2', 'POST /api/workouts/1/complete']);
+      assert.equal(editor.outbox.size, 0);
+    }
     assert.equal(editor.busy, false);
-    assert.equal(editor.data.active_workout.id, 1);
-    assert.equal(editor.edit(2, values), true);
   }
 });
 
@@ -194,8 +211,8 @@ test('finish and cancel hold the workout busy while the confirmation sheet waits
       let savedBeforeAsking;
       const ending = editor[operation](() => { savedBeforeAsking = requests.length; return answer.promise; });
       await new Promise((resolve) => setImmediate(resolve));
-      // Finish saves drafts before asking; cancel asks first and discards them.
-      assert.equal(savedBeforeAsking, operation === 'finish' ? 1 : 0);
+      // Nothing is sent before the answer: finishing queues the drafts behind it, cancel discards them.
+      assert.equal(savedBeforeAsking, 0);
       assert.equal(editor.busy, true);
       assert.equal(timers.size, 0);
       assert.equal(editor.edit(2, { ...values, result: '9' }), false);
@@ -203,7 +220,9 @@ test('finish and cancel hold the workout busy while the confirmation sheet waits
       answer.resolve(accepted);
       assert.equal(await ending, accepted);
       assert.equal(editor.busy, false);
+      await drain();
       assert.equal(requests.some(({ method }) => method === 'DELETE' || method === 'POST'), accepted);
+      if (accepted && operation === 'finish') assert.deepEqual(requests.map(({ method }) => method), ['PUT', 'POST']);
     }
   }
 });
@@ -250,45 +269,39 @@ test('cancel waits for saving and preserves a newer draft if deletion fails', as
   assert.equal(editor.status(2).dirty, false);
 });
 
-test('set removal waits for saving and prevents any later queued save', async () => {
-  const { editor, env, timers, requests } = fixture();
-  const saving = deferred();
-  env.request = async (_, options) => options.method === 'PUT' ? saving.promise : { ok: true };
+test('set removal is immediate on the phone and prevents any later queued save', async () => {
+  const { editor, timers, requests, drafts } = fixture();
   editor.edit(2, values);
   const queued = [...timers.values()][0];
-  const save = editor.save(2);
-  const removal = editor.remove(2);
-  assert.equal(editor.status(2).removing, true);
+  assert.equal(await editor.remove(2), true);
+  assert.deepEqual(editor.data.workout_exercises[0].sets, []);
+  assert.deepEqual(drafts.cachedWorkout().workout_exercises[0].sets, []);
+  assert.equal(editor.status(2), null);
   assert.equal(editor.edit(2, values), false);
   await queued();
-  assert.deepEqual(requests.map((r) => r.method), ['PUT']);
-  saving.resolve({ id: 2, result: 8, completed: true });
-  await save;
-  assert.equal(await removal, true);
-  await queued();
-  assert.equal(editor.status(2), null);
+  await drain();
   assert.equal(await editor.save(2), false);
-  assert.deepEqual(requests.map((r) => r.method), ['PUT', 'DELETE']);
+  assert.deepEqual(requests.map(({ method, path }) => `${method} ${path}`), ['DELETE /api/sets/2']);
 });
 
-test('failed removal preserves drafts, and finish waits for an in-flight removal', async () => {
-  const { editor, env } = fixture();
-  editor.edit(2, values);
-  env.request = async () => { throw new Error('Offline'); };
-  assert.equal(await editor.remove(2), false);
-  assert.equal(editor.status(2).values.result, '8');
-  assert.equal(editor.status(2).removing, false);
-  const deletion = deferred();
+test('a removal without signal stays queued and retries in order before Finish', async () => {
+  const { editor, env, timers } = fixture(undefined, { active_workout: { id: 1, gym_id: 1 }, gyms: [],
+    workout_exercises: [{ id: 3, sets: [{ id: 2, position: 1 }, { id: 5, position: 2 }] }] });
   const calls = [];
-  env.request = async (path) => { calls.push(path); return path === '/api/sets/2' ? deletion.promise : { ok: true }; };
-  const removal = editor.remove(2);
-  const finish = editor.finish();
-  await Promise.resolve();
+  env.request = async (path) => { calls.push(path); throw new Error('Cannot reach the server.'); };
+  assert.equal(await editor.remove(2), true);
+  await drain();
   assert.deepEqual(calls, ['/api/sets/2']);
-  deletion.resolve({ ok: true });
-  await removal;
-  assert.equal(await finish, true);
-  assert.deepEqual(calls, ['/api/sets/2', '/api/workouts/1/complete']);
+  assert.equal(editor.outbox.size, 1);
+  assert.equal(editor.outbox.failed, null, 'a network failure is retried, not shown as refused');
+  assert.equal(timers.size, 1, 'a retry is scheduled with backoff');
+  assert.equal(await editor.finish(), true);
+  env.request = async (path) => { calls.push(path); return { ok: true }; };
+  await [...timers.values()].at(-1)();
+  await drain();
+  // A new change tries the queue again at once; the delete still goes before Finish.
+  assert.deepEqual(calls.slice(-2), ['/api/sets/2', '/api/workouts/1/complete']);
+  assert.equal(editor.outbox.size, 0);
 });
 
 test('removing a set applies the renumbered positions and keeps the other sets\' drafts', async () => {
@@ -316,7 +329,7 @@ const twoExercises = () => ({ active_workout: { id: 1, gym_id: 1 }, gyms: [], wo
 const echoSets = async (path, options) => options.method === 'PUT' && path.startsWith('/api/sets/')
   ? { id: Number(path.split('/').pop()), ...JSON.parse(options.body) } : { ok: true };
 
-test('removing an exercise saves other drafts first and discards its own for good', async () => {
+test('removing an exercise is immediate, discards its own drafts for good and saves the others after it', async () => {
   const { editor, env, drafts, requests, timers } = fixture(undefined, twoExercises());
   env.request = echoSets;
   editor.edit(2, values);
@@ -326,39 +339,42 @@ test('removing an exercise saves other drafts first and discards its own for goo
   assert.deepEqual(requests, []);
   assert.equal(timers.size, 3, 'declining keeps autosave queued');
   assert.equal(await editor.removeExercise(4), true);
-  assert.deepEqual(requests.map(({ method, path }) => `${method} ${path}`),
-    ['PUT /api/sets/2', 'DELETE /api/workout-exercises/4']);
   assert.deepEqual(editor.data.workout_exercises.map((entry) => [entry.id, entry.position]), [[3, 1]]);
   assert.deepEqual(drafts.cachedWorkout().workout_exercises.map((entry) => entry.id), [3]);
   assert.equal(drafts.get(1, 5), null);
   assert.equal(drafts.get(1, 6), null);
   assert.equal(editor.status(5), null);
+  await drain();
+  // The removal goes first; set 2's draft follows once the queue is empty.
+  assert.deepEqual(requests.map(({ method, path }) => `${method} ${path}`),
+    ['DELETE /api/workout-exercises/4', 'PUT /api/sets/2']);
   assert.equal(editor.pending, false);
   await editor.retry();
   assert.equal(requests.length, 2);
   assert.equal(editor.busy, false);
 });
 
-test('moving an exercise saves drafts first and applies the server order', async () => {
+test('moving an exercise is immediate, even with an invalid draft, and sends drafts after it', async () => {
   const { editor, env, drafts, requests } = fixture(undefined, twoExercises());
-  editor.edit(2, { ...values, result: '' });
-  assert.equal(await editor.moveExercise(4, 1), false, 'an invalid draft must be corrected first');
-  assert.deepEqual(requests, []);
-  editor.edit(2, values);
+  editor.edit(2, { ...values, result: '' }, { valid: false });
   env.request = async (path, options) => path === '/api/workout-exercises/4'
     ? { workout_exercises: [{ id: 4, position: 1 }, { id: 3, position: 2 }] } : echoSets(path, options);
   assert.equal(await editor.moveExercise(4, 1), true);
-  assert.deepEqual(requests.map(({ method, path }) => `${method} ${path}`),
-    ['PUT /api/sets/2', 'PUT /api/workout-exercises/4']);
-  assert.deepEqual(JSON.parse(requests[1].body), { position: 1 });
   assert.deepEqual(editor.data.workout_exercises.map((entry) => [entry.id, entry.position]), [[4, 1], [3, 2]]);
   assert.deepEqual(drafts.cachedWorkout().workout_exercises.map((entry) => entry.id), [4, 3]);
-  env.request = async () => { throw new Error('Offline'); };
-  await assert.rejects(editor.moveExercise(3, 1), /Offline/);
-  await assert.rejects(editor.removeExercise(3), /Offline/);
-  assert.deepEqual(editor.data.workout_exercises.map((entry) => entry.id), [4, 3]);
+  await drain();
+  assert.deepEqual(requests.map(({ method, path }) => `${method} ${path}`), ['PUT /api/workout-exercises/4']);
+  assert.deepEqual(JSON.parse(requests[0].body), { position: 1 });
+  editor.edit(2, values);
+  await editor.save(2);
+  assert.deepEqual(requests.map(({ method, path }) => `${method} ${path}`), ['PUT /api/workout-exercises/4', 'PUT /api/sets/2']);
+  // Without signal the move still happens here and waits in the queue.
+  env.online = false;
+  assert.equal(await editor.moveExercise(3, 1), true);
+  assert.deepEqual(editor.data.workout_exercises.map((entry) => entry.id), [3, 4]);
+  assert.deepEqual(editor.outbox.ops.map((op) => [op.kind, op.entryId, op.position]), [['moveExercise', 3, 1]]);
+  assert.equal(requests.length, 2);
   assert.equal(editor.busy, false);
-  assert.equal(editor.edit(2, values), true);
 });
 
 const noted = () => ({ active_workout: { id: 1, gym_id: 1, note: '' }, gyms: [], workout_exercises: [
