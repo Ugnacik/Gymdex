@@ -6,6 +6,7 @@ import { ChoiceField } from "./choice-field.mjs";
 import { ExerciseSearch } from "./exercise-search.mjs";
 import { openRoutines, renderRoutineStarts } from "./routines.mjs";
 import { bindReorderNameHold, openExerciseReorder } from "./exercise-reorder.mjs";
+import { findRecords, recordName, recordText } from "./records.mjs";
 
 // The server stores times as SQLite CURRENT_TIMESTAMP values in UTC ("YYYY-MM-DD HH:MM:SS").
 // Gymdex shows them in the device's time zone.
@@ -174,12 +175,61 @@ function showToast(message) {
   showToast.timer = setTimeout(() => { toast.hidden = true; }, 3200);
 }
 
+// New bests of an Active Workout exercise from its saved sets (drafts count once saved).
+function liveRecords(entry) {
+  return findRecords(entry.record_bests, entry.sets, entry.tracking_type);
+}
+
+// "New best · Weight, Est. 1RM", the set's record types in a pill like Strong's PR marker.
+function recordBadgeText(records) {
+  return `New best · ${records.map(recordName).join(", ")}`;
+}
+
+// Marks each Active Workout set that is a new best, and unmarks it while it is being edited
+// (an unsaved draft) or once it is no longer the best or no longer completed.
+function syncRecordBadges() {
+  const found = new Map();
+  for (const entry of state.data?.workout_exercises ?? []) {
+    for (const record of liveRecords(entry)) found.set(record.set_id, [...(found.get(record.set_id) ?? []), record]);
+  }
+  document.querySelectorAll(".set-form").forEach((form) => {
+    const badge = form.querySelector("[data-set-record]");
+    if (!badge) return;
+    const records = state.editor?.status(form.dataset.setId)?.dirty ? null : found.get(Number(form.dataset.setId));
+    badge.hidden = !records;
+    badge.textContent = records ? recordBadgeText(records) : "";
+    if (records) badge.setAttribute("aria-label", `New best: ${records.map(recordText).join(", ")}`);
+    else badge.removeAttribute("aria-label");
+    form.classList.toggle("is-record", Boolean(records));
+  });
+}
+
+// Records grouped under their exercise (and Side), in order: [["Bench Press", [record, …]], …].
+function groupRecords(records) {
+  const groups = new Map();
+  for (const record of records) {
+    const title = `${record.exercise}${record.side ? ` · ${sideText(record.side)}` : ""}`;
+    groups.set(title, [...(groups.get(title) ?? []), record]);
+  }
+  return [...groups];
+}
+
+// The finish summary's and history detail's list of new bests, one line per record under its exercise.
+function renderRecordList(records) {
+  if (!records.length) return "";
+  return `<section class="record-list" aria-label="New bests">
+    <h2>${records.length} new best${records.length === 1 ? "" : "s"}</h2>
+    <ul>${groupRecords(records).map(([title, items]) => `<li><span class="record-exercise">${escapeHtml(title)}</span>${items.map((record) => `<span>${escapeHtml(recordText(record))}</span>`).join("")}</li>`).join("")}</ul>
+  </section>`;
+}
+
 function renderFinishSummary() {
   const summary = state.summary;
   return `<section class="finish-summary" aria-labelledby="finish-summary-title">
     <h1 id="finish-summary-title" tabindex="-1">Workout complete</h1>
     <p>${escapeHtml(summary.workout.gym_name)} · ${summary.duration}</p>
     <p class="finish-totals">${summary.exercises} exercise${summary.exercises === 1 ? "" : "s"} with completed sets · ${summary.sets} completed set${summary.sets === 1 ? "" : "s"}</p>
+    ${renderRecordList(summary.records ?? [])}
     <div class="summary-actions"><button class="secondary" id="summary-routine">Save as routine</button><button class="secondary" id="summary-history">View workout</button></div>
     <button class="text-button" id="dismiss-summary">Done</button>
   </section>`;
@@ -757,6 +807,7 @@ function renderHistoryDetail(data, canRepeat) {
   return `<h3>${escapeHtml(workoutTitle(workout))}</h3>
     <p>${workout.muscle_groups?.length ? `${escapeHtml(workout.gym_name)}<br>` : ""}Started ${escapeHtml(formatLocalDateTime(workout.started_at))}<br>Finished ${escapeHtml(formatLocalDateTime(workout.completed_at))}</p>
     ${renderHistoryNote("workout", workout.note, "workout note")}
+    ${renderRecordList(entries.flatMap((entry) => (entry.records ?? []).map((record) => ({ ...record, exercise: exerciseDisplayName(entry) }))))}
     ${workout.gym_archived ? `<p class="history-notice">Restore ${escapeHtml(workout.gym_name)} in Manage to repeat this workout.</p>`
       : `${canRepeat ? `<button class="secondary history-repeat" type="button" data-repeat-workout="${workout.id}">Repeat this workout</button>` : `<p class="history-notice">Finish the active workout before repeating this one.</p>`}
         <button class="secondary history-save-routine" type="button" data-save-routine="${workout.id}">Save as routine</button>`}
@@ -773,7 +824,9 @@ function renderHistoryDetail(data, canRepeat) {
           const assisted = Boolean(entry.assisted) || set.weight < 0;
           const effort = set.effort ? ` · ${effortText(set.effort)}` : "";
           const side = set.side ? ` ${sideText(set.side, { short: true })}` : "";
+          const setRecords = (entry.records ?? []).filter((record) => record.set_id === set.id);
           return `<li><span>${label}${side}: ${escapeHtml(result)} · ${escapeHtml(weight)}${escapeHtml(effort)}</span><span class="meta">${set.completed ? "Completed" : "Not completed"}</span>
+            ${setRecords.length ? `<span class="set-record history-set-record">${escapeHtml(recordBadgeText(setRecords))}</span>` : ""}
             ${set.id ? `<div class="history-set-actions"><button type="button" class="text-button history-edit-toggle" data-edit-set="${set.id}">Edit ${lower}</button><button type="button" class="text-button history-delete-set" data-delete-history-set="${set.id}">Delete ${lower}</button></div>
               <form class="history-set-form" data-history-set="${set.id}" data-assisted="${assisted}" hidden>
                 <div class="set-inputs">
@@ -1630,6 +1683,7 @@ function syncEditorView() {
       .find((set) => set.id === Number(form.dataset.setId));
     if (saved && !status.dirty) form.classList.toggle("is-complete", Boolean(saved.completed));
   });
+  syncRecordBadges();
   document.querySelectorAll("[data-note-target]").forEach((field) => {
     const target = field.dataset.noteTarget;
     const status = state.editor?.noteStatus(target);
@@ -1677,6 +1731,7 @@ async function endWorkout(cancel) {
       duration: formatElapsed(elapsedMinutes(state.data.active_workout)),
       sets: state.data.workout_exercises.reduce((count, entry) => count + entry.sets.filter(set => set.completed).length, 0),
       exercises: state.data.workout_exercises.filter(entry => entry.sets.some(set => set.completed)).length,
+      records: state.data.workout_exercises.flatMap((entry) => liveRecords(entry).map((record) => ({ ...record, exercise: exerciseDisplayName(entry) }))),
     };
     return confirmed;
   };
@@ -2173,7 +2228,7 @@ function applyReplacement(entry, saved) {
   Object.assign(entry, {
     variation_id: saved.variation_id, exercise_name: saved.exercise_name, variation_name: saved.variation_name,
     equipment: saved.equipment, manufacturer: saved.manufacturer, label: saved.label,
-    tracking_type: saved.tracking_type, assisted: saved.assisted, previous_sets: [],
+    tracking_type: saved.tracking_type, assisted: saved.assisted, previous_sets: [], record_bests: {},
   });
   if (saved.cleared) entry.sets = entry.sets.map((set) => ({ ...set, weight: null, result: null, effort: null, completed: false }));
   drafts.snapshot(state.data);
@@ -2274,6 +2329,7 @@ function renderSet(entry, set, index) {
         <label class="set-complete">Done <input name="completed" type="checkbox" aria-label="Mark ${escapeHtml(name)} completed and save" ${set.completed ? "checked" : ""} /></label>
       </div>
       <div class="set-actions">
+        <span class="set-record" data-set-record hidden></span>
         <span class="set-status" role="status"></span>
         <button type="button" class="text-button set-retry" hidden>Retry</button>
       </div>

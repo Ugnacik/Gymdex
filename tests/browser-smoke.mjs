@@ -655,7 +655,7 @@ try {
   const replacedRoutine = afterReplace.find(routine => routine.id === savedRoutine.id);
   check('Replace keeps the routine and its name and swaps in the workout\'s exercises', afterReplace.length === routineCount
     && replacedRoutine.name === 'Saved from summary' && replacedRoutine.exercises.length === savedRoutine.exercises.length && savedRoutine.exercises.length > 0
-    && (await page.locator('#toast').innerText()).startsWith('Routine Saved from summary replaced with'));
+    && await eventually(async () => (await page.locator('#toast').innerText()).startsWith('Routine Saved from summary replaced with')));
   await screenshot('routine-replace-done');
   const historyNote = await page.locator('#history-detail .exercise-entry .note-text').first().boundingBox();
   const historyHeading = await page.locator('#history-detail .history-exercise-heading').first().boundingBox();
@@ -1024,6 +1024,45 @@ try {
   await page.locator('#exercise-reorder').waitFor({ state: 'detached' });
   check('Closing the sheet after removing its exercise returns focus to the workout', await page.evaluate(() =>
     !!document.activeElement?.closest('.exercise-summary, #open-picker')));
+  // New bests: a completed set that beats earlier Bench Press sets is marked, unmarked when
+  // uncompleted, listed on the finish summary and in history detail.
+  const ongoing = (await read('/api/bootstrap')).active_workout;
+  if (ongoing) await post(`/api/workouts/${ongoing.id}/complete`);
+  const recordWorkout = await post('/api/workouts', { gym_id: 1 });
+  await post(`/api/workouts/${recordWorkout.id}/exercises`, { variation_id: benchEntry.variation_id, equipment: benchEntry.equipment,
+    manufacturer: benchEntry.manufacturer ?? '', label: benchEntry.label ?? '' });
+  await page.reload();
+  const recordSet = page.locator('.set-form').first();
+  const recordBadge = recordSet.locator('[data-set-record]');
+  check('Bootstrap sends earlier bests for the active exercise', Object.keys((await read('/api/bootstrap')).workout_exercises[0].record_bests).length > 0);
+  await recordSet.locator('[name=weight]').fill('200');
+  await recordSet.locator('[name=result]').fill('5');
+  check('An uncompleted heavy set is no record', await recordBadge.isHidden());
+  await recordSet.locator('[name=completed]').check();
+  await recordBadge.waitFor();
+  check('A completed set that beats earlier bests is marked', (await recordBadge.innerText()).startsWith('New best · Weight'));
+  check('The record badge fits the phone width', await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  await recordSet.screenshot({ path: join(artifacts, 'record-set.png') });
+  await recordSet.locator('[name=completed]').uncheck();
+  check('Uncompleting the set removes its record mark', await eventually(async () => await recordBadge.isHidden()));
+  await recordSet.locator('[name=completed]').check();
+  await recordBadge.waitFor();
+  await recordSet.locator('[name=weight]').fill('1');
+  check('Editing the set hides its record mark until it is saved', await recordBadge.isHidden());
+  await recordSet.locator('[name=weight]').fill('200');
+  await page.locator('[data-finish-workout]').first().click();
+  await confirmSheet.getByRole('button', { name: 'Finish', exact: true }).click();
+  await page.locator('.finish-summary').waitFor();
+  const summaryRecords = await page.locator('.finish-summary .record-list').innerText();
+  check('The finish summary lists the new bests', /new best/.test(summaryRecords) && summaryRecords.includes('Weight 200 kg'));
+  await screenshot('finish-summary-records');
+  await page.locator('#summary-history').click();
+  await page.locator('#history-detail .record-list').waitFor();
+  check('History detail lists the new bests and marks the set', (await page.locator('#history-detail .record-list').innerText()).includes('Weight 200 kg')
+    && await page.locator('#history-detail .history-set-record').count() === 1);
+  const recordHistory = await read(`/api/history/${recordWorkout.id}`);
+  check('The server computes the same records', recordHistory.workout.record_count === recordHistory.workout_exercises[0].records.length
+    && recordHistory.workout_exercises[0].records.some(record => record.type === 'weight' && record.value === 200));
   check('No unexpected JavaScript exceptions', errors.length === 0);
   await writeFile(join(artifacts, 'results.json'), JSON.stringify({ checks, errors, port }, null, 2));
   console.log(`${checks.length} browser checks passed. Artifacts: ${artifacts}`);

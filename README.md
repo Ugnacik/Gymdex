@@ -492,6 +492,46 @@ and completed-set count. **Save as routine** saves that workout as a plan;
 The summary is shown for the current page session, while the workout itself
 remains in History.
 
+## New bests
+
+Gymdex marks personal records the way the Strong app does. When a completed
+set beats your earlier bests, it gets a gold **New best** pill naming what it
+beat. The finish summary and the workout's history detail list every new best
+with the previous value, for example "Weight 105 kg (was 100 kg)".
+
+| Record | Counts for | Meaning |
+| --- | --- | --- |
+| Weight | loaded sets | heaviest weight |
+| Est. 1RM | loaded sets of 1–12 reps | Brzycki estimate, weight × 36 / (37 − reps), as Strong uses |
+| Set volume | loaded sets | weight × reps of one set |
+| Least assistance | assisted sets | less assistance than ever (assistance is stored as negative weight, so this is the highest weight, as in Progress) |
+| Most reps | sets without weight | most reps in one set |
+| Longest time | duration exercises | longest set |
+
+- Only completed sets that are not warm-ups and have a result count. That
+  matches Strong, which leaves warm-ups out of its records, and matches
+  Progress and "Last workout".
+- Bests are kept per Exercise Configuration at the Gym, which is the same key
+  "Last workout" uses. A machine at another gym or with other equipment has its
+  own bests.
+- Each Side has its own bests, so a left-side set is compared only with
+  earlier left-side sets.
+- A set is a new best only when it is strictly better than every earlier
+  completed workout. Ties do not count.
+- The first time you do an exercise there is nothing to beat, so nothing is
+  marked.
+- In one workout, only the best set of each kind carries the record. On a tie,
+  the earlier set carries it.
+- The pill appears as soon as a set is completed, offline too. The server sends
+  the earlier bests (`record_bests`) with the active workout, and
+  `static/records.mjs` applies the same rules as `gymdex/records.py`. The pill
+  is hidden while a set has unsaved edits and disappears when the set is
+  uncompleted or is no longer the best.
+- History detail records (`records` per exercise and `record_count` per
+  workout from `/api/history/<id>`) are computed from the data on every
+  request. They compare only with workouts finished earlier, so editing or
+  deleting an old workout updates them, and no schema change was needed.
+
 ## Run locally
 
 Gymdex has no third-party runtime dependencies. It needs Python 3.11 or newer.
@@ -527,6 +567,7 @@ node tests/keyboard.test.mjs
 node tests/confirm-sheet.test.mjs
 node tests/choice-field.test.mjs
 node tests/exercise-search.test.mjs
+node tests/records.test.mjs
 node tests/exercise-reorder.test.mjs
 ```
 

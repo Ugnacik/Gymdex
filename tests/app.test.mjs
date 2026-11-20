@@ -38,7 +38,8 @@ function node() {
 
 function setForm(setId, position) {
   const formNodes = { fieldset: node(), '.set-status': node(), '.remove-set': node(), '.set-retry': Object.assign(node(), { hidden: true }),
-    '.fill-previous': node(), '[data-set-effort]': Object.assign(node(), { dataset: {} }) };
+    '.fill-previous': node(), '[data-set-effort]': Object.assign(node(), { dataset: {} }),
+    '[data-set-record]': Object.assign(node(), { hidden: true }) };
   const form = Object.assign(node(), {
     isConnected: true, dataset: { setId: String(setId), entryId: '3', setLabel: `set ${position}` },
     elements: { weight: Object.assign(node(), { value: '', attributes: { 'aria-label': `Bench Press, set ${position} weight in kilograms` },
@@ -246,6 +247,61 @@ test('finish summary uses acknowledged set edits and survives a failed bootstrap
   assert.match(app.nodes['#app'].innerHTML, /1 exercise with completed sets · 1 completed set/);
   assert.deepEqual(app.env.window.scrollPosition, { top: 0, left: 0, behavior: 'instant' });
   assert.equal(new DraftStore(() => app.disk).cachedWorkout().active_workout, null);
+});
+
+test('a completed set that beats earlier bests is marked, unmarked when edited or uncompleted, and listed when finishing', async () => {
+  const app = await harness(storage(), { workout_exercises: [{ id: 3, exercise_name: 'Bench Press', variation_name: 'Standard', equipment: 'Barbell',
+    previous_sets: [], record_bests: { '': { weight: 40, volume: 400, e1rm: 50 } },
+    sets: [{ id: 2, position: 1, weight: null, result: null, completed: false }] }] });
+  app.env.fetch = async (path, options) => {
+    if (path === '/api/sets/2') return response({ id: 2, position: 1, ...JSON.parse(options.body) });
+    if (path === '/api/workouts/1/complete') return response({ ok: true });
+    throw new Error('Refresh unavailable');
+  };
+  const badge = app.form.querySelector('[data-set-record]');
+  app.form.elements.weight.value = '42.5';
+  app.form.elements.result.value = '8';
+  assert.equal(badge.hidden, true);
+  app.form.elements.completed.checked = true;
+  app.form.elements.completed.events.change();
+  await settle();
+  assert.equal(badge.hidden, false);
+  assert.equal(badge.textContent, 'New best · Weight, Est. 1RM');
+  // Unsaved edits hide it until they are saved; then it reflects the saved set.
+  app.form.elements.weight.value = '30';
+  app.form.events.input();
+  assert.equal(badge.hidden, true);
+  app.form.elements.completed.checked = false;
+  app.form.elements.completed.events.change();
+  await settle();
+  assert.equal(badge.hidden, true, 'an uncompleted set is no record');
+  app.form.elements.weight.value = '45';
+  app.form.elements.completed.checked = true;
+  app.form.elements.completed.events.change();
+  await settle();
+  assert.equal(badge.textContent, 'New best · Weight, Est. 1RM');
+  await app.nodes['#finish'].events.click();
+  const html = app.nodes['#app'].innerHTML;
+  assert.match(html, /2 new bests/);
+  assert.match(html, /Bench Press<\/span><span>Weight 45 kg \(was 40 kg\)/);
+  assert.match(html, /Est\. 1RM 55\.9 kg \(was 50 kg\)/);
+});
+
+test('the finish summary lists no bests without earlier ones to beat', async () => {
+  const app = await harness();
+  app.env.fetch = async (path, options) => {
+    if (path === '/api/sets/2') return response({ id: 2, position: 1, ...JSON.parse(options.body) });
+    if (path === '/api/workouts/1/complete') return response({ ok: true });
+    throw new Error('Refresh unavailable');
+  };
+  app.form.elements.weight.value = '100';
+  app.form.elements.result.value = '5';
+  app.form.elements.completed.checked = true;
+  app.form.events.input();
+  await app.nodes['#finish'].events.click();
+  assert.match(app.nodes['#app'].innerHTML, /Workout complete/);
+  assert.doesNotMatch(app.nodes['#app'].innerHTML, /new best/);
+  assert.equal(app.form.querySelector('[data-set-record]').hidden, true);
 });
 
 test('Save as routine on the finish summary defaults to the trained Muscle Groups, or the Gym offline', async () => {
@@ -1870,6 +1926,24 @@ test('workout and exercise notes stay collapsed, keep drafts on the phone, and a
   assert.deepEqual(requests, [['PUT /api/workout-exercises/3/note', { note: 'Seat 4' }]]);
   assert.equal(app.nodes['#sync-status'].textContent, 'All changes saved to server.');
   assert.equal(new DraftStore(() => app.disk).cachedWorkout().workout_exercises[0].note, 'Seat 4');
+});
+
+test('history detail lists the workout\'s new bests and marks their sets', async () => {
+  const app = await harness();
+  const { nodes } = historyDOM(app);
+  const workout = { id: 1, gym_name: 'Home', started_at: '2026-09-22 10:00:00', completed_at: '2026-09-22 11:00:00' };
+  const entry = { id: 5, variation_id: 7, exercise_name: 'Dip', variation_name: 'Assisted', equipment: 'Machine', tracking_type: 'repetitions',
+    sets: [{ id: 8, result: 8, weight: -25, completed: 1, side: 'left' }, { id: 9, result: 8, weight: -30, completed: 1 }],
+    records: [{ set_id: 8, type: 'weight', side: 'left', value: -25, previous: -30 }] };
+  app.env.fetch = async (path) => response(path.includes('?') ? { workouts: [workout], next_offset: null } : { workout, workout_exercises: [entry] });
+  app.nodes['#open-history'].events.click();
+  await settle();
+  nodes['#history-results'].buttons[0].events.click();
+  await settle();
+  const html = nodes['#history-detail'].innerHTML;
+  assert.match(html, /1 new best<\/h2>/);
+  assert.match(html, /Assisted Dip · Left<\/span><span>Least assistance 25 kg assist \(was 30 kg assist\)/);
+  assert.equal(html.match(/New best · Least assistance/g).length, 1);
 });
 
 test('history detail shows notes as text and saves an added exercise note', async () => {

@@ -7,6 +7,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from gymdex import records
+
 
 SCHEMA = """
 PRAGMA foreign_keys = ON;
@@ -380,6 +382,12 @@ def bootstrap(connection: sqlite3.Connection) -> dict[str, Any]:
             connection, active_workout["gym_id"], entry["variation_id"], entry["equipment"],
             entry["manufacturer"], entry["label"], entry["tracking_type"],
         )
+        # The phone marks new bests as sets are completed, offline too, against these.
+        entry["record_bests"] = record_bests(
+            connection, active_workout["gym_id"], entry["variation_id"], entry["equipment"],
+            entry["manufacturer"], entry["label"], entry["tracking_type"],
+        )
+        entry["records"] = records.records(entry["record_bests"], entry["sets"], entry["tracking_type"])
     # The start screen offers each unarchived Gym's Routines beside plain Start.
     routines = rows(connection.execute(
         """SELECT r.id, r.gym_id, r.name,
@@ -394,6 +402,28 @@ def bootstrap(connection: sqlite3.Connection) -> dict[str, Any]:
         "workout_exercises": workout_exercises,
         "routines": routines,
     }
+
+
+def record_bests(
+    connection: sqlite3.Connection, gym_id: int, variation_id: int, equipment: str,
+    manufacturer: str, label: str, tracking_type: str, before: tuple[str, int] | None = None,
+) -> dict[str, dict[str, float]]:
+    """Bests (see records.py) of the Exercise Configuration's completed, non-warm-up sets in
+    completed workouts at the Gym, only those completed before `before` = (completed_at, id)."""
+    sets = rows(connection.execute(
+        """SELECT s.weight, s.result, s.side, s.set_type, s.completed FROM workout_sets s
+           JOIN workout_exercises we ON we.id = s.workout_exercise_id
+           JOIN workouts w ON w.id = we.workout_id
+           WHERE w.completed_at IS NOT NULL AND w.gym_id = ?
+             AND we.variation_id = ? AND we.equipment_snapshot = ?
+             AND we.manufacturer_snapshot = ? AND we.label_snapshot = ?
+             AND we.tracking_type_snapshot = ?
+             AND s.completed = 1 AND s.set_type IS NOT 'warmup'
+             AND (? IS NULL OR w.completed_at < ? OR (w.completed_at = ? AND w.id < ?))""",
+        (gym_id, variation_id, equipment, manufacturer, label, tracking_type,
+         *((None,) * 4 if before is None else (before[0], before[0], before[0], before[1]))),
+    ))
+    return records.bests(sets, tracking_type)
 
 
 def previous_sets(
@@ -640,8 +670,14 @@ def completed_workout(connection: sqlite3.Connection, workout_id: int) -> dict[s
                    WHERE id = workout_exercises.variation_id) AS assisted
            FROM workout_exercises WHERE workout_id = ? ORDER BY position""", (workout_id,),
     ))
+    before = (workout["completed_at"], workout["id"])
     for entry in entries:
         entry["sets"] = sets_for_exercise(connection, entry["id"])
+        entry["records"] = records.records(record_bests(
+            connection, workout["gym_id"], entry["variation_id"], entry["equipment"],
+            entry["manufacturer"], entry["label"], entry["tracking_type"], before,
+        ), entry["sets"], entry["tracking_type"])
+    workout["record_count"] = sum(len(entry["records"]) for entry in entries)
     return {"workout": workout, "workout_exercises": entries}
 
 
