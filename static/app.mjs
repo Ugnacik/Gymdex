@@ -90,7 +90,8 @@ const state = {
   elapsedTimer: null,
   staleDismissed: null,
 };
-bindReorderNameHold(app, document, (name) => openWorkoutReorder(Number(name.dataset.reorderName)), { schedule: setTimeout, clear: clearTimeout });
+// Holding an exercise name lifts it into the compact order list under the same finger (like Strong).
+bindReorderNameHold(app, document, (name, pointer) => openWorkoutReorder(Number(name.dataset.reorderName), pointer), { schedule: setTimeout, clear: clearTimeout });
 const STALE_WORKOUT_MINUTES = 3 * 60;
 const STALE_DISMISSED_KEY = "gymdex:stale-dismissed:v1";
 
@@ -2750,11 +2751,15 @@ function addSet(button) {
   list.lastElementChild.elements.weight.focus();
 }
 
-function openWorkoutReorder(entryId) {
+// pointer: a finger still holding the exercise name, so the list opens with it lifted.
+// Each drop queues one move on the phone (see outbox.mjs), however far the row travelled.
+function openWorkoutReorder(entryId, pointer = null) {
   if (!state.editor || state.editor.busy || state.data.workout_exercises.length < 2) return;
   openExerciseReorder(document, {
     items: state.data.workout_exercises.map((entry) => ({ id: entry.id, name: exerciseDisplayName(entry), detail: configurationLabel(entry) })),
     escapeHtml,
+    schedule: setTimeout, clear: clearTimeout,
+    lift: pointer ? { id: outbox.resolve(entryId), ...pointer } : null,
     onMove: async (id, index) => {
       if (!await saveExerciseMove(id, index + 1)) throw new Error("Close and save or correct your pending Sets and Notes, then try again.");
     },

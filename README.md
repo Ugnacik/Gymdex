@@ -117,10 +117,10 @@ gym brings them back.
   Choosing a catalog exercise asks for equipment and machine details; **Add to
   routine** saves the configuration and adds it to the plan together, so you can
   build a routine before your first workout. Added exercises start with 3 sets.
-- **Sets** chooses 1 to 20 sets for an exercise. Hold an exercise name or use
-  **Reorder exercises** to open a compact list, then drag its handle or use the
-  arrows. Each move saves immediately. **Move up** and **Move down** also remain
-  available; the × removes the exercise after a confirmation.
+- **Sets** chooses 1 to 20 sets for an exercise. To change the order, hold an
+  exercise name and drag (see [Reorder exercises](#reorder-exercises)), or use
+  **Reorder exercises**. Each drop saves the routine. The × removes the exercise
+  after a confirmation.
 - **Rename** changes the name. Routine names are unique within a gym,
   regardless of capitalization.
 - **Delete** removes the routine after a confirmation. Workouts started from it
@@ -336,12 +336,9 @@ in history. Sets can be edited while the workout is active.
 Each exercise's **⋯** button, beside its done count, opens a sheet with the
 tracking hint, **Record sides**, **View progress**, **Replace exercise**,
 **Reorder exercises**, **Add note** (while the exercise has none) and, last,
-**Remove exercise**. Hold an exercise name or choose **Reorder exercises** to
-open a compact list. Drag the handles or use the arrows; each move saves
-immediately, and swiping a row left removes that exercise. **Remove exercise**
-deletes the exercise with all its sets after confirmation. Both actions first save outstanding set edits to the server;
-removing an exercise also discards any unsaved drafts for its sets and note on
-this phone.
+**Remove exercise**. **Remove exercise** deletes the exercise with all its sets
+after confirmation, and also discards any unsaved drafts for its sets and note
+on this phone.
 
 Tapping an exercise's equipment and machine line, under its name, opens
 **Edit manufacturer / machine**, which fixes
@@ -371,6 +368,37 @@ the exercise's name once it has text. A collapsed note shows its first words. No
 like sets: automatically after a short typing pause or when you leave the box,
 with a draft kept on this phone until the server has it, so a note typed without
 signal is not lost. A note still waiting to save opens when the page reloads.
+
+### Reorder exercises
+
+Modelled on Strong, where holding an exercise name collapses the workout to a
+list of names that you drag:
+
+- **Hold an exercise name** (about half a second) on the workout or a routine.
+  A compact list of names opens with that exercise already lifted under your
+  finger; keep your finger down and drag. You can also open the list with
+  **Reorder exercises** in the **⋯** sheet (or on a routine) and drag a row's
+  **≡** handle (right away) or hold the row itself.
+- While you drag, the lifted row follows your finger, the others slide apart to
+  show where it will land, and the list scrolls by itself while you hold near
+  its top or bottom edge. The page underneath does not scroll. On Android a
+  short vibration marks the lift; iPhone browsers do not allow vibration.
+- Let go and the row settles into the gap. Each drop saves once, however far
+  the row travelled: in a workout it is one queued change on the phone (see
+  [Offline-first logging](#offline-first-logging)), so reordering works offline;
+  a routine is saved to the server and needs a connection. If a save fails,
+  the list goes back to the saved order and says why.
+- Swipe a row left to remove that exercise (you are asked first).
+- Keyboards and screen readers: each row has **Move up** and **Move down**
+  buttons (hidden until focused) and a **Remove** button, and Arrow Up / Arrow
+  Down on a focused **≡** handle move the exercise. **Escape** during a drag
+  puts the row back. The list announces the position while you drag.
+- Gymdex has no supersets, so every row moves on its own.
+- With *Reduce motion* turned on, rows move without animation.
+
+Routines no longer have **Move up** / **Move down** buttons on each exercise;
+the order list replaces them, with the same buttons for keyboards and screen
+readers.
 
 ## Offline-first logging
 

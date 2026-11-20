@@ -39,7 +39,7 @@ export function openRoutines(context, gym) {
   let view = "list";
   let busy = false;
   let changed = false;
-  const stopNameHold = bindReorderNameHold(content, document, () => reorderExercises());
+  const stopNameHold = bindReorderNameHold(content, document, (name, pointer) => reorderExercises(Number(name.dataset.reorderName), pointer));
   dialog.addEventListener("close", () => {
     stopNameHold();
     dialog.remove();
@@ -69,7 +69,7 @@ export function openRoutines(context, gym) {
         <button type="button" class="text-button" data-rename-routine aria-label="Rename ${name}">Rename</button>
         <button type="button" class="text-button manage-remove" data-delete-routine aria-label="Delete ${name}">Delete</button>
       </div></div>
-      <p>Starting it adds each exercise with this many empty sets. Last workout values show as usual.</p>
+      <p>Starting it adds each exercise with this many empty sets. Last workout values show as usual.${count > 1 ? " Hold an exercise name to drag it to a new place." : ""}</p>
       ${count > 1 ? `<button type="button" class="secondary" data-reorder-routine>Reorder exercises</button>` : ""}
       ${count ? `<ol class="routine-exercises">${routine.exercises.map((item, index) => {
         const label = escapeHtml(exerciseDisplayName(item));
@@ -79,24 +79,23 @@ export function openRoutines(context, gym) {
           ${item.archived ? `<p class="history-notice">Archived: skipped when this routine starts. Restore it in Manage.</p>` : ""}
           <label class="field routine-sets">Sets<select data-set-count="${index}" aria-label="Sets of ${label}">${Array.from({ length: ROUTINE_MAX_SETS }, (_, step) => step + 1)
             .map((sets) => `<option value="${sets}"${sets === item.set_count ? " selected" : ""}>${sets}</option>`).join("")}</select></label>
-          <div class="exercise-tools">
-            <button type="button" class="text-button" data-move-routine-exercise="${index}" data-move-to="${index - 1}" aria-label="Move ${label} up" ${index === 0 ? "disabled" : ""}>Move up</button>
-            <button type="button" class="text-button" data-move-routine-exercise="${index}" data-move-to="${index + 1}" aria-label="Move ${label} down" ${index === count - 1 ? "disabled" : ""}>Move down</button>
-          </div>
         </li>`;
       }).join("")}</ol>` : `<p>No exercises yet.</p>`}
       <button type="button" class="primary accent routine-add" data-add-routine-exercise>Add exercise</button>`;
   }
 
-  function reorderExercises() {
+  // Hold a name (or tap Reorder exercises) for the compact list: drag, or Move up / Move down
+  // for keyboards and screen readers. index and pointer lift that exercise under a held finger.
+  function reorderExercises(index = null, pointer = null) {
     const routine = current();
     if (busy || !routine || routine.exercises.length < 2) return;
     // Saves replace row ids, and a Configuration may occur more than once.
     // Stable tokens identify each occurrence for the lifetime of this order list.
     const occurrences = routine.exercises.map((_, index) => index);
     openExerciseReorder(document, {
-      items: routine.exercises.map((item, index) => ({ id: occurrences[index], name: exerciseDisplayName(item), detail: `${configurationLabel(item)} · ${plural(item.set_count, "set")}` })),
+      items: routine.exercises.map((item, position) => ({ id: occurrences[position], name: exerciseDisplayName(item), detail: `${configurationLabel(item)} · ${plural(item.set_count, "set")}` })),
       escapeHtml,
+      lift: pointer && index !== null && occurrences[index] !== undefined ? { id: occurrences[index], ...pointer } : null,
       onMove: async (id, to) => {
         const exercises = [...current().exercises];
         const from = occurrences.indexOf(id);
@@ -178,21 +177,6 @@ export function openRoutines(context, gym) {
         });
       } catch (error) { showToast(error.message); }
       finally { busy = false; }
-      return;
-    }
-    const move = hit("[data-move-routine-exercise]");
-    if (move) {
-      const from = Number(move.dataset.moveRoutineExercise);
-      const to = Number(move.dataset.moveTo);
-      if (to < 0 || to >= routine.exercises.length) return;
-      const exercises = [...routine.exercises];
-      exercises.splice(to, 0, ...exercises.splice(from, 1));
-      if (await saveExercises(exercises)) {
-        // Keep focus on the moved exercise, preferring the button for the same direction.
-        const button = (index, goal) => find(`[data-move-routine-exercise="${index}"][data-move-to="${goal}"]`);
-        const preferred = button(to, to < from ? to - 1 : to + 1);
-        (preferred && !preferred.disabled ? preferred : button(to, to < from ? to + 1 : to - 1))?.focus();
-      }
       return;
     }
     const remove = hit("[data-remove-routine-exercise]");

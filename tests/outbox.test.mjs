@@ -145,8 +145,9 @@ test('a refusal that means already done counts as done, and nothing is sent whil
   await settle();
   assert.deepEqual(app.sent, []);
   assert.equal(app.outbox.size, 1);
+  assert.deepEqual(app.timers.map((timer) => timer.delay), [5000], 'it looks again in 5 s, in case "online" never fires');
   online = true;
-  app.outbox.kick();
+  app.timers[0].callback();
   await settle();
   assert.deepEqual(app.sent, ['DELETE /gone/9']);
   assert.equal(app.outbox.size, 0);

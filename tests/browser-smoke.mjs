@@ -141,7 +141,15 @@ try {
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.down();
     await page.locator('#exercise-reorder').waitFor();
+    // The held exercise opens lifted under the pointer; letting go leaves it where it was.
+    check('A held name opens the order list with that exercise lifted', await page.locator('#reorder-list .reorder-row.is-lifted').count() === 1);
     await page.mouse.up();
+    await page.waitForFunction(() => !document.querySelector('#reorder-list .is-lifted, #reorder-list .is-settling'));
+  };
+  // Move up / Move down are for keyboards and screen readers (hidden until focused).
+  const pressMove = async name => {
+    await page.locator('#reorder-list').getByRole('button', { name, exact: true }).focus();
+    await page.keyboard.press('Enter');
   };
   const dragPreview = async (from, to) => {
     const handle = await page.locator('#reorder-list .reorder-handle').nth(from).boundingBox();
@@ -263,7 +271,7 @@ try {
   const reorderedRoutine = (await read('/api/routines?gym_id=1')).routines[0].exercises;
   check('Routine drag saves the order with its original Set counts', reorderedRoutine[0].profile_id === routineBeforeOrder[1].profile_id
     && reorderedRoutine[0].set_count === routineBeforeOrder[1].set_count && reorderedRoutine[1].set_count === routineBeforeOrder[0].set_count);
-  await page.locator('#reorder-list').getByRole('button', { name: 'Move Bench Press up', exact: true }).click();
+  await pressMove('Move Bench Press up');
   await page.locator('#reorder-status').filter({ hasText: 'Bench Press moved to position 1' }).waitFor();
   await screenshot('routine-reorder-mobile');
   await page.locator('#close-reorder').click();
@@ -546,13 +554,13 @@ try {
   check('Active Workout touch drag preserves recorded Sets and Notes', workoutAfterOrder[1].id === workoutBeforeOrder[0].id
     && JSON.stringify(workoutAfterOrder[1].sets) === JSON.stringify(workoutBeforeOrder[0].sets)
     && workoutAfterOrder[1].note === workoutBeforeOrder[0].note);
-  await page.locator('#reorder-list').getByRole('button', { name: 'Move Bench Press up', exact: true }).click();
+  await pressMove('Move Bench Press up');
   await page.locator('#reorder-status').filter({ hasText: 'Bench Press moved to position 1' }).waitFor();
   await screenshot('workout-reorder-mobile');
   // A refused move stays on the phone with Retry and Discard; Discard asks, then shows the server's order.
   await page.route('**/api/workout-exercises/1', route => route.request().method() === 'PUT'
     ? route.fulfill({ status: 409, contentType: 'application/json', body: '{"error":"Test move rejected."}' }) : route.continue());
-  await page.locator('#reorder-list').getByRole('button', { name: 'Move Bench Press down', exact: true }).click();
+  await pressMove('Move Bench Press down');
   await page.locator('#reorder-status').filter({ hasText: 'Bench Press moved to position 2' }).waitFor();
   await page.locator('#close-reorder').click();
   await page.locator('#sync-status[data-sync="error"]').waitFor();
@@ -566,6 +574,41 @@ try {
   await page.locator('#sync-status[data-sync="synced"]').waitFor();
   check('Discard asks, then shows the server order again', await page.locator('.exercise-summary h3').first().innerText() === 'Bench Press');
   await page.unroute('**/api/workout-exercises/1');
+  // Like Strong: hold an exercise name and drag in the same touch. The list opens with it lifted,
+  // the others slide apart, the page does not scroll, and the drop saves one move.
+  const movePuts = [];
+  const countMoves = request => { if (request.method() === 'PUT' && /\/api\/workout-exercises\/\d+$/.test(request.url())) movePuts.push(request.url()); };
+  page.on('request', countMoves);
+  const heldHeading = page.locator('.exercise-summary h3').first();
+  await heldHeading.scrollIntoViewIfNeeded();
+  const heldName = await heldHeading.boundingBox();
+  const scrollBeforeHold = await page.evaluate(() => scrollY);
+  const finger = await context.newCDPSession(page);
+  const at = (x, y) => ({ touchPoints: [{ x, y, id: 1 }] });
+  const hx = heldName.x + 30, hy = heldName.y + heldName.height / 2;
+  await finger.send('Input.dispatchTouchEvent', { type: 'touchStart', ...at(hx, hy) });
+  await page.locator('#reorder-list .reorder-row.is-lifted').waitFor({ timeout: 3000 });
+  const liftedRow = await page.locator('#reorder-list .reorder-row.is-lifted').boundingBox();
+  const secondRow = await page.locator('#reorder-list .reorder-row').nth(1).boundingBox();
+  const goal = secondRow.y + secondRow.height * 0.85 - (liftedRow.y + liftedRow.height / 2);
+  for (let step = 1; step <= 8; step++) await finger.send('Input.dispatchTouchEvent', { type: 'touchMove', ...at(hx, hy + goal * step / 8) });
+  await page.waitForTimeout(250);
+  check('Mid-drag the lifted row follows the finger and the next row slides up to open a gap', await page.evaluate(() => {
+    const [first, second] = document.querySelectorAll('#reorder-list .reorder-row');
+    return first.classList.contains('is-lifted') && /translateY\(\d/.test(first.style.transform) && /translateY\(-\d/.test(second.style.transform);
+  }));
+  check('Holding and dragging does not scroll the page', await page.evaluate(() => scrollY) === scrollBeforeHold);
+  await screenshot('reorder-mid-drag');
+  await finger.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await finger.detach();
+  await page.locator('#reorder-status').filter({ hasText: 'Bench Press moved to position 2' }).waitFor();
+  check('A held-name drag saves one move for the whole drop', await eventually(async () => (await read('/api/bootstrap')).workout_exercises[1].exercise_name === 'Bench Press')
+    && movePuts.length === 1);
+  page.off('request', countMoves);
+  check('The workout behind the list shows the new order', await page.locator('.exercise-summary h3').nth(1).innerText() === 'Bench Press');
+  await pressMove('Move Bench Press up');
+  await page.locator('#reorder-status').filter({ hasText: 'Bench Press moved to position 1' }).waitFor();
+  await page.locator('#close-reorder').click();
   check('Name hold leaves the Workout exercise expanded', await page.locator('.workout-exercise').first().evaluate(card => card.open));
   await page.locator('[data-exercise-more]').first().click();
   await page.locator('#picker').getByRole('button', { name: 'Reorder exercises', exact: true }).click();
@@ -1177,6 +1220,38 @@ try {
   check('A reload with a change in flight sends it once', (await serverWorkout())[0].sets.length === 3
     && await page.locator('.workout-exercise-card').first().locator('.set-form').count() === 3);
   await page.unroute('**/api/**', slowNetwork);
+  // Reordering offline: the drop is queued as one move on the phone, survives an offline reload,
+  // and syncs once.
+  const orderOnPage = () => page.locator('[data-reorder-name]').evaluateAll(names => names.map(name => Number(name.dataset.reorderName)));
+  const offlineOrderBefore = await orderOnPage();
+  const offlineMoves = [];
+  const countOfflineMoves = request => { if (request.method() === 'PUT' && /\/api\/workout-exercises\/\d+$/.test(request.url())) offlineMoves.push(request.url()); };
+  page.on('requestfinished', countOfflineMoves);
+  await context.setOffline(true);
+  const lastHeading = page.locator('.exercise-summary h3').last();
+  await lastHeading.scrollIntoViewIfNeeded();
+  const lastBox = await lastHeading.boundingBox();
+  const offlineFinger = await context.newCDPSession(page);
+  const ox = lastBox.x + 30, oy = lastBox.y + lastBox.height / 2;
+  await offlineFinger.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: ox, y: oy, id: 2 }] });
+  await page.locator('#reorder-list .reorder-row.is-lifted').waitFor({ timeout: 3000 });
+  for (let step = 1; step <= 10; step++) await offlineFinger.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: ox, y: oy - 30 * step, id: 2 }] });
+  await offlineFinger.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await offlineFinger.detach();
+  await page.locator('#reorder-status').filter({ hasText: 'moved to position 1' }).waitFor();
+  await page.locator('#close-reorder').click();
+  const offlineQueue = await page.evaluate(() => JSON.parse(localStorage.getItem('gymdex:outbox:v1')).ops.map(op => op.kind));
+  check('An offline drag queues exactly one move', offlineQueue.filter(kind => kind === 'moveExercise').length === 1);
+  const offlineOrder = await orderOnPage();
+  check('The moved exercise is first on the phone', offlineOrder[0] === offlineOrderBefore.at(-1));
+  await page.reload();
+  await page.locator('.set-form').first().waitFor();
+  check('An offline reload keeps the new order', JSON.stringify(await orderOnPage()) === JSON.stringify(offlineOrder));
+  await context.setOffline(false);
+  await page.waitForFunction(() => document.querySelector('#sync-status')?.textContent.trim() === 'Synced', null, { timeout: 30000 });
+  check('The offline reorder reaches the server once', offlineMoves.length === 1
+    && JSON.stringify((await read('/api/bootstrap')).workout_exercises.map(entry => entry.id)) === JSON.stringify(offlineOrder));
+  page.off('requestfinished', countOfflineMoves);
   // Finishing offline queues the finish behind everything else.
   await context.setOffline(true);
   await page.locator('[data-finish-workout]').first().click();

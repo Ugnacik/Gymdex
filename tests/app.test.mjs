@@ -2777,22 +2777,20 @@ test('the Routines screen edits a routine\'s exercises, set counts and order', a
   assert.match(html, /<select data-set-count="0" aria-label="Sets of Bench Press">[\s\S]*<option value="3" selected>3<\/option>/);
   assert.match(html, /<option value="20">20<\/option><\/select>/);
   assert.match(html, /Archived: skipped when this routine starts\. Restore it in Manage\./);
-  assert.match(html, /aria-label="Move Bench Press up" disabled>/);
-  assert.match(html, /aria-label="Move Dip down" disabled>/);
+  // Order changes by holding a name or in Reorder exercises (drag, or Move up / Move down there), not per-card buttons.
+  assert.doesNotMatch(html, /data-move-routine-exercise|Move up|Move down/);
+  assert.match(html, /Hold an exercise name to drag it to a new place\./);
+  assert.match(html, /<h3 data-reorder-name="1">Dip<\/h3>/);
 
   await content.events.change({ target: { closest: () => Object.assign(node(), { dataset: { setCount: '1' }, value: '4' }) } });
   assert.deepEqual(requests.at(-1), ['PUT /api/routines/4', { exercises: [{ profile_id: 1, set_count: 3 }, { profile_id: 2, set_count: 4 }] }]);
 
-  await click('[data-move-routine-exercise]', { moveRoutineExercise: '1', moveTo: '0' });
-  assert.deepEqual(requests.at(-1), ['PUT /api/routines/4', { exercises: [{ profile_id: 2, set_count: 4 }, { profile_id: 1, set_count: 3 }] }]);
-  assert.match(content.innerHTML, /Dip[\s\S]*Bench Press/);
-
   const questions = [];
   app.env.ask = async (question, options) => { questions.push([question, options]); return questions.length > 1; };
-  await click('[data-remove-routine-exercise]', { removeRoutineExercise: '0' });
+  await click('[data-remove-routine-exercise]', { removeRoutineExercise: '1' });
   assert.deepEqual(questions[0], ['Remove Dip from Push?', { confirmLabel: 'Remove', danger: true }]);
-  assert.equal(requests.filter(([key]) => key.startsWith('PUT')).length, 2);
-  await click('[data-remove-routine-exercise]', { removeRoutineExercise: '0' });
+  assert.equal(requests.filter(([key]) => key.startsWith('PUT')).length, 1);
+  await click('[data-remove-routine-exercise]', { removeRoutineExercise: '1' });
   assert.deepEqual(requests.at(-1), ['PUT /api/routines/4', { exercises: [{ profile_id: 1, set_count: 3 }] }]);
   assert.equal(app.nodes['#toast'].textContent, 'Dip removed.');
 
@@ -2994,6 +2992,31 @@ test('the compact Active Workout reorder list moves at once, syncs the move befo
   assert.equal(saved.workout_exercises[0].sets[0].result, 60);
   assert.equal(saved.workout_exercises[1].sets[0].weight, 42.5);
   assert.equal(saved.workout_exercises[1].note, 'Seat 3');
+});
+
+test('reordering offline queues one move per drop on the phone, survives a reload, and syncs once', async () => {
+  const app = await harness(storage(), { workout_exercises: [pressEntry, plankEntry] });
+  app.env.navigator.onLine = false;
+  const calls = [];
+  app.env.fetch = async (url, options) => { calls.push(`${options?.method ?? 'GET'} ${url}`); throw new TypeError('Offline'); };
+  const opened = reorderDOM(app);
+  await clickIn(app, '[data-reorder-exercises]', { reorderExercises: '4' });
+  await opened.step(4, -1);
+  assert.match(opened.nodes['#reorder-status'].textContent, /Front Plank moved to position 1/);
+  const queued = JSON.parse(app.disk.getItem('gymdex:outbox:v1')).ops;
+  assert.deepEqual(queued.map(({ kind, entryId, position }) => [kind, entryId, position]), [['moveExercise', 4, 1]]);
+  assert.deepEqual(calls.filter((call) => call.startsWith('PUT')), [], 'nothing sent offline');
+  assert.match(app.nodes['#app'].innerHTML, /Front Plank[\s\S]*Bench Press/);
+  // Closed and reopened offline: the order is still the phone's.
+  const reopened = await harness(app.disk, { workout_exercises: [pressEntry, plankEntry] });
+  assert.match(reopened.nodes['#app'].innerHTML, /data-reorder-name="4"[\s\S]*data-reorder-name="3"/);
+  const sent = [];
+  reopened.env.fetch = async (url, options) => { sent.push([`${options?.method ?? 'GET'} ${url}`, options?.body && JSON.parse(options.body)]); return response({}); };
+  reopened.env.navigator.onLine = true;
+  // The reopened app tried once and is waiting to retry; the retry sends the move.
+  for (const [id, timer] of [...reopened.timers]) if (timer.delay >= 1000 && timer.delay <= 31000) { reopened.timers.delete(id); timer.callback(); }
+  for (let i = 0; i < 10; i += 1) await settle();
+  assert.deepEqual(sent.filter(([call]) => call.startsWith('PUT')), [['PUT /api/workout-exercises/4', { position: 1 }]]);
 });
 
 test('a move happens at once even with an invalid draft; a refused move shows Retry and Discard, and Discard asks before restoring the server order', async () => {

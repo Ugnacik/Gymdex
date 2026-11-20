@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { bindReorderNameHold, openExerciseReorder } from '../static/exercise-reorder.mjs';
+import { bindReorderNameHold, edgeSpeed, gapShift, openExerciseReorder, settleOffset, targetIndex } from '../static/exercise-reorder.mjs';
 
 function element() {
   const events = {};
@@ -31,11 +31,12 @@ function holdHarness() {
   const timers = new Map();
   const opened = [];
   let timerId = 0;
-  const dispose = bindReorderNameHold(host, document, origin => opened.push(origin), {
+  const pointers = [];
+  const dispose = bindReorderNameHold(host, document, (origin, held) => { opened.push(origin); pointers.push(held); }, {
     schedule(callback) { timers.set(++timerId, callback); return timerId; }, clear(id) { timers.delete(id); },
   });
   const fire = () => { const [id, callback] = [...timers][0]; timers.delete(id); callback(); };
-  return { host, document, name, target, timers, opened, fire, dispose };
+  return { host, document, name, target, timers, opened, pointers, fire, dispose };
 }
 
 test('a normal name tap remains available; a held name opens the order list without a collapse click', () => {
@@ -75,17 +76,35 @@ test('moving, scrolling and cancelling a held name never open the reorder list',
   assert.deepEqual(h.opened, []);
 });
 
-function reorderHarness(onMove = async () => true, { onRemove } = {}) {
+test('a held name hands its still-pressed pointer to the list, and touch scrolling is only blocked while lifted', () => {
+  const h = holdHarness();
+  h.host.events.pointerdown(pointer(h.target, { pointerId: 4, clientX: 10, clientY: 10 }));
+  h.host.events.pointermove(pointer(h.target, { pointerId: 4, clientX: 13, clientY: 14 }));
+  h.fire();
+  assert.deepEqual(h.pointers, [{ pointerId: 4, clientX: 13, clientY: 14 }]);
+  const touch = { cancelable: true, preventDefault() { this.prevented = true; } };
+  h.host.events.touchmove(touch);
+  assert.equal(touch.prevented, undefined, 'ordinary scrolling is untouched');
+  const r = reorderHarness();
+  r.start(0, 30);
+  h.host.events.touchmove(touch);
+  assert.equal(touch.prevented, true, 'no page scroll under a lifted row (iOS Safari)');
+  r.list.events.pointercancel();
+  h.dispose();
+});
+
+function reorderHarness(onMove = async () => true, { onRemove, lift = null, reducedMotion = false, items } = {}) {
   const list = element();
   list.children = [];
   list.scrollTop = 0;
-  list.getBoundingClientRect = () => ({ top: -100, bottom: 1000 });
+  list.box = { top: 0, bottom: 1000 };
+  list.getBoundingClientRect = () => list.box;
   let capture = null;
   list.setPointerCapture = id => { capture = id; };
   list.hasPointerCapture = id => capture === id;
-  list.releasePointerCapture = () => { capture = null; list.events.lostpointercapture?.(); };
+  list.releasePointerCapture = () => { capture = null; };
   const createRow = (id, index, count) => {
-    const row = Object.assign(element(), { dataset: { reorderId: String(id) } });
+    const row = Object.assign(element(), { dataset: { reorderId: String(id) }, style: {} });
     const up = Object.assign(element(), { dataset: { reorderStep: '-1' }, disabled: index === 0 });
     const down = Object.assign(element(), { dataset: { reorderStep: '1' }, disabled: index === count - 1 });
     const handle = element();
@@ -106,19 +125,20 @@ function reorderHarness(onMove = async () => true, { onRemove } = {}) {
     row.closest = selector => selector === '[data-reorder-id]' ? row : null;
     row.querySelector = selector => {
       if (selector === '.reorder-swipe') return surface;
+      if (selector === '.reorder-handle') return handle;
       if (selector.includes('"-1"')) return !up.disabled ? up : null;
       if (selector.includes('"1"')) return !down.disabled ? down : null;
       if (selector === '[data-reorder-step]:not(:disabled)') return !up.disabled ? up : !down.disabled ? down : null;
       return null;
     };
-    row.getBoundingClientRect = () => ({ y: list.children.indexOf(row) * 60, height: 60 });
+    // Layout follows the DOM order: 60px rows, moved by the list's scroll.
+    row.getBoundingClientRect = () => ({ top: list.box.top + list.children.indexOf(row) * 60 - list.scrollTop, height: 60 });
     return Object.assign(row, { up, down, handle, surface, remove, name });
   };
   Object.defineProperty(list, 'innerHTML', { set(html) {
     const ids = [...html.matchAll(/data-reorder-id="(\d+)"/g)].map(match => Number(match[1]));
     list.children = ids.map((id, index) => createRow(id, index, ids.length));
   } });
-  list.append = (...rows) => { list.children = rows; };
   list.querySelector = selector => list.children.find(row => row.dataset.reorderId === selector.match(/"(\d+)"/)?.[1]);
   const status = element(), close = element(), dialog = element();
   dialog.querySelector = selector => ({ '#reorder-list': list, '#reorder-status': status, '#close-reorder': close })[selector];
@@ -126,59 +146,129 @@ function reorderHarness(onMove = async () => true, { onRemove } = {}) {
   dialog.remove = () => { dialog.removed = true; };
   dialog.close = () => { dialog.open = false; dialog.events.close(); };
   const document = { querySelector: () => null, createElement: () => dialog, body: { append() {} } };
+  const timers = new Map();
+  const frames = new Map();
+  const buzzes = [];
+  let next = 0;
   let closed = false;
-  openExerciseReorder(document, { items: [{ id: 1, name: 'Bench' }, { id: 2, name: 'Plank' }, { id: 3, name: 'Dip' }],
-    onMove, onRemove, onClose: () => { closed = true; }, escapeHtml: text => text });
+  openExerciseReorder(document, { items: items ?? [{ id: 1, name: 'Bench' }, { id: 2, name: 'Plank' }, { id: 3, name: 'Dip' }],
+    onMove, onRemove, onClose: () => { closed = true; }, escapeHtml: text => text, lift, reducedMotion,
+    schedule: (callback, delay) => { timers.set(++next, { callback, delay }); return next; }, clear: id => timers.delete(id),
+    frame: callback => { frames.set(++next, callback); return next; }, cancelFrame: id => frames.delete(id),
+    vibrate: ms => buzzes.push(ms) });
   const ids = () => list.children.map(row => Number(row.dataset.reorderId));
-  const start = () => list.events.pointerdown(pointer(list.children[0].handle));
-  const moveToEnd = () => list.events.pointermove(pointer(list, { clientY: 180 }));
-  return { list, status, close, dialog, ids, start, moveToEnd, get closed() { return closed; } };
+  const runTimers = () => { for (const [id, { callback }] of [...timers]) { timers.delete(id); callback(); } };
+  const runFrame = () => { for (const [id, callback] of [...frames]) { frames.delete(id); callback(); } };
+  const start = (index = 0, y = 30) => list.events.pointerdown(pointer(list.children[index].handle, { clientY: y }));
+  const moveTo = (y) => list.events.pointermove(pointer(list, { clientY: y }));
+  const drop = async () => { const settled = list.events.pointerup(pointer(list)); runTimers(); await settled?.finish?.(); await Promise.resolve(); };
+  const transforms = () => list.children.map(row => row.style.transform || '');
+  return { list, status, close, dialog, ids, start, moveTo, drop, timers, frames, buzzes, runTimers, runFrame, transforms,
+    get capture() { return capture; }, get closed() { return closed; } };
 }
 
-test('a handle drag previews its position and cancellation restores the acknowledged order', () => {
-  const calls = [];
-  const h = reorderHarness((...args) => calls.push(args));
-  h.start();
-  h.moveToEnd();
-  assert.deepEqual(h.ids(), [2, 3, 1]);
-  h.list.events.pointercancel();
-  assert.deepEqual(h.ids(), [1, 2, 3]);
-  h.start(); h.moveToEnd(); h.list.events.lostpointercapture();
-  assert.deepEqual(h.ids(), [1, 2, 3]);
-  assert.deepEqual(calls, []);
-  h.start(); h.moveToEnd(); h.close.events.click();
-  assert.equal(h.closed, true);
-  assert.deepEqual(h.ids(), [1, 2, 3]);
+const flush = async () => { for (let i = 0; i < 5; i += 1) await Promise.resolve(); };
+
+test('the drop position follows the lifted row past each neighbour\'s middle, with a gap and settle offset', () => {
+  const slots = [0, 60, 120, 180].map(top => ({ top, height: 56 }));
+  assert.equal(targetIndex(slots, 0, 28), 0);
+  assert.equal(targetIndex(slots, 0, 87), 0);
+  assert.equal(targetIndex(slots, 0, 89), 1);
+  assert.equal(targetIndex(slots, 0, 500), 3);
+  assert.equal(targetIndex(slots, 3, -40), 0);
+  assert.deepEqual([0, 1, 2, 3].map(index => gapShift(index, 0, 2, 60)), [0, -60, -60, 0]);
+  assert.deepEqual([0, 1, 2, 3].map(index => gapShift(index, 3, 1, 60)), [0, 60, 60, 0]);
+  assert.equal(settleOffset(slots, 0, 2), 120);
+  assert.equal(settleOffset(slots, 3, 1), -120);
+  assert.equal(edgeSpeed(500, 0, 1000), 0);
+  assert.ok(edgeSpeed(990, 0, 1000) > edgeSpeed(960, 0, 1000) && edgeSpeed(960, 0, 1000) > 0);
+  assert.equal(edgeSpeed(1000, 0, 1000), 16);
+  assert.ok(edgeSpeed(5, 0, 1000) < 0);
 });
 
-test('dropping saves one move, gates interaction until acknowledgement, and arrows can reverse it', async () => {
-  let resolve;
+test('a handle lifts its row: it follows the finger, the others slide apart, and nothing saves until the drop', async () => {
   const calls = [];
-  let save = new Promise(done => { resolve = done; });
-  const h = reorderHarness((...args) => { calls.push(args); return save; });
-  h.start(); h.moveToEnd();
-  const pending = h.list.events.pointerup(pointer(h.list));
-  assert.deepEqual(calls, [[1, 2]]);
+  const h = reorderHarness(async (...args) => { calls.push(args); return true; });
+  h.start(0, 30);
+  const [bench] = h.list.children;
+  assert.equal(bench.classList.contains('is-lifted'), true);
+  assert.equal(h.list.classList.contains('is-reordering'), true);
+  assert.deepEqual(h.buzzes, [8], 'a short buzz where vibration exists (Android)');
+  h.moveTo(160);
+  assert.deepEqual(h.transforms(), ['translateY(120px)', 'translateY(-60px)', 'translateY(-60px)'], 'past the end it stays in the last place');
+  assert.deepEqual(h.ids(), [1, 2, 3], 'the DOM stays put while dragging; only transforms move');
+  assert.match(h.status.textContent, /Bench: position 3 of 3/);
+  h.moveTo(100);
+  assert.deepEqual(h.transforms(), ['translateY(70px)', 'translateY(-60px)', '']);
+  h.moveTo(160);
+  assert.deepEqual(calls, [], 'no save per step');
+  h.list.events.pointerup(pointer(h.list));
+  assert.equal(bench.classList.contains('is-settling'), true);
+  assert.equal(bench.style.transform, 'translateY(120px)', 'it settles into the gap');
+  assert.equal([...h.timers.values()][0].delay, 200);
+  h.runTimers();
+  await flush();
+  assert.deepEqual(calls, [[1, 2]], 'one save per drop');
+  assert.deepEqual(h.ids(), [2, 3, 1]);
+  assert.deepEqual(h.transforms(), ['', '', '']);
+  assert.match(h.status.textContent, /Bench moved to position 3/);
+  assert.equal(h.list.children[2].handle.focused, true);
+  assert.equal(h.frames.size, 0, 'auto-scroll stops after the drop');
+});
+
+test('a drop back where it started saves nothing, and cancel or Escape puts every row back', async () => {
+  const calls = [];
+  const h = reorderHarness(async (...args) => { calls.push(args); return true; });
+  h.start(1, 90); h.moveTo(100);
+  h.list.events.pointerup(pointer(h.list)); h.runTimers(); await flush();
+  assert.match(h.status.textContent, /Plank stayed at position 2/);
+  h.start(0, 30); h.moveTo(160);
+  h.list.events.pointercancel();
+  assert.deepEqual(h.transforms(), ['', '', '']);
+  assert.equal(h.list.children[0].classList.contains('is-lifted'), false);
+  h.start(0, 30); h.moveTo(160);
+  const escape = pointer(h.dialog);
+  h.dialog.events.cancel(escape);
+  assert.equal(escape.prevented, true, 'Escape during a drag does not close the sheet');
+  assert.equal(h.dialog.open, true);
+  assert.deepEqual(h.transforms(), ['', '', '']);
+  assert.match(h.status.textContent, /Order unchanged/);
+  h.start(0, 30); h.moveTo(160); h.close.events.click();
+  assert.equal(h.closed, true);
+  assert.deepEqual(calls, []);
+});
+
+test('held near an edge the list keeps scrolling each frame, without the finger moving, and the gap follows', () => {
+  const items = Array.from({ length: 12 }, (_, index) => ({ id: index + 1, name: `E${index + 1}` }));
+  const h = reorderHarness(async () => true, { items });
+  h.list.box = { top: 0, bottom: 240 };
+  h.start(0, 30);
+  h.moveTo(235);
+  const before = h.list.scrollTop;
+  h.runFrame(); h.runFrame(); h.runFrame();
+  assert.ok(h.list.scrollTop > before + 20, 'it scrolled while held still');
+  const lifted = Number(h.list.children[0].style.transform.match(/-?\d+/)[0]);
+  assert.equal(lifted, 235 - 30 + h.list.scrollTop, 'the lifted row stays under the finger as the list scrolls');
+  h.list.events.pointercancel();
+  const stopped = h.list.scrollTop;
+  h.runFrame();
+  assert.equal(h.list.scrollTop, stopped);
+  assert.equal(h.frames.size, 0);
+});
+
+test('the list shows a move at once; a failed save puts the order back and explains, without closing', async () => {
+  let fail;
+  const h = reorderHarness(() => new Promise((_, reject) => { fail = reject; }));
+  h.start(0, 30); h.moveTo(160);
+  h.list.events.pointerup(pointer(h.list)); h.runTimers();
+  assert.deepEqual(h.ids(), [2, 3, 1], 'shown in its new place while saving');
   assert.equal(h.list.inert, true);
   assert.equal(h.close.disabled, true);
   const escape = pointer(h.dialog);
   h.dialog.events.cancel(escape);
   assert.equal(escape.prevented, true);
-  resolve(true); await pending;
-  assert.deepEqual(h.ids(), [2, 3, 1]);
-  assert.equal(h.list.inert, false);
-  assert.match(h.status.textContent, /Bench moved to position 3/);
-  save = Promise.resolve(true);
-  await h.list.events.click(pointer(h.list.children[2].up));
-  assert.deepEqual(calls, [[1, 2], [1, 1]]);
-  assert.deepEqual(h.ids(), [2, 1, 3]);
-  assert.equal(h.list.children[1].up.focused, true);
-});
-
-test('a failed move restores the visible order and explains the failure without closing', async () => {
-  const h = reorderHarness(async () => { throw new Error('Cannot reach the server.'); });
-  h.start(); h.moveToEnd();
-  await h.list.events.pointerup(pointer(h.list));
+  fail(new Error('Cannot reach the server.'));
+  await flush();
   assert.deepEqual(h.ids(), [1, 2, 3]);
   assert.equal(h.dialog.open, true);
   assert.match(h.status.textContent, /Order unchanged.*Cannot reach the server/);
@@ -186,25 +276,59 @@ test('a failed move restores the visible order and explains the failure without 
   assert.equal(h.list.inert, false);
 });
 
-test('dragging only starts on a handle, so the name and list retain ordinary scrolling', () => {
-  const h = reorderHarness();
-  h.list.events.pointerdown(pointer({ closest: () => null }));
-  h.moveToEnd();
-  assert.deepEqual(h.ids(), [1, 2, 3]);
+test('keyboards and screen readers move with Move up / Move down or arrow keys on the handle, one save each', async () => {
+  const calls = [];
+  const h = reorderHarness(async (...args) => { calls.push(args); return true; });
+  await h.list.events.click(pointer(h.list.children[2].up));
+  assert.deepEqual(h.ids(), [1, 3, 2]);
+  assert.equal(h.list.children[1].up.focused, true, 'focus stays on the same direction');
+  const key = { key: 'ArrowUp', target: h.list.children[1].handle, preventDefault() { this.prevented = true; } };
+  await h.list.events.keydown(key);
+  assert.equal(key.prevented, true);
+  assert.deepEqual(h.ids(), [3, 1, 2]);
+  assert.equal(h.list.children[0].handle.focused, true);
+  await h.list.events.keydown({ key: 'ArrowUp', target: h.list.children[0].handle, preventDefault() {} });
+  assert.deepEqual(calls, [[3, 1], [3, 0]], 'nothing above the top');
 });
 
+test('holding a row lifts it like the handle; moving first scrolls instead', async () => {
+  const calls = [];
+  const h = reorderHarness(async (...args) => { calls.push(args); return true; });
+  const row = h.list.children[2];
+  h.list.events.pointerdown(pointer(row.name, { clientX: 100, clientY: 150 }));
+  h.list.events.pointermove(pointer(row.name, { clientX: 101, clientY: 152 }));
+  assert.equal([...h.timers.values()][0].delay, 320);
+  h.runTimers();
+  assert.equal(row.classList.contains('is-lifted'), true);
+  h.moveTo(20);
+  await h.drop();
+  await flush();
+  assert.deepEqual(calls, [[3, 0]]);
+  assert.deepEqual(h.ids(), [3, 1, 2]);
+  const second = h.list.children[1];
+  h.list.events.pointerdown(pointer(second.name, { clientX: 100, clientY: 90 }));
+  h.list.events.pointermove(pointer(second.name, { clientX: 100, clientY: 130 }));
+  h.runTimers();
+  assert.equal(second.classList.contains('is-lifted'), false, 'a vertical move is a scroll');
+});
 
-test('moving a held handle near a list edge scrolls to further destinations and stops on cancellation', () => {
-  const h = reorderHarness();
-  h.list.getBoundingClientRect = () => ({ top: 0, bottom: 120 });
-  h.start();
-  h.list.events.pointermove(pointer(h.list, { clientY: 110 }));
-  assert.equal(h.list.scrollTop, 24);
-  h.list.events.pointermove(pointer(h.list, { clientY: 110 }));
-  assert.equal(h.list.scrollTop, 48);
-  h.list.events.pointercancel();
-  h.list.events.pointermove(pointer(h.list, { clientY: 110 }));
-  assert.equal(h.list.scrollTop, 48);
+test('a held exercise name opens the list with that exercise already lifted under the same finger', async () => {
+  const calls = [];
+  const h = reorderHarness(async (...args) => { calls.push(args); return true; }, { lift: { id: 2, pointerId: 7, clientX: 50, clientY: 400 } });
+  assert.equal(h.list.children[1].classList.contains('is-lifted'), true);
+  assert.equal(h.capture, 7);
+  h.list.events.pointermove(pointer(h.list, { pointerId: 7, clientY: 330 }));
+  h.list.events.pointerup(pointer(h.list, { pointerId: 7 }));
+  h.runTimers();
+  await flush();
+  assert.deepEqual(calls, [[2, 0]]);
+  // Reduced motion: no settle animation.
+  const calm = reorderHarness(async () => true, { reducedMotion: true });
+  calm.start(0, 30); calm.moveTo(160);
+  calm.list.events.pointerup(pointer(calm.list));
+  assert.equal(calm.timers.size, 0);
+  await flush();
+  assert.deepEqual(calm.ids(), [2, 3, 1]);
 });
 
 test('a left swipe past the threshold asks to remove and keeps the row when declined', async () => {
