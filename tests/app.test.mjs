@@ -61,7 +61,7 @@ function readPreviousButton(form, html) {
 }
 
 // The harness workout started 2026-09-22 10:00 UTC; by default the clock reads 25 minutes later.
-async function harness(disk = storage(), initialData = {}, { now = Date.parse('2026-09-22T10:25:00Z') } = {}) {
+async function harness(disk = storage(), initialData = {}, { now = Date.parse('2026-09-22T10:25:00Z'), location } = {}) {
   const nodes = Object.fromEntries(['#app', '#toast', '#sync-status', '#picker-results', 'main',
     '#muscle-group-filter', '#clear-muscle-group-filter', '#muscle-group-chip', '#open-picker', '#open-settings', '#open-history', '#open-progress', '#open-manage', '#cancel-workout', '#finish', '#add-gym-form', '#start-workout', '#create-exercise',
     '#rest-enabled', '#rest-controls', '#rest-duration', '#rest-clock', '#rest-status', '#rest-start', '#rest-pause', '#rest-stop',
@@ -108,7 +108,7 @@ async function harness(disk = storage(), initialData = {}, { now = Date.parse('2
       previous_sets: [], sets: [{ id: 2, position: 1, weight: null, result: null, completed: false }] }], ...initialData };
   const env = {
     // Gymdex asks in its own confirmation sheet: some in-app browsers answer window.confirm() with false unseen.
-    window: { localStorage: disk, addEventListener() {}, scrollTo(options) { this.scrollPosition = options; }, confirm: () => { throw new Error('window.confirm() is not used'); } },
+    window: { localStorage: disk, location, history: { replaceState(state, title, url) { this.url = url; } }, addEventListener() {}, scrollTo(options) { this.scrollPosition = options; }, confirm: () => { throw new Error('window.confirm() is not used'); } },
     // Answers the confirmation sheet; tests replace it to record the questions and decline.
     ask: async () => true,
     // Answers the text sheet; tests replace it to name a routine through its submit().
@@ -1884,6 +1884,17 @@ test('a workout started more than 3 hours ago offers Finish it, which uses the n
   assert.ok(requests.includes('POST /api/workouts/1/complete'), requests.join());
   assert.match(app.nodes['#app'].innerHTML, /No active workout/);
   assert.match(app.nodes['#toast'].textContent, /Workout finished/);
+});
+
+test('a tapped Still working out? notification asks in the banner however recent the workout, until Keep going', async () => {
+  const app = await harness(storage(), {}, { now: Date.parse('2026-09-22T11:00:30Z'), location: { search: '?still-training=1' } });
+  assert.match(app.nodes['#app'].innerHTML, /id="stale-banner"[\s\S]*started 1 h 00 min ago/);
+  // The question is asked once: reloading the page does not ask again.
+  assert.equal(app.env.window.history.url, '/');
+  app.nodes['#stale-keep'].events.click();
+  assert.equal(app.nodes['#stale-banner'].hidden, true);
+  await app.app.load();
+  assert.doesNotMatch(app.nodes['#app'].innerHTML, /stale-banner/);
 });
 
 test('Finish it explains why a workout with an unsaved set cannot finish yet', async () => {

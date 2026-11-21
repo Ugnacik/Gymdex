@@ -46,6 +46,11 @@ export class RestTimer {
     };
   }
 
+  // The wall-clock end of a running countdown in ms, or null when it is not counting down.
+  endsAt() {
+    return this.#status === "running" ? this.#deadline : null;
+  }
+
   // A new completed set can restart an already running or finished timer.
   start() {
     this.#clearScheduled();

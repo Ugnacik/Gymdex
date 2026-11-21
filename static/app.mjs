@@ -8,6 +8,7 @@ import { openRoutines, renderRoutineStarts } from "./routines.mjs";
 import { bindReorderNameHold, openExerciseReorder } from "./exercise-reorder.mjs";
 import { findRecords, recordName, recordText } from "./records.mjs";
 import { Outbox } from "./outbox.mjs";
+import { PushNotifications } from "./notifications.mjs";
 import { renameId, workoutOps } from "./workout-ops.mjs";
 
 // The server stores times as SQLite CURRENT_TIMESTAMP values in UTC ("YYYY-MM-DD HH:MM:SS").
@@ -67,6 +68,7 @@ outbox.context = {
 const app = document.querySelector("#app");
 const toast = document.querySelector("#toast");
 const savedRest = readRestSettings();
+const notifications = new PushNotifications({ window, navigator, fetch, now });
 
 const state = {
   data: null,
@@ -89,13 +91,21 @@ const state = {
   restEnabled: savedRest.enabled,
   elapsedTimer: null,
   staleDismissed: null,
+  // A tapped Still working out? notification asks in the stale banner, however long the workout is.
+  askStillTraining: Boolean(window.location?.search?.includes("still-training=1")),
 };
+if (state.askStillTraining) window.history?.replaceState?.(null, "", "/");
 // Holding an exercise name lifts it into the compact order list under the same finger (like Strong).
 bindReorderNameHold(app, document, (name, pointer) => openWorkoutReorder(Number(name.dataset.reorderName), pointer), { schedule: setTimeout, clear: clearTimeout });
 const STALE_WORKOUT_MINUTES = 3 * 60;
 const STALE_DISMISSED_KEY = "gymdex:stale-dismissed:v1";
 
-state.restTimer = new RestTimer({ durationSeconds: savedRest.duration, schedule: setTimeout, clear: clearTimeout, onChange: renderRestTimerState, onFinish: playRestEndCue });
+state.restTimer = new RestTimer({ durationSeconds: savedRest.duration, schedule: setTimeout, clear: clearTimeout, onChange: restTimerChanged, onFinish: playRestEndCue });
+
+function restTimerChanged(snapshot) {
+  renderRestTimerState();
+  notifications.restChanged(snapshot.status === "running" ? state.restTimer.endsAt() : null, snapshot.status);
+}
 
 function readRestSettings() {
   try {
@@ -483,7 +493,7 @@ function openRoutinesScreen() {
 function renderWorkout() {
   const workout = state.data.active_workout;
   const entries = state.data.workout_exercises;
-  const stale = elapsedMinutes(workout) > STALE_WORKOUT_MINUTES && !staleWorkoutDismissed(workout.id);
+  const stale = state.askStillTraining || (elapsedMinutes(workout) > STALE_WORKOUT_MINUTES && !staleWorkoutDismissed(workout.id));
   app.innerHTML = `
     <main class="shell workout-shell">
       ${renderHeader("Workout active")}
@@ -539,6 +549,7 @@ function renderWorkout() {
   if (stale) {
     document.querySelector("#stale-keep").addEventListener("click", () => {
       dismissStaleWorkout(workout.id);
+      state.askStillTraining = false;
       document.querySelector("#stale-banner").hidden = true;
     });
   }
@@ -740,6 +751,12 @@ function openSettings() {
       <label class="field">Rest after a set<select id="settings-rest-duration">${restDurationOptions(state.restTimer.snapshot().durationSeconds)}</select></label>
       <p class="muted">Interval changes apply to your next rest. You can also change the interval in Timer settings during a workout.</p>
     </section>
+    <section class="settings-card" aria-labelledby="settings-push-title">
+      <div class="rest-heading"><div class="rest-title"><h2 id="settings-push-title">Notifications</h2><p class="rest-caption">Rest over, and Still working out? every hour</p></div>
+        <label class="rest-switch"><input id="settings-push-enabled" type="checkbox" role="switch" aria-label="Notifications" disabled /></label></div>
+      <p class="muted" id="settings-push-status" role="status">Checking this phone…</p>
+      <button type="button" class="secondary" id="settings-push-test" hidden>Send a test notification</button>
+    </section>
     <p class="muted">Preferences are saved on this phone.</p>
   </main>`;
   document.body.append(dialog);
@@ -747,7 +764,44 @@ function openSettings() {
   dialog.querySelector("#close-settings").addEventListener("click", () => dialog.close());
   dialog.querySelector("#settings-rest-enabled").addEventListener("change", (event) => setRestEnabled(event.target.checked));
   dialog.querySelector("#settings-rest-duration").addEventListener("change", (event) => setRestDuration(Number(event.target.value)));
+  bindPushSettings(dialog);
   dialog.showModal();
+}
+
+const PUSH_STATUS_TEXT = {
+  install: "On iPhone, notifications work only in the Home Screen app. In Safari, tap Share, then Add to Home Screen, and open Gymdex from there.",
+  unsupported: "This browser cannot show notifications from Gymdex.",
+  unavailable: "The Gymdex server cannot send notifications. It needs the python3-cryptography package.",
+  denied: "Notifications are blocked for Gymdex. Allow them in iPhone Settings, Notifications, Gymdex.",
+  off: "Off on this phone.",
+  on: "On for this phone. They arrive even when Gymdex is closed or the phone is locked.",
+};
+
+// The switch reflects this phone's push subscription; turning it on asks iOS for permission.
+function bindPushSettings(dialog) {
+  const toggle = dialog.querySelector("#settings-push-enabled");
+  const text = dialog.querySelector("#settings-push-status");
+  const testButton = dialog.querySelector("#settings-push-test");
+  const show = (status, message) => {
+    toggle.checked = status === "on";
+    toggle.disabled = !["on", "off"].includes(status);
+    text.textContent = message ?? PUSH_STATUS_TEXT[status];
+    testButton.hidden = status !== "on";
+  };
+  const run = async (action, failedStatus) => {
+    toggle.disabled = true;
+    try { show(await action()); } catch (error) { show(failedStatus, error.message); }
+  };
+  run(() => notifications.status(), "error");
+  toggle.addEventListener("change", () => run(() => toggle.checked ? notifications.enable() : notifications.disable(), toggle.checked ? "off" : "on"));
+  testButton.addEventListener("click", async () => {
+    testButton.disabled = true;
+    try {
+      const { delivered } = await notifications.test();
+      showToast(delivered ? "Test notification sent." : "No phone accepted the test notification.");
+    } catch (error) { showToast(error.message); }
+    finally { testButton.disabled = false; }
+  });
 }
 
 function renderRestTimer() {
@@ -1872,6 +1926,7 @@ async function endWorkout(cancel) {
       return;
     }
     state.restTimer.stop();
+    state.askStillTraining = false;
     forgetWorkoutMarks();
     state.summary = summary;
     state.selectedGymId = gymId;
@@ -2886,9 +2941,16 @@ document.addEventListener("visibilitychange", () => {
 setInterval(retryPendingSets, 15000);
 
 if ("serviceWorker" in navigator) {
+  // A Still working out? notification tapped while Gymdex is open asks in the stale banner.
+  navigator.serviceWorker.addEventListener?.("message", (event) => {
+    if (event.data?.type !== "still-training" || !state.data?.active_workout) return;
+    state.askStillTraining = true;
+    render();
+  });
   navigator.serviceWorker.register("/sw.js").then(() => navigator.serviceWorker.ready).then(() => {
     state.offlineReady = true;
     updateSyncStatus();
+    notifications.sync();
   }).catch(() => { state.offlineReady = false; updateSyncStatus(); });
 }
 

@@ -1577,6 +1577,8 @@ textarea {
 .settings-card .rest-heading { padding: 8px 0 18px; }
 .settings-card .field { margin: 0; }
 .settings-card p.muted { font-size: 0.9rem; line-height: 1.5; }
+.settings-card + .settings-card { margin-top: 16px; }
+.settings-card .rest-heading + p.muted { margin-top: 0; }
 @media (max-width: 440px) {
   .app-header { flex-wrap: wrap; gap: 8px; }
   .app-header nav { margin-left: auto; }
