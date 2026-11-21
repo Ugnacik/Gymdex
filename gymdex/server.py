@@ -7,13 +7,14 @@ import mimetypes
 import os
 import sqlite3
 import threading
+import time
 from collections import OrderedDict
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from gymdex import db
+from gymdex import db, push
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -86,11 +87,25 @@ def with_entry(operation):
 
 
 class GymdexServer(ThreadingHTTPServer):
-    def __init__(self, address: tuple[str, int], db_path: Path):
+    def __init__(self, address: tuple[str, int], db_path: Path, vapid_path: Path | None = None):
         super().__init__(address, GymdexHandler)
         self.db_path = db_path
         with closing(db.connect(db_path)) as connection, connection:
             db.initialize(connection)
+        # Notifications need the optional cryptography package; without it they are reported unavailable.
+        self.push = None
+        if push.available():
+            vapid = push.Vapid.load_or_create(
+                vapid_path or Path(os.environ.get("GYMDEX_VAPID_PATH") or Path(db_path).parent / "vapid-private-key.pem"),
+                os.environ.get("GYMDEX_VAPID_SUBJECT", push.DEFAULT_SUBJECT),
+            )
+            self.push = push.Notifier(Path(db_path), vapid)
+            self.push.start()
+
+    def server_close(self) -> None:
+        if self.push:
+            self.push.stop()
+        super().server_close()
 
 
 class GymdexHandler(BaseHTTPRequestHandler):
@@ -103,6 +118,13 @@ class GymdexHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.path == "/api/bootstrap":
             return self._with_db(lambda connection: db.bootstrap(connection))
+        if parsed.path == "/api/push":
+            notifier = self._notifier()
+            return self._with_db(lambda connection: {
+                "available": notifier is not None,
+                "public_key": notifier.vapid.public_key if notifier else None,
+                "subscriptions": len(push.subscriptions(connection)),
+            })
         if parsed.path == "/api/manage":
             return self._with_db(lambda connection: db.manage_overview(connection))
         if parsed.path == "/api/history":
@@ -164,6 +186,20 @@ class GymdexHandler(BaseHTTPRequestHandler):
                 lambda connection: db.create_gym(connection, text_field(payload, "name")),
                 status=HTTPStatus.CREATED,
             )
+        if parsed.path == "/api/push/subscriptions":
+            return self._with_db(lambda connection: push.save_subscription(connection, payload))
+        if parsed.path == "/api/push/unsubscribe":
+            return self._with_db(lambda connection: push.delete_subscription(connection, payload.get("endpoint")))
+        if parsed.path == "/api/push/rest":
+            return self._with_db(lambda connection: push.set_rest(connection, payload.get("remaining_ms"), time.time()))
+        if parsed.path == "/api/push/test":
+            notifier = self._notifier()
+            if notifier is None:
+                return self._json_error("This server cannot send notifications.", HTTPStatus.SERVICE_UNAVAILABLE)
+            delivered = notifier.broadcast({"kind": "test", "title": "Gymdex notifications are on",
+                                            "body": "Rest over and Still working out? reminders will show here.",
+                                            "tag": "gymdex-test", "url": "/"})
+            return self._json({"delivered": delivered})
         if parsed.path == "/api/workouts":
             return self._with_db(
                 lambda connection: db.start_workout(connection, id_field(payload, "gym_id")),
@@ -348,10 +384,17 @@ class GymdexHandler(BaseHTTPRequestHandler):
             return self._json_error("Route not found.", HTTPStatus.NOT_FOUND)
         self._with_db(lambda connection: db.delete_set(connection, int(parts[2])))
 
+    def _notifier(self) -> push.Notifier | None:
+        return getattr(self.server, "push", None)
+
     def _with_db(self, operation, status: HTTPStatus = HTTPStatus.OK) -> None:
         try:
             with closing(db.connect(self.server.db_path)) as connection, connection:
                 result = operation(connection)
+            # A started, finished or canceled workout or a changed rest moves the next reminder.
+            notifier = self._notifier()
+            if notifier and self.command != "GET":
+                notifier.wake()
         except ValueError as error:
             return self._json_error(str(error), HTTPStatus.BAD_REQUEST)
         except LookupError as error:

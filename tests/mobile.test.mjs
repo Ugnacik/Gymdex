@@ -136,7 +136,7 @@ test('worker upgrade installs the current shell and removes the previous offline
     ['gymdex-shell-v1', new Map([['/app.js', 'old app']])],
     ['unrelated-cache', new Map()],
   ]);
-  const assets = new Map(await Promise.all(['/', '/index.html', '/styles.css', '/app.js', '/app.mjs', '/workout-editor.mjs', '/drafts.mjs', '/rest-timer.mjs', '/keyboard.mjs', '/confirm-sheet.mjs', '/choice-field.mjs', '/exercise-search.mjs', '/records.mjs', '/outbox.mjs', '/workout-ops.mjs', '/routines.mjs', '/exercise-reorder.mjs', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png', '/icon-maskable-512.png', '/apple-touch-icon.png', '/fonts/Geist-Variable.woff2'].map(async (path) =>
+  const assets = new Map(await Promise.all(['/', '/index.html', '/styles.css', '/app.js', '/app.mjs', '/workout-editor.mjs', '/drafts.mjs', '/rest-timer.mjs', '/keyboard.mjs', '/confirm-sheet.mjs', '/choice-field.mjs', '/exercise-search.mjs', '/records.mjs', '/outbox.mjs', '/notifications.mjs', '/workout-ops.mjs', '/routines.mjs', '/exercise-reorder.mjs', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png', '/icon-maskable-512.png', '/apple-touch-icon.png', '/fonts/Geist-Variable.woff2'].map(async (path) =>
     [path, await readFile(new URL('../static/' + (path === '/' ? 'index.html' : path.slice(1)), import.meta.url), 'utf8')])));
   let claimed = false;
   const context = vm.createContext({
@@ -189,4 +189,35 @@ test('service worker falls back to the app shell but never intercepts API reques
   for (const [path, method] of [['/api/bootstrap', 'GET'], ['/api/sets/2', 'PUT']]) {
     handlers.fetch({request: {url: `https://gym.test${path}`, method}, respondWith() { assert.fail('API intercepted'); }});
   }
+});
+
+test('worker shows every pushed reminder and a tapped Still working out? asks in the open app', async () => {
+  const handlers = {};
+  const shown = [];
+  const posted = [];
+  let focused = false;
+  const client = { url: 'https://gym.test/', postMessage: (message) => posted.push(message), focus: async () => { focused = true; } };
+  const context = vm.createContext({
+    URL, Response, AbortController, setTimeout, clearTimeout,
+    self: {
+      location: { origin: 'https://gym.test' },
+      addEventListener: (name, handler) => { handlers[name] = handler; },
+      registration: { showNotification: async (title, options) => { shown.push({ title, options }); } },
+      clients: { matchAll: async () => [client], openWindow: async () => { throw new Error('the open app is reused'); } },
+    },
+  });
+  vm.runInContext(await readFile(new URL('../static/sw.js', import.meta.url), 'utf8'), context);
+  const run = async (name, event) => { let pending; handlers[name]({ ...event, waitUntil: (promise) => { pending = promise; } }); await pending; };
+  const message = { kind: 'hourly', title: 'Still working out?', body: 'Your workout at Home has been going for 1 h 00 min.', tag: 'gymdex-hourly', url: '/?still-training=1' };
+  await run('push', { data: { json: () => message } });
+  await run('push', { data: { json: () => { throw new SyntaxError('not JSON'); } } });
+  assert.equal(shown[0].title, 'Still working out?');
+  assert.equal(shown[0].options.tag, 'gymdex-hourly');
+  assert.deepEqual([...shown[0].options.actions].map((action) => action.action), ['keep', 'finish']);
+  assert.equal(shown[1].title, 'Gymdex');
+  const notification = { data: shown[0].options.data, close() { this.closed = true; } };
+  await run('notificationclick', { notification, action: '' });
+  assert.equal(notification.closed, true);
+  assert.equal(JSON.stringify(posted), JSON.stringify([{ type: 'still-training' }]));
+  assert.equal(focused, true);
 });

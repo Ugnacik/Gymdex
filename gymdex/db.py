@@ -342,6 +342,23 @@ def migrate(connection: sqlite3.Connection) -> None:
                     "ALTER TABLE workout_sets ADD COLUMN set_type TEXT CHECK (set_type IN ('warmup', 'drop', 'myo'))"
                 )
             connection.execute("PRAGMA user_version = 9")
+    if version < 10:
+        with connection:
+            connection.execute("BEGIN IMMEDIATE")
+            # Phones that turned on notifications, and the reminders the server sends them
+            # (see gymdex/push.py). Additive: no existing table changes.
+            connection.execute("""CREATE TABLE IF NOT EXISTS push_subscriptions (
+                endpoint TEXT PRIMARY KEY,
+                p256dh TEXT NOT NULL,
+                auth TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )""")
+            connection.execute("""CREATE TABLE IF NOT EXISTS push_reminders (
+                kind TEXT PRIMARY KEY CHECK (kind IN ('rest', 'hourly')),
+                workout_id INTEGER NOT NULL REFERENCES workouts(id) ON DELETE CASCADE,
+                due_at REAL NOT NULL
+            )""")
+            connection.execute("PRAGMA user_version = 10")
 
 
 def rows(cursor: sqlite3.Cursor) -> list[dict[str, Any]]:

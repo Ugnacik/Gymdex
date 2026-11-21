@@ -101,7 +101,7 @@ class CatalogUpgradeTests(unittest.TestCase):
         db.initialize(connection)
         db.initialize(connection)
 
-        self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 9)
+        self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 10)
         for table in ("gyms", "gym_exercise_profiles", "exercise_variations"):
             with self.subTest(table=table):
                 # Nothing is archived after the upgrade.
@@ -127,7 +127,7 @@ class CatalogUpgradeTests(unittest.TestCase):
             "SELECT id FROM exercise_variations WHERE custom = 1"
         )]
         self.assertEqual(custom_ids, [created["id"]])
-        self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 9)
+        self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 10)
         connection.close()
 
     def test_version_six_database_gains_unrecorded_effort_and_keeps_its_sets(self):
@@ -147,7 +147,7 @@ class CatalogUpgradeTests(unittest.TestCase):
         db.initialize(connection)
         db.initialize(connection)
 
-        self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 9)
+        self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 10)
         detail = db.completed_workout(connection, workout["id"])
         self.assertEqual(detail["workout_exercises"][0]["sets"], [
             dict(id=item["id"], position=1, weight=80, result=5, completed=1, effort=None, side=None, set_type=None)])
@@ -175,7 +175,7 @@ class CatalogUpgradeTests(unittest.TestCase):
         db.initialize(connection)
         db.initialize(connection)
 
-        self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 9)
+        self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 10)
         self.assertEqual(db.sets_for_exercise(connection, entry["id"]), [
             dict(id=item["id"], position=1, weight=80, result=5, completed=1, effort="2", side=None, set_type=None)])
         with self.assertRaises(sqlite3.IntegrityError):
@@ -198,7 +198,7 @@ class CatalogUpgradeTests(unittest.TestCase):
         db.initialize(connection)
         db.initialize(connection)
 
-        self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 9)
+        self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 10)
         self.assertEqual(db.sets_for_exercise(connection, entry["id"]), [
             dict(id=item["id"], position=1, weight=80, result=5, completed=1, effort=None, side="left", set_type=None)])
         with self.assertRaises(sqlite3.IntegrityError):

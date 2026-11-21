@@ -304,7 +304,8 @@ a valid set complete starts the countdown, including when the phone is offline.
 The timer can be started, paused, resumed, or reset manually; before it starts
 and after a reset, it shows the chosen interval. Its enabled state
 and interval are kept in this browser; a running countdown is not restored after
-the page closes. The timer does not send notifications when the app is closed.
+the page closes. To hear about the end of a rest while the app is closed or the
+phone is locked, turn on [Notifications](#notifications).
 
 When the countdown finishes, Gymdex plays a short double beep and vibrates the
 phone where the browser supports it. Phones only allow the sound after a tap, so
@@ -314,6 +315,40 @@ because Safari has no vibration support. If the countdown ends while the app is
 in the background or the screen is locked, the cue can be late or wait until
 you return to the app. When you return more than 30 seconds after the countdown
 ended, the timer shows it finished without the cue.
+
+## Notifications
+
+Turn on **Notifications** in Settings to get two reminders from the server, even
+when Gymdex is closed or the phone is locked:
+
+- **Rest over** when a rest countdown ends. Starting, pausing, resuming or
+  resetting the rest timer tells the server the new end time. The notification
+  can also show while Gymdex is open, next to the in-app beep.
+- **Still working out?** every full hour since the Active Workout started, with
+  how long it has been going. Tapping it opens the workout with the Still
+  training? question (Finish it or Keep going). Finishing or canceling the
+  workout ends the reminders.
+
+On iPhone this needs iOS 16.4 or newer and Gymdex added to the Home Screen from
+Safari's Share menu; the switch only works in the Home Screen app, and iOS asks
+for permission when you turn it on. If you denied it, allow it again in iPhone
+Settings, Notifications, Gymdex. **Send a test notification** checks the whole
+path. Each phone turns notifications on for itself; reminders go to every phone
+that did.
+
+The phone has to reach the server for the rest end time to arrive, so a rest
+started without signal sends no notification. The server sends reminders
+through Apple's or Google's push service, so the Pi needs internet access.
+Reminders the server could not send on time (it was down) are skipped rather
+than sent late.
+
+Notifications need the `cryptography` Python package (`python3-cryptography`
+on Debian and Raspberry Pi OS). Without it Gymdex runs as before and Settings
+says the server cannot send notifications. On first start the server creates
+its VAPID key at `vapid-private-key.pem` beside the database (readable only by
+its owner, never in git); set `GYMDEX_VAPID_PATH` to keep it elsewhere. Keep the
+file: a new key ends every phone's subscription, and each phone then has to turn
+notifications off and on again.
 
 ## Log sets
 
@@ -608,7 +643,8 @@ with the previous value, for example "Weight 105 kg (was 100 kg)".
 
 ## Run locally
 
-Gymdex has no third-party runtime dependencies. It needs Python 3.11 or newer.
+Gymdex needs Python 3.11 or newer and no third-party packages, except the
+optional `cryptography` package for [Notifications](#notifications).
 
 ```bash
 ./run.sh
@@ -637,6 +673,7 @@ node tests/app.test.mjs
 node tests/mobile.test.mjs
 node tests/workout-editor.test.mjs
 node tests/rest-timer.test.mjs
+node tests/notifications.test.mjs
 node tests/keyboard.test.mjs
 node tests/confirm-sheet.test.mjs
 node tests/choice-field.test.mjs

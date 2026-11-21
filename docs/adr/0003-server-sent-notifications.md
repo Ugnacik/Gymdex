@@ -1,0 +1,5 @@
+# Rest and hourly reminders are Web Push messages the server schedules
+
+iOS suspends a Home Screen web app as soon as it leaves the screen, so neither the page nor the service worker can fire a timer while the phone is locked. The only way to alert then is a Web Push message from the server. The phone therefore tells the server how much rest is left whenever the rest timer starts, pauses, resumes or resets (time left, not a clock time, so a phone clock that is off does not matter), and the server keeps the next rest end and the next whole hour of the Active Workout in `push_reminders`. Keeping them in the database lets a restarted server carry on without repeating or losing a reminder; a reminder that came due while it was down is skipped, like the in-app cue for a rest found long finished.
+
+Web Push requires ECDH, AES-GCM and ECDSA, which the Python standard library lacks. Rather than hand-roll them, the server imports Debian's `python3-cryptography`, already installed on the Pi, and treats it as optional: without it every other feature works and Settings reports notifications as unavailable. This is the one exception to the standard-library-only server.
