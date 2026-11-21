@@ -753,8 +753,9 @@ function openSettings() {
     </section>
     <section class="settings-card" aria-labelledby="settings-push-title">
       <div class="rest-heading"><div class="rest-title"><h2 id="settings-push-title">Notifications</h2><p class="rest-caption">Rest over, and Still working out? every hour</p></div>
-        <label class="rest-switch"><input id="settings-push-enabled" type="checkbox" role="switch" aria-label="Notifications" disabled /></label></div>
+        <label class="rest-switch"><input id="settings-push-enabled" type="checkbox" role="switch" aria-label="Notifications" /></label></div>
       <p class="muted" id="settings-push-status" role="status">Checking this phone…</p>
+      <p class="push-diagnostics" id="settings-push-diagnostics"></p>
       <button type="button" class="secondary" id="settings-push-test" hidden>Send a test notification</button>
     </section>
     <p class="muted">Preferences are saved on this phone.</p>
@@ -772,25 +773,34 @@ const PUSH_STATUS_TEXT = {
   install: "On iPhone, notifications work only in the Home Screen app. In Safari, tap Share, then Add to Home Screen, and open Gymdex from there.",
   unsupported: "This browser cannot show notifications from Gymdex.",
   unavailable: "The Gymdex server cannot send notifications. It needs the python3-cryptography package.",
-  denied: "Notifications are blocked for Gymdex. Allow them in iPhone Settings, Notifications, Gymdex.",
+  denied: "You turned notifications off for Gymdex. Allow them in iPhone Settings, Notifications, Gymdex, then tap the switch.",
+  "blocked-by-device": "iOS refused without asking you, so Gymdex is not listed in iPhone Settings, Notifications. Something on the phone blocks web app notifications: a work device management profile, Screen Time, or an icon that opens Gymdex outside the Home Screen app. Tap the switch to try again.",
+  error: "Could not check notifications on this phone.",
   off: "Off on this phone.",
   on: "On for this phone. They arrive even when Gymdex is closed or the phone is locked.",
 };
 
 // The switch reflects this phone's push subscription; turning it on asks iOS for permission.
+// It is never left disabled: every tap tries again, and any failure is shown with a diagnostic
+// line (permission, Home Screen app or not, PushManager, error name) to read from a screenshot.
 function bindPushSettings(dialog) {
   const toggle = dialog.querySelector("#settings-push-enabled");
   const text = dialog.querySelector("#settings-push-status");
+  const details = dialog.querySelector("#settings-push-diagnostics");
   const testButton = dialog.querySelector("#settings-push-test");
-  const show = (status, message) => {
+  const show = async (status, error) => {
     toggle.checked = status === "on";
-    toggle.disabled = !["on", "off"].includes(status);
-    text.textContent = message ?? PUSH_STATUS_TEXT[status];
+    toggle.disabled = false;
+    text.textContent = error?.message || PUSH_STATUS_TEXT[status] || status;
     testButton.hidden = status !== "on";
+    const facts = await notifications.diagnostics().catch(() => ({}));
+    details.textContent = [`asked: ${facts.asked}`, `permission: ${facts.permission}`, `query: ${facts.query}`, `standalone: ${facts.standalone ? "yes" : "no"}`,
+      `PushManager: ${facts.pushManager ? "yes" : "no"}`, `worker: ${facts.serviceWorker ? (facts.controlled ? "controlling" : "not controlling") : "none"}`,
+      `host: ${facts.host}`, `state: ${status}`, ...(error ? [`error: ${error.name || "Error"}`] : [])].join(" · ");
   };
   const run = async (action, failedStatus) => {
     toggle.disabled = true;
-    try { show(await action()); } catch (error) { show(failedStatus, error.message); }
+    try { await show(await action()); } catch (error) { await show(failedStatus, error); }
   };
   run(() => notifications.status(), "error");
   toggle.addEventListener("change", () => run(() => toggle.checked ? notifications.enable() : notifications.disable(), toggle.checked ? "off" : "on"));

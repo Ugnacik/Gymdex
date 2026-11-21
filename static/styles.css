@@ -1579,6 +1579,7 @@ textarea {
 .settings-card p.muted { font-size: 0.9rem; line-height: 1.5; }
 .settings-card + .settings-card { margin-top: 16px; }
 .settings-card .rest-heading + p.muted { margin-top: 0; }
+.push-diagnostics { margin: 4px 0 12px; color: var(--muted); font-size: 0.75rem; line-height: 1.4; overflow-wrap: anywhere; }
 @media (max-width: 440px) {
   .app-header { flex-wrap: wrap; gap: 8px; }
   .app-header nav { margin-left: auto; }

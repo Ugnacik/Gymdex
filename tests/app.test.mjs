@@ -2963,6 +2963,81 @@ test('Settings is available before a workout and returns to start', async () => 
   assert.deepEqual(JSON.parse(app.disk.getItem('gymdex:rest:v1')), { enabled: false, duration: 120 });
 });
 
+test('Notifications reading as blocked keep the switch live: a tap still asks iOS, and the answer decides', async () => {
+  // Gymdex never asked, yet iOS reads denied (a managed work phone): the phone, not Nikolas, blocks them.
+  const app = await harness(storage(), { active_workout: null, workout_exercises: [] });
+  const { nodes } = historyDOM(app);
+  const asked = [];
+  const subscription = { endpoint: 'https://web.push.apple.com/abc', options: {}, toJSON() { return { endpoint: this.endpoint, keys: { p256dh: 'p', auth: 'a' } }; } };
+  let subscribed = null;
+  let promptMs = 0;
+  app.env.window.Notification = { permission: 'denied', requestPermission: async () => { asked.push('asked'); app.clock.now += promptMs; return answer; } };
+  app.env.window.PushManager = function PushManager() {};
+  app.env.window.location = { host: 'wake-pi.tail1ecd6b.ts.net:8443' };
+  app.env.window.matchMedia = () => ({ matches: true });
+  app.env.navigator.serviceWorker = { controller: {}, ready: Promise.resolve({ pushManager: {
+    getSubscription: async () => subscribed, subscribe: async () => (subscribed = subscription) } }) };
+  const posted = [];
+  app.env.fetch = async (path, options) => {
+    if (options?.method === 'POST') posted.push(path);
+    return response(path === '/api/push' ? { available: true, public_key: 'BAAA', subscriptions: 0 } : { ok: true });
+  };
+  let answer = 'denied';
+  const settle = async () => { for (let i = 0; i < 20; i += 1) await new Promise((resolve) => setImmediate(resolve)); };
+  app.nodes['#open-settings'].events.click();
+  await settle();
+  assert.equal(nodes['#settings-push-enabled'].disabled, false);
+  assert.match(nodes['#settings-push-status'].textContent, /^iOS refused without asking you/);
+  assert.match(nodes['#settings-push-diagnostics'].textContent, /^asked: never · permission: denied · query: n\/a · standalone: yes · PushManager: yes · worker: controlling · host: wake-pi\.tail1ecd6b\.ts\.net:8443 · state: blocked-by-device$/);
+  // iOS answers denied at once, without a prompt: still blocked by the phone, and the switch stays usable.
+  nodes['#settings-push-enabled'].checked = true;
+  nodes['#settings-push-enabled'].events.change();
+  await settle();
+  assert.deepEqual(asked, ['asked']);
+  assert.equal(nodes['#settings-push-enabled'].checked, false);
+  assert.equal(nodes['#settings-push-enabled'].disabled, false);
+  assert.match(nodes['#settings-push-diagnostics'].textContent, /^asked: denied in 0 ms \(no prompt\) · .* state: blocked-by-device$/);
+  // A prompt that he answered with Don't Allow is his choice, fixed in iPhone Settings.
+  promptMs = 3000;
+  nodes['#settings-push-enabled'].checked = true;
+  nodes['#settings-push-enabled'].events.change();
+  await settle();
+  assert.match(nodes['#settings-push-status'].textContent, /^You turned notifications off/);
+  assert.match(nodes['#settings-push-diagnostics'].textContent, /^asked: denied in 3000 ms · .* state: denied$/);
+  // This time iOS asks and he allows: the phone subscribes.
+  answer = 'granted';
+  app.env.window.Notification.permission = 'granted';
+  nodes['#settings-push-enabled'].checked = true;
+  nodes['#settings-push-enabled'].events.change();
+  await settle();
+  assert.deepEqual(asked, ['asked', 'asked', 'asked']);
+  assert.deepEqual(posted, ['/api/push/subscriptions']);
+  assert.equal(nodes['#settings-push-enabled'].checked, true);
+  assert.match(nodes['#settings-push-status'].textContent, /^On for this phone/);
+  assert.equal(nodes['#settings-push-test'].hidden, false);
+});
+
+test('a failed notification tap explains itself and names the error', async () => {
+  const app = await harness(storage(), { active_workout: null, workout_exercises: [] });
+  const { nodes } = historyDOM(app);
+  app.env.window.Notification = { permission: 'default', requestPermission: async () => 'granted' };
+  app.env.window.PushManager = function PushManager() {};
+  app.env.navigator.serviceWorker = { ready: Promise.resolve({ pushManager: {
+    getSubscription: async () => null, subscribe: async () => { throw Object.assign(new Error('The operation is not allowed.'), { name: 'NotAllowedError' }); } } }) };
+  app.env.fetch = async (path) => response(path === '/api/push' ? { available: true, public_key: 'BAAA', subscriptions: 0 } : { ok: true });
+  const settle = async () => { for (let i = 0; i < 20; i += 1) await new Promise((resolve) => setImmediate(resolve)); };
+  app.nodes['#open-settings'].events.click();
+  await settle();
+  assert.match(nodes['#settings-push-status'].textContent, /^Off on this phone/);
+  nodes['#settings-push-enabled'].checked = true;
+  nodes['#settings-push-enabled'].events.change();
+  await settle();
+  assert.equal(nodes['#settings-push-status'].textContent, 'The operation is not allowed.');
+  assert.match(nodes['#settings-push-diagnostics'].textContent, /^asked: granted in 0 ms · permission: default · .*standalone: no · PushManager: yes · worker: not controlling · .*state: off · error: NotAllowedError$/);
+  assert.equal(nodes['#settings-push-enabled'].checked, false);
+  assert.equal(nodes['#settings-push-enabled'].disabled, false);
+});
+
 function reorderDOM(app) {
   const opened = historyDOM(app);
   const step = (id, direction) => {

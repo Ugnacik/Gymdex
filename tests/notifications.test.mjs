@@ -53,3 +53,16 @@ test('an iPhone outside the Home Screen app is told to install it', () => {
   const iphone = new PushNotifications({ window: {}, navigator: { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)', standalone: false }, fetch });
   assert.equal(iphone.support, 'install');
 });
+
+test('a callback-style requestPermission and a worker that never starts are both handled', async () => {
+  let requested = 0;
+  const notifications = new PushNotifications({
+    window: { localStorage: { getItem: () => null, setItem() {}, removeItem() {} }, PushManager: function PushManager() {},
+      Notification: { permission: 'default', requestPermission: (callback) => { requested += 1; setTimeout(() => callback('granted'), 0); } } },
+    navigator: { serviceWorker: { ready: new Promise(() => {}) } },
+    fetch: async () => ({ ok: true, json: async () => ({ available: true, public_key: 'BAAA' }) }),
+    readyTimeout: 20,
+  });
+  await assert.rejects(notifications.enable(), (error) => error.name === 'ServiceWorkerNotReady');
+  assert.equal(requested, 1);
+});
